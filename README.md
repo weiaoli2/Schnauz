@@ -159,6 +159,18 @@ check for or install original Shuffle updates.
 Based on Shuffle by Jaime Guzman, under the [MIT license](LICENSE).
 The original README is preserved in [README.upstream.md](README.upstream.md).
 
+Commercial distribution, including a possible €5 edition, was discussed. The
+base [MIT license](https://opensource.org/license/mit) permits commercial sale
+without requiring publication of our Schnauz adaptations. Preserve the original
+copyright and license notices. The price is an option, not a release commitment.
+
+Other components retain their own license conditions. In particular,
+`option-ext` 0.2.0 uses MPL-2.0: distribution requires access to that component's
+source and a notice explaining how to obtain it; this does not require opening
+our separate Schnauz implementation. See the [Mozilla MPL FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/).
+Complete the dependency notices and source-access information before external
+distribution; the current bundle contains selected third-party license texts.
+
 The embedded terminal uses [gpui-terminal](https://github.com/zortax/gpui-terminal)
 by Leonard Seibold (MIT or Apache 2.0), [Alacritty's terminal engine](https://github.com/alacritty/alacritty),
 and [portable-pty](https://github.com/wezterm/wezterm/tree/main/pty). Its local component

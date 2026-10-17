@@ -14,6 +14,12 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   credits alongside the unchanged upstream and third-party license notices.
 - App identity: Schnauz, `local.schnauz.app`. Never enable the
   original Shuffle self-updater or publish to its GitHub repository.
+- A possible €5 paid edition was discussed; the MIT base does not require opening
+  our adaptations. Preserve third-party obligations, including MPL-2.0 source
+  access for `option-ext`; distribution notes are saved in the README.
+- Current debugging workflow: Oliver tests the live app and reports individual
+  bugs. Wait for his reports; do not start unsolicited checks or change his live
+  browsing session. Run relevant verification when implementing a reported fix.
 - For a normal build run `./build.sh`; for a faster development build use
   `STUDIO_BUILD_PROFILE=debug ./build.sh`. Rust stable and Xcode are required.
 - Run `./test.sh` after project or file-operation changes. Use disposable
