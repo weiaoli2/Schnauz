@@ -3,9 +3,79 @@ use super::*;
 use crate::workspaces::{Layout, Library, SavedPane, SavedTab};
 
 impl Shuffle {
+    pub(super) fn paste_from_clipboard(&mut self, cx: &mut Context<Self>) {
+        let pane = self.active_pane;
+        // Finder's copied file objects retain ordinary copy/paste behavior.
+        let files = pasteboard_file_paths();
+        if !files.is_empty() {
+            let dir = self.tab(pane).current_dir.clone();
+            if self.tab(pane).remote.is_some() {
+                self.upload_to_remote(pane, dir, files, cx);
+            } else {
+                self.copy_items(dir, files, cx);
+            }
+            return;
+        }
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        let destination = match crate::clipboard_path::resolve(&text, &home_dir()) {
+            Ok(Some(destination)) => destination,
+            Ok(None) => return,
+            Err(error) => {
+                self.set_notice(format!("Couldn't open the pasted path: {error}"), cx);
+                return;
+            }
+        };
+        let crate::clipboard_path::Destination {
+            folder,
+            selected_file,
+        } = destination;
+        // A local path pasted while browsing SFTP opens a local tab.
+        if self.tab(pane).remote.is_some() {
+            let view = self.tab(pane).view;
+            let mut tab = Tab::new(folder.clone());
+            tab.view = view;
+            self.panes[pane].tabs.push(tab);
+            self.panes[pane].active = self.panes[pane].tabs.len() - 1;
+        }
+        if selected_file.is_some() && self.tab(pane).entry_filter == EntryFilter::Folders {
+            self.tab_mut(pane).set_entry_filter(EntryFilter::All);
+        }
+        self.context_menu = None;
+        self.sort_menu = None;
+        self.hovered = None;
+        self.drag_candidate = None;
+        self.marquee = None;
+        self.scroll_drag = None;
+        self.hbar_drag = None;
+        if self.tab(pane).current_dir == folder {
+            self.load_dir_in(pane, folder, cx);
+        } else {
+            self.navigate_in(pane, folder, cx);
+        }
+        if let Some(file) = selected_file {
+            self.reveal_in_pane(pane, file.clone(), cx);
+            if self.tab(pane).view == ViewMode::Columns {
+                if let Some(index) = self
+                    .display_paths(pane)
+                    .iter()
+                    .position(|path| path == &file)
+                {
+                    col_scroll(pane, 0).set_offset(point(px(0.0), px(-(index as f32 * ROW_H))));
+                }
+            }
+        } else {
+            self.tab(pane)
+                .scroll_handle
+                .scroll_to_item(0, ScrollStrategy::Top);
+        }
+        self.save_session();
+        cx.notify();
+    }
+
     fn set_entry_filter(&mut self, pane: usize, filter: EntryFilter, cx: &mut Context<Self>) {
         self.active_pane = pane;
-        self.term_focused = false;
         if self.tab(pane).entry_filter == filter {
             cx.notify();
             return;
@@ -462,6 +532,19 @@ impl Shuffle {
                 )
                 .tooltip(tip("Split or join panes · ⌘⇧D"))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_studio_split(cx))),
+            )
+            .child(
+                studio_button(
+                    "studio-terminal",
+                    "Terminal",
+                    self.active_tab().terminal_open,
+                )
+                .tooltip(tip("Open a full terminal in this folder"))
+                .on_click(
+                    cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.toggle_terminal(window, cx)
+                    }),
+                ),
             )
             .child(
                 studio_button("studio-preview", "Preview", prefs().preview)

@@ -1,0 +1,596 @@
+//! Persistent per-tab terminal sessions, native PTYs and two-way folder sync.
+use super::*;
+use gpui::{Edges, Entity};
+use gpui_terminal::{shell::ShellEvent, ColorPalette, TerminalConfig, TerminalView};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use std::io::{Read, Write};
+
+static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
+const CD_WIDGET: &[u8] = b"\x1b[99;1~";
+
+#[derive(Clone)]
+struct SharedWriter(Arc<Mutex<Box<dyn Write + Send>>>);
+impl Write for SharedWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().unwrap().flush()
+    }
+}
+
+struct Process {
+    master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    writer: SharedWriter,
+    killer: Box<dyn ChildKiller + Send + Sync>,
+    exited: Arc<AtomicBool>,
+    request_file: PathBuf,
+}
+impl Process {
+    fn input(&self, bytes: &[u8]) -> std::io::Result<()> {
+        let mut writer = self.writer.clone();
+        writer.write_all(bytes).and_then(|_| writer.flush())
+    }
+
+    fn change_directory(&self, folder: &Path) -> std::io::Result<()> {
+        use std::os::unix::ffi::OsStrExt;
+        let mut bytes = folder.as_os_str().as_bytes().to_vec();
+        bytes.push(0);
+        crate::workspaces::atomic_write(&self.request_file, &bytes)?;
+        self.input(CD_WIDGET)
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        if !self.exited.load(Ordering::Acquire) {
+            // Only the process group belonging to this PTY is signalled.
+            if let Some(group) = self.master.lock().unwrap().process_group_leader() {
+                if group > 1 {
+                    unsafe {
+                        libc::kill(-group, libc::SIGHUP);
+                    }
+                }
+            }
+            let _ = self.killer.kill();
+        }
+        let _ = fs::remove_file(&self.request_file);
+    }
+}
+
+fn spawn_process(
+    cwd: &Path,
+    settings: &Path,
+    test_shell: bool,
+) -> Result<(Process, Box<dyn Read + Send>), String> {
+    let id = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
+    let integration = settings.join("terminal/zsh");
+    fs::create_dir_all(&integration).map_err(|e| e.to_string())?;
+    for (name, source) in [
+        (".zshenv", include_str!("terminal-shell/zshenv")),
+        (".zprofile", include_str!("terminal-shell/zprofile")),
+        (".zshrc", include_str!("terminal-shell/zshrc")),
+    ] {
+        crate::workspaces::atomic_write(&integration.join(name), source.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    let requests = settings.join("terminal/requests");
+    fs::create_dir_all(&requests).map_err(|e| e.to_string())?;
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&requests, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+    let request_file = requests.join(format!("{}-{id}.cwd", std::process::id()));
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: 18,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| e.to_string())?;
+    let mut command = CommandBuilder::new("/bin/zsh");
+    command.args(["-l", "-i"]);
+    command.cwd(cwd);
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    command.env("TERM_PROGRAM", "ShuffleStudio");
+    command.env("ZDOTDIR", &integration);
+    command.env("SHUFFLE_STUDIO_INTEGRATION_DIR", &integration);
+    command.env(
+        "SHUFFLE_STUDIO_USER_ZDOTDIR",
+        std::env::var_os("ZDOTDIR").unwrap_or_else(|| home_dir().into_os_string()),
+    );
+    command.env("SHUFFLE_STUDIO_CWD_REQUEST", &request_file);
+    command.env(
+        "SHUFFLE_STUDIO_TEST_SHELL",
+        if test_shell { "1" } else { "0" },
+    );
+    if std::env::var_os("LANG").is_none() {
+        command.env("LANG", "en_US.UTF-8");
+    }
+    let mut child = pair
+        .slave
+        .spawn_command(command)
+        .map_err(|e| e.to_string())?;
+    drop(pair.slave);
+    let killer = child.clone_killer();
+    let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+    let writer = SharedWriter(Arc::new(Mutex::new(
+        pair.master.take_writer().map_err(|e| e.to_string())?,
+    )));
+    let exited = Arc::new(AtomicBool::new(false));
+    let finished = exited.clone();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+        finished.store(true, Ordering::Release);
+    });
+    Ok((
+        Process {
+            master: Arc::new(Mutex::new(pair.master)),
+            writer,
+            killer,
+            exited,
+            request_file,
+        },
+        reader,
+    ))
+}
+
+pub(super) struct Session {
+    pub id: u64,
+    pub view: Entity<TerminalView>,
+    pub cwd: PathBuf,
+    pub ready: bool,
+    pub pending: Option<PathBuf>,
+    process: Process,
+}
+impl Session {
+    fn exited(&self) -> bool {
+        self.process.exited.load(Ordering::Acquire)
+    }
+    fn request_directory(&mut self, folder: PathBuf) {
+        if self.cwd == folder && (self.ready || self.pending.is_none()) {
+            self.pending = None;
+            return;
+        }
+        self.pending = Some(folder);
+        self.flush_directory();
+    }
+    fn flush_directory(&mut self) {
+        if !self.ready || self.exited() {
+            return;
+        }
+        if self.pending.as_ref() == Some(&self.cwd) {
+            self.pending = None;
+            return;
+        }
+        let Some(folder) = self.pending.as_ref() else {
+            return;
+        };
+        if self.process.change_directory(folder).is_ok() {
+            self.ready = false;
+        }
+    }
+}
+
+impl Shuffle {
+    pub(super) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.active_pane;
+        if self.tab(pane).remote.is_some() {
+            self.set_notice(
+                "Open a local folder to start its terminal. You can run ssh inside the terminal."
+                    .into(),
+                cx,
+            );
+            return;
+        }
+        let restart = self
+            .tab(pane)
+            .terminal
+            .as_ref()
+            .is_none_or(|session| session.exited());
+        if restart {
+            let cwd = self.tab(pane).current_dir.clone();
+            let settings = config_dir().unwrap_or_else(std::env::temp_dir);
+            let (process, reader) = match spawn_process(&cwd, &settings, false) {
+                Ok(pair) => pair,
+                Err(error) => {
+                    self.set_notice(format!("Couldn't start terminal: {error}"), cx);
+                    return;
+                }
+            };
+            let id = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
+            let parent = cx.entity().downgrade();
+            let parent_exit = parent.clone();
+            let resize_master = process.master.clone();
+            let writer = process.writer.clone();
+            let config = TerminalConfig {
+                font_family: "Menlo".into(),
+                font_size: px(12.0),
+                cols: 100,
+                rows: 18,
+                scrollback: 10000,
+                line_height_multiplier: 1.15,
+                padding: Edges::all(px(8.0)),
+                colors: ColorPalette::builder()
+                    .background(0x15, 0x18, 0x22)
+                    .foreground(0xdc, 0xe1, 0xec)
+                    .cursor(0xa5, 0xb4, 0xfc)
+                    .build(),
+            };
+            let view = cx.new(|cx| {
+                TerminalView::new(writer, reader, config, cx)
+                    .with_resize_callback(move |cols, rows| {
+                        let _ = resize_master.lock().unwrap().resize(PtySize {
+                            cols: cols.min(u16::MAX as usize) as u16,
+                            rows: rows.min(u16::MAX as usize) as u16,
+                            pixel_width: 0,
+                            pixel_height: 0,
+                        });
+                    })
+                    .with_shell_callback(move |event, window, cx| {
+                        if matches!(event, ShellEvent::Focused | ShellEvent::CommandStarted) {
+                            let _ = parent
+                                .update(cx, |this, cx| this.terminal_shell_event(id, event, cx));
+                        } else {
+                            // Protocol events are drained while drawing the terminal.
+                            // Update its parent after this frame so the new cwd/status
+                            // is guaranteed another frame without waiting for input.
+                            let parent = parent.clone();
+                            let event = event.clone();
+                            window.on_next_frame(move |_, cx| {
+                                let _ = parent.update(cx, |this, cx| {
+                                    this.terminal_shell_event(id, &event, cx)
+                                });
+                            });
+                        }
+                    })
+                    .with_exit_callback(move |window, _| {
+                        let parent = parent_exit.clone();
+                        window.on_next_frame(move |_, cx| {
+                            let _ = parent.update(cx, |_, cx| cx.notify());
+                        });
+                    })
+            });
+            self.tab_mut(pane).terminal = Some(Session {
+                id,
+                view,
+                cwd,
+                ready: false,
+                pending: None,
+                process,
+            });
+            self.tab_mut(pane).terminal_open = true;
+        } else {
+            self.tab_mut(pane).terminal_open = !self.tab(pane).terminal_open;
+        }
+        if self.tab(pane).terminal_open {
+            self.sync_terminal_directory(pane);
+            self.tab(pane)
+                .terminal
+                .as_ref()
+                .unwrap()
+                .view
+                .read(cx)
+                .focus_handle()
+                .focus(window);
+        } else {
+            window.focus(&self.focus);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn sync_terminal_directory(&mut self, pane: usize) {
+        let tab = self.tab_mut(pane);
+        if tab.terminal_open && tab.remote.is_none() {
+            if let Some(session) = tab.terminal.as_mut() {
+                session.request_directory(tab.current_dir.clone());
+            }
+        }
+    }
+
+    fn terminal_shell_event(&mut self, id: u64, event: &ShellEvent, cx: &mut Context<Self>) {
+        let target = self.panes.iter().enumerate().find_map(|(p, pane)| {
+            pane.tabs.iter().enumerate().find_map(|(t, tab)| {
+                tab.terminal
+                    .as_ref()
+                    .is_some_and(|session| session.id == id)
+                    .then_some((p, t))
+            })
+        });
+        let Some((pane, tab_index)) = target else {
+            return;
+        };
+        let tab = &mut self.panes[pane].tabs[tab_index];
+        let session = tab.terminal.as_mut().unwrap();
+        match event {
+            ShellEvent::Focused => {
+                self.active_pane = pane;
+            }
+            ShellEvent::WorkingDirectory(url) => {
+                let Some(folder) = crate::clipboard_path::parse_path(url, &home_dir())
+                    .filter(|path| path.is_dir())
+                else {
+                    return;
+                };
+                session.cwd = folder.clone();
+                if session.pending.as_ref() == Some(&folder) {
+                    session.pending = None;
+                }
+                // A newer queued browser navigation wins over an older shell report.
+                if tab.terminal_open && session.pending.is_none() && tab.current_dir != folder {
+                    if self.panes[pane].active == tab_index {
+                        let previous_active = self.active_pane;
+                        self.navigate_in(pane, folder, cx);
+                        self.active_pane = previous_active;
+                    } else {
+                        let tab = &mut self.panes[pane].tabs[tab_index];
+                        tab.current_dir = folder.clone();
+                        tab.entries = read_entries_fast(&folder);
+                        sort_entries(&mut tab.entries, tab.sort_key, tab.sort_asc);
+                        tab.find_query = None;
+                        tab.recompute_results();
+                        tab.selection.clear();
+                        tab.anchor = None;
+                        tab.col_chain.clear();
+                        tab.col_active = 0;
+                    }
+                }
+            }
+            ShellEvent::PromptReady => {
+                session.ready = true;
+                if tab.terminal_open {
+                    session.flush_directory();
+                }
+            }
+            ShellEvent::DirectoryChangeFailed => {
+                session.pending = None;
+                self.set_notice("The terminal couldn't enter that folder.".into(), cx);
+            }
+            ShellEvent::CommandStarted => session.ready = false,
+        }
+        cx.notify();
+    }
+
+    pub(super) fn render_terminal_panel(
+        &self,
+        pane: usize,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let tab = self.tab(pane);
+        if !tab.terminal_open {
+            return None;
+        }
+        let session = tab.terminal.as_ref()?;
+        let t = theme();
+        let label = if session.exited() {
+            "Session ended"
+        } else if session.pending.is_some() {
+            "Folder change queued"
+        } else {
+            "zsh"
+        };
+        Some(
+            div()
+                .flex_none()
+                .h(px(tab.terminal_height))
+                .min_h(px(150.0))
+                .flex()
+                .flex_col()
+                .bg(rgb(0x151822))
+                .child(
+                    div()
+                        .id(("terminal-divider", pane))
+                        .h(px(5.0))
+                        .flex_none()
+                        .cursor(CursorStyle::ResizeUpDown)
+                        .bg(rgb(t.border))
+                        .hover(|s| s.bg(rgb(t.accent)))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                this.terminal_resize = Some((
+                                    pane,
+                                    f32::from(event.position.y),
+                                    this.tab(pane).terminal_height,
+                                ));
+                                cx.stop_propagation();
+                            }),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .h(px(30.0))
+                        .px_3()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_size(px(11.0))
+                        .text_color(rgb(0xaab4cb))
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Terminal"))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .child(display_path(&session.cwd)),
+                        )
+                        .child(label)
+                        .child(
+                            div()
+                                .id(("terminal-hide", pane))
+                                .px_2()
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(rgb(0xffffff)))
+                                .child("Hide")
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    this.tab_mut(pane).terminal_open = false;
+                                    window.focus(&this.focus);
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_hidden()
+                        .child(session.view.clone()),
+                )
+                .into_any_element(),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    struct Probe {
+        process: Process,
+        rx: mpsc::Receiver<Vec<u8>>,
+        parser: gpui_terminal::shell::ShellParser,
+        output: Vec<u8>,
+        cwd: Option<PathBuf>,
+    }
+    impl Probe {
+        fn start(folder: &Path, settings: &Path) -> Self {
+            let (process, mut reader) = spawn_process(folder, settings, true).unwrap();
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let mut buffer = [0; 4096];
+                while let Ok(count) = reader.read(&mut buffer) {
+                    if count == 0 || tx.send(buffer[..count].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            });
+            Self {
+                process,
+                rx,
+                parser: Default::default(),
+                output: Vec::new(),
+                cwd: None,
+            }
+        }
+        fn wait(&mut self, condition: impl Fn(&[ShellEvent], &str) -> bool) {
+            let deadline = Instant::now() + Duration::from_secs(8);
+            let mut events = Vec::new();
+            loop {
+                let bytes = self
+                    .rx
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .expect("terminal did not reach the expected state");
+                let received = self.parser.feed(&bytes);
+                for event in &received {
+                    if let ShellEvent::WorkingDirectory(url) = event {
+                        self.cwd = crate::clipboard_path::parse_path(url, &home_dir());
+                    }
+                }
+                events.extend(received);
+                self.output.extend(bytes);
+                if condition(&events, &String::from_utf8_lossy(&self.output)) {
+                    return;
+                }
+            }
+        }
+        fn ready(&mut self) {
+            self.wait(|events, _| events.contains(&ShellEvent::PromptReady));
+        }
+        fn command(&mut self, command: &str) {
+            self.output.clear();
+            self.process
+                .input(format!("{command}\r").as_bytes())
+                .unwrap();
+            self.ready();
+        }
+    }
+
+    #[test]
+    fn real_pty_preserves_shell_state_resizes_runs_vim_and_syncs_paths() {
+        let root = crate::tests::scratch("real-terminal");
+        let start = root.join("start");
+        let destination = root.join("Folder 'quoted' $name 素材 #?%");
+        fs::create_dir_all(&start).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        let mut probe = Probe::start(&start, &root.join("profile"));
+        probe.ready();
+        assert_eq!(
+            probe
+                .cwd
+                .as_ref()
+                .map(|path| fs::canonicalize(path).unwrap()),
+            Some(fs::canonicalize(&start).unwrap())
+        );
+        probe.command("typeset -g SHUFFLE_TEST_STATE=preserved");
+        // Keep a partially typed command while the browser changes directories.
+        probe.output.clear();
+        probe
+            .process
+            .input(b"printf '\\nSYNC_STATE:%s\\n' $SHUFFLE_TEST_STATE")
+            .unwrap();
+        probe.process.change_directory(&destination).unwrap();
+        probe.ready();
+        assert_eq!(
+            probe
+                .cwd
+                .as_ref()
+                .map(|path| fs::canonicalize(path).unwrap()),
+            Some(fs::canonicalize(&destination).unwrap())
+        );
+        probe.process.input(b"\r").unwrap();
+        probe.wait(|events, text| {
+            events.contains(&ShellEvent::PromptReady) && text.contains("SYNC_STATE:preserved")
+        });
+        probe.command("printf '\\nCWD:%s\\n' $PWD");
+        assert!(String::from_utf8_lossy(&probe.output).contains("Folder 'quoted' $name 素材"));
+        probe
+            .process
+            .master
+            .lock()
+            .unwrap()
+            .resize(PtySize {
+                rows: 30,
+                cols: 110,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        probe.command("stty size");
+        assert!(String::from_utf8_lossy(&probe.output).contains("30 110"));
+        // A real full-screen editor must own the same persistent TTY.
+        probe.output.clear();
+        probe
+            .process
+            .input(b"/usr/bin/vim -Nu NONE -n -i NONE terminal-test.txt\r")
+            .unwrap();
+        probe.wait(|_, text| text.contains("\x1b[?1049h") || text.contains("terminal-test.txt"));
+        probe
+            .process
+            .input(b"iInteractive terminal works\x1b:wq\r")
+            .unwrap();
+        probe.ready();
+        assert_eq!(
+            fs::read_to_string(destination.join("terminal-test.txt")).unwrap(),
+            "Interactive terminal works\n"
+        );
+        probe.output.clear();
+        probe.process.input(b"cd ..\r").unwrap();
+        probe.wait(|events, _| events.iter().any(|event| matches!(event, ShellEvent::WorkingDirectory(url) if url.ends_with("real-terminal-".trim_end_matches('-')))) || events.contains(&ShellEvent::PromptReady));
+        let cwd_reported = String::from_utf8_lossy(&probe.output);
+        assert!(cwd_reported.contains("\x1b]7;file://localhost"));
+        // A disappeared destination fails once rather than flooding queued input.
+        probe.output.clear();
+        probe
+            .process
+            .change_directory(&root.join("missing"))
+            .unwrap();
+        probe.wait(|events, _| {
+            events.contains(&ShellEvent::DirectoryChangeFailed)
+                && events.contains(&ShellEvent::PromptReady)
+        });
+        drop(probe);
+        fs::remove_dir_all(root).unwrap();
+    }
+}

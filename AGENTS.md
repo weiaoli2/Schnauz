@@ -31,3 +31,9 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - App bundles keep physical directory semantics for file operations, but display
   as applications with native icons cached per app path. Single-click selects,
   double-click launches, and Show Package Contents explicitly browses the bundle.
+- Plain-text path paste opens a folder or reveals a file; text editors and the
+  terminal retain ordinary paste behavior. Copied file objects still paste files.
+- The terminal is a persistent native PTY with an Alacritty-backed component in
+  `vendor/gpui-terminal`; old one-shot command mode is removed. Keep two-way cwd
+  sync via OSC 7 and prompt hooks. Browser changes must queue while a foreground
+  program runs, and must not replace unfinished shell input or execute paths as code.

@@ -6,6 +6,9 @@ description = "Shuffle Studio — a personal workspace for your files"
 publish = false
 
 [dependencies]
+gpui-terminal = { path = "vendor/gpui-terminal" }
+portable-pty = "0.9"
+libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 gpui = "0.2.2"

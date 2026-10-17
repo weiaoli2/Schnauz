@@ -79,16 +79,14 @@ mod workspaces;
 mod entry_filter;
 use entry_filter::EntryFilter;
 mod studio;
+mod clipboard_path;
+mod studio_terminal;
 
 // ----- feature preferences (the General tab toggles) -------------------------
 
 /// User-toggleable features.
 #[derive(Clone, Copy)]
 struct Prefs {
-    /// Show a terminal-style command input at the bottom of the explorer.
-    terminal: bool,
-    /// Also show a scrollback of what you've typed / command output.
-    term_history: bool,
     /// Show a file preview in the inspector when a file is selected.
     preview: bool,
     /// Show ‹ › page arrows on multi-page PDF previews in the inspector.
@@ -127,8 +125,6 @@ struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         Prefs {
-            terminal: false,
-            term_history: false,
             preview: true,
             preview_pages: true,
             info: true,
@@ -154,8 +150,6 @@ impl gpui::Global for PrefsGlobal {}
 
 thread_local! {
     static ACTIVE_PREFS: RefCell<Prefs> = const { RefCell::new(Prefs {
-        terminal: false,
-        term_history: false,
         preview: true,
         preview_pages: true,
         info: true,
@@ -508,6 +502,7 @@ enum KeyAction {
     GetInfo,
     BatchRename,
     Undo,
+    Paste,
     // Command-palette (Cmd+P) text editing. These act only while the palette is
     // open, so they're excluded from the normal (global) key dispatch.
     PaletteCursorStart,
@@ -541,6 +536,7 @@ impl KeyAction {
         KeyAction::GetInfo,
         KeyAction::BatchRename,
         KeyAction::Undo,
+        KeyAction::Paste,
         KeyAction::PaletteCursorStart,
         KeyAction::PaletteCursorEnd,
         KeyAction::PaletteSelectAll,
@@ -591,6 +587,7 @@ impl KeyAction {
             KeyAction::GetInfo => "get_info",
             KeyAction::BatchRename => "batch_rename",
             KeyAction::Undo => "undo",
+            KeyAction::Paste => "paste",
             KeyAction::PaletteCursorStart => "palette_cursor_start",
             KeyAction::PaletteCursorEnd => "palette_cursor_end",
             KeyAction::PaletteSelectAll => "palette_select_all",
@@ -624,6 +621,7 @@ impl KeyAction {
             KeyAction::GetInfo => "Get Info",
             KeyAction::BatchRename => "Rename selected items…",
             KeyAction::Undo => "Undo last file operation",
+            KeyAction::Paste => "Paste path or files",
             KeyAction::PaletteCursorStart => "Palette: cursor to start",
             KeyAction::PaletteCursorEnd => "Palette: cursor to end",
             KeyAction::PaletteSelectAll => "Palette: select all",
@@ -647,6 +645,7 @@ impl KeyAction {
             KeyAction::GetInfo => Some("cmd-i"),
             KeyAction::BatchRename => Some("cmd-shift-r"),
             KeyAction::Undo => Some("cmd-z"),
+            KeyAction::Paste => Some("cmd-v"),
             KeyAction::PaletteCursorStart => Some("cmd-left"),
             KeyAction::PaletteCursorEnd => Some("cmd-right"),
             KeyAction::PaletteSelectAll => Some("cmd-a"),
@@ -1477,32 +1476,6 @@ impl Settings {
                         cx.listener(|_, _: &ClickEvent, _, cx| {
                             let mut np = prefs();
                             np.show_filter_button = !np.show_filter_button;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                    toggle_row(
-                        "tg-terminal",
-                        "Terminal mode",
-                        "Show a command input at the bottom to move through the explorer like a terminal (with path/command autocomplete).",
-                        p.terminal,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.terminal = !np.terminal;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                    toggle_row(
-                        "tg-term-history",
-                        "Terminal history",
-                        "Show a scrollback of what you've typed and command output above the input (otherwise it's just the input line).",
-                        p.term_history,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.term_history = !np.term_history;
                             apply_prefs(np, cx);
                             cx.notify();
                         }),
@@ -3299,6 +3272,9 @@ enum ViewMode {
 /// find, and path-edit state.
 struct Tab {
     current_dir: PathBuf,
+    terminal: Option<studio_terminal::Session>,
+    terminal_open: bool,
+    terminal_height: f32,
     entries: Vec<Entry>,
     /// Back/forward navigation history and our position within it.
     history: Vec<PathBuf>,
@@ -3471,6 +3447,9 @@ impl Tab {
         let entries = read_entries_fast(&dir);
         Tab {
             current_dir: dir.clone(),
+            terminal: None,
+            terminal_open: false,
+            terminal_height: 290.0,
             entries,
             history: vec![dir.clone()],
             hist_pos: 0,
@@ -3655,11 +3634,8 @@ struct Shuffle {
     ssh_ask: bool,
     /// Recently-connected server URLs (most recent first).
     server_history: Vec<String>,
-    // Terminal mode (the bottom command bar).
-    term_input: String,
-    term_output: Vec<String>,
-    term_focused: bool,
-    term_scroll: ScrollHandle,
+    /// Dragging the terminal divider: pane, starting Y, starting height.
+    terminal_resize: Option<(usize, f32, f32)>,
     /// State of the self-updater's banner. `None` = up to date / not checked /
     /// dismissed.
     update: Option<UpdateStatus>,
@@ -4006,10 +3982,7 @@ impl Shuffle {
             server_dialog: None,
             ssh_ask: false,
             server_history: read_string_list("servers.txt"),
-            term_input: String::new(),
-            term_output: Vec::new(),
-            term_focused: false,
-            term_scroll: ScrollHandle::new(),
+            terminal_resize: None,
             update: None,
             preview_page: 0,
             hovered: None,
@@ -8567,6 +8540,7 @@ impl Shuffle {
                 }
             }
             KeyAction::Undo => self.undo_last(cx),
+            KeyAction::Paste => self.paste_from_clipboard(cx),
             KeyAction::Refresh => {
                 let dir = self.tab(pane).current_dir.clone();
                 if self.tab(pane).remote.is_none() && cloud_kind(&dir).is_some() && cloudctl_path().is_some() {
@@ -8658,13 +8632,6 @@ impl Shuffle {
         // While the in-directory find bar is open, keys feed the filter.
         if self.active_tab().find_query.is_some() {
             self.handle_find_key(ev, cx);
-            return;
-        }
-
-        // While the terminal input is focused, keys feed it (except Cmd+P, which
-        // still opens the palette).
-        if self.term_focused && prefs().terminal && !(cmd && key == "p") {
-            self.handle_term_key(ev, cx);
             return;
         }
 
@@ -9400,6 +9367,7 @@ impl Shuffle {
 
         // Fast first paint + background metadata fill.
         self.reload_pane(pane, cx);
+        self.sync_terminal_directory(pane);
     }
 
     /// Navigate a pane into `dir` if it is a directory. New navigation truncates
@@ -10142,6 +10110,12 @@ impl Shuffle {
         if self.active_pane >= self.panes.len() {
             self.active_pane = self.panes.len() - 1;
         }
+        let shown = pane.min(self.panes.len() - 1);
+        if self.tab(shown).entries.iter().any(|entry| !entry.loaded) {
+            self.reload_pane(shown, cx);
+        } else {
+            self.prewarm_icons(cx);
+        }
         cx.notify();
     }
 
@@ -10410,7 +10384,6 @@ impl Shuffle {
             return;
         }
         self.active_pane = pane;
-        self.term_focused = false;
         let mods = ev.modifiers();
         if mods.platform {
             self.toggle_entry(pane, path, cx);
@@ -10446,7 +10419,6 @@ impl Shuffle {
             eprintln!("[mq] begin pane={pane} at ({x:.0},{y:.0})");
         }
         self.active_pane = pane;
-        self.term_focused = false;
         self.rename = None;
         {
             let tab = self.tab_mut(pane);
@@ -10808,7 +10780,6 @@ impl Shuffle {
         cx: &mut Context<Self>,
     ) {
         self.active_pane = pane;
-        self.term_focused = false;
         let mods = ev.modifiers();
         // Cmd-click: toggle this item in a multi-selection without navigating or
         // collapsing the columns to its right (Finder-style non-contiguous pick).
@@ -11359,237 +11330,6 @@ impl Shuffle {
         }
 
         Some(col.into_any_element())
-    }
-
-    // ----- terminal mode (the bottom command bar) -----
-
-    /// Append a line to the terminal scrollback, capped to a sane length.
-    fn term_push(&mut self, line: impl Into<String>) {
-        self.term_output.push(line.into());
-        let n = self.term_output.len();
-        if n > 400 {
-            self.term_output.drain(0..n - 400);
-        }
-    }
-
-    /// Run the current terminal input against the active pane's directory.
-    fn run_term_command(&mut self, cx: &mut Context<Self>) {
-        let pane = self.active_pane;
-        let cwd = self.tab(pane).current_dir.clone();
-        let cmd = self.term_input.trim().to_string();
-        self.term_input.clear();
-        if cmd.is_empty() {
-            return;
-        }
-        self.term_push(format!("{} ❯ {}", path_label(&cwd), cmd));
-
-        if cmd == "clear" {
-            self.term_output.clear();
-            cx.notify();
-            return;
-        }
-
-        // `cd` navigates the explorer instead of spawning a shell.
-        if cmd == "cd" || cmd.starts_with("cd ") {
-            let arg = cmd[2..].trim();
-            let target = resolve_dir(&cwd, arg);
-            if target.is_dir() {
-                self.navigate_in(pane, target, cx);
-            } else {
-                self.term_push(format!("cd: no such directory: {arg}"));
-                cx.notify();
-            }
-            return;
-        }
-
-        // Everything else runs in a shell, rooted at the current directory.
-        let output = Command::new("sh")
-            .arg("-lc")
-            .arg(&cmd)
-            .current_dir(&cwd)
-            .output();
-        match output {
-            Ok(out) => {
-                for line in String::from_utf8_lossy(&out.stdout).lines() {
-                    self.term_push(line.to_string());
-                }
-                for line in String::from_utf8_lossy(&out.stderr).lines() {
-                    self.term_push(line.to_string());
-                }
-            }
-            Err(e) => self.term_push(format!("error: {e}")),
-        }
-        // The command may have changed the directory contents.
-        self.refresh_pane(pane, cx);
-        self.term_scroll.set_offset(point(px(0.0), px(-1e6)));
-        cx.notify();
-    }
-
-    /// Tab-completion for the terminal input: completes the last token against
-    /// directory entries (and built-in commands for the first token).
-    fn term_autocomplete(&mut self, cx: &mut Context<Self>) {
-        let cwd = self.tab(self.active_pane).current_dir.clone();
-        let input = self.term_input.clone();
-        let (prefix, last) = match input.rfind(' ') {
-            Some(i) => (input[..=i].to_string(), input[i + 1..].to_string()),
-            None => (String::new(), input.clone()),
-        };
-        let is_command = prefix.is_empty();
-
-        // Split the last token into a base directory and a partial name.
-        let (base, partial) = match last.rfind('/') {
-            Some(i) => (resolve_dir(&cwd, &last[..=i]), last[i + 1..].to_string()),
-            None => (cwd.clone(), last.clone()),
-        };
-
-        let mut cands: Vec<(String, bool)> = list_dir_names(&base)
-            .into_iter()
-            .filter(|(n, _)| n.to_lowercase().starts_with(&partial.to_lowercase()))
-            .collect();
-        if is_command && last.rfind('/').is_none() {
-            for c in ["cd", "ls", "clear", "mkdir", "rm", "cp", "mv", "open", "cat", "grep", "git"] {
-                if c.starts_with(&partial) {
-                    cands.push((c.to_string(), false));
-                }
-            }
-        }
-        if cands.is_empty() {
-            return;
-        }
-
-        // Complete to the longest common prefix of the candidates.
-        let common = longest_common_prefix(cands.iter().map(|(n, _)| n.as_str()));
-        let base_str = match last.rfind('/') {
-            Some(i) => last[..=i].to_string(),
-            None => String::new(),
-        };
-        if cands.len() == 1 {
-            let (name, is_dir) = &cands[0];
-            let suffix = if *is_dir { "/" } else { "" };
-            self.term_input = format!("{prefix}{base_str}{name}{suffix}");
-        } else {
-            if common.len() > partial.len() {
-                self.term_input = format!("{prefix}{base_str}{common}");
-            }
-            // Show the options.
-            let names: Vec<String> = cands.iter().map(|(n, _)| n.clone()).take(40).collect();
-            self.term_push(names.join("    "));
-        }
-        cx.notify();
-    }
-
-    /// Keystrokes while the terminal input is focused.
-    fn handle_term_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
-        let ks = &ev.keystroke;
-        let cmd = ks.modifiers.platform;
-        match ks.key.as_str() {
-            "escape" => {
-                self.term_focused = false;
-                cx.notify();
-            }
-            "enter" => self.run_term_command(cx),
-            "tab" => self.term_autocomplete(cx),
-            "backspace" => {
-                self.term_input.pop();
-                cx.notify();
-            }
-            "v" if cmd => {
-                if let Some(t) = cx.read_from_clipboard().and_then(|i| i.text()) {
-                    self.term_input.push_str(t.trim());
-                    cx.notify();
-                }
-            }
-            _ => {
-                if cmd {
-                    return;
-                }
-                if let Some(ch) = ks.key_char.as_ref() {
-                    if !ch.is_empty() && !ch.chars().any(char::is_control) {
-                        self.term_input.push_str(ch);
-                        cx.notify();
-                    }
-                }
-            }
-        }
-    }
-
-    /// The bottom terminal-mode bar: scrollback + a prompt input line.
-    fn render_terminal_bar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let t = theme();
-        let cwd = path_label(&self.active_tab().current_dir);
-        let focused = self.term_focused;
-
-        let mut bar = div()
-            .id("terminal-bar")
-            .flex_none()
-            .flex()
-            .flex_col()
-            .w_full()
-            .bg(rgb(t.sidebar))
-            .border_t_1()
-            .border_color(rgb(if focused { t.accent } else { t.border }))
-            .text_color(rgb(t.text))
-            .font_family("monospace")
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseDownEvent, window, cx| {
-                    this.term_focused = true;
-                    window.focus(&this.focus);
-                    cx.notify();
-                }),
-            );
-
-        // Scrollback — only when the history toggle is on and there's output.
-        if prefs().term_history && !self.term_output.is_empty() {
-            let lines: Vec<AnyElement> = self
-                .term_output
-                .iter()
-                .map(|l| {
-                    div()
-                        .text_size(px(UI_SMALL_FONT_SIZE))
-                        .text_color(rgb(t.text_muted))
-                        .child(l.clone())
-                        .into_any_element()
-                })
-                .collect();
-            bar = bar.child(
-                div()
-                    .id("terminal-out")
-                    .max_h(px(140.0))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.term_scroll)
-                    .px_3()
-                    .py_1()
-                    .flex()
-                    .flex_col()
-                    .children(lines),
-            );
-        }
-
-        // Prompt line.
-        bar.child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .py_2()
-                .border_t_1()
-                .border_color(rgb(t.border))
-                .child(div().flex_none().text_color(rgb(t.accent)).child(format!("{cwd} ❯")))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(if self.term_input.is_empty() && !focused {
-                            "Type a command… (cd to navigate, Tab to autocomplete)".to_string()
-                        } else if focused {
-                            format!("{}\u{2502}", self.term_input)
-                        } else {
-                            self.term_input.clone()
-                        }),
-                ),
-        )
     }
 
     /// The floating filter box, anchored bottom-right while find is active.
@@ -13259,10 +12999,10 @@ impl Shuffle {
             // input) — repaint right away so the focus rule follows the click.
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                    if this.active_pane != pane || this.term_focused {
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                    window.focus(&this.focus);
+                    if this.active_pane != pane {
                         this.active_pane = pane;
-                        this.term_focused = false;
                         cx.notify();
                     }
                 }),
@@ -13284,6 +13024,7 @@ impl Shuffle {
                     .children(self.rename_error_pill(pane))
                     .child(self.render_filter_box(pane, cx)),
             )
+            .children(self.render_terminal_panel(pane, cx))
     }
 
     /// The List view body: clickable column header + virtualized rows.
@@ -14145,6 +13886,12 @@ impl Render for Shuffle {
                 // A press-then-move on a file row becomes a native OS drag (so
                 // files can be dropped into Finder or any other app).
                 this.maybe_start_os_drag(x, y, window, cx);
+                if let Some((pane, start_y, start_height)) = this.terminal_resize {
+                    if pane < this.panes.len() {
+                        this.tab_mut(pane).terminal_height = (start_height + start_y - y).clamp(150.0, (f32::from(window.bounds().size.height) - 230.0).max(150.0));
+                        cx.notify();
+                    }
+                }
                 this.update_resize(x, cx);
                 this.update_scroll_drag(y, cx);
                 this.update_hbar_drag(x, cx);
@@ -14156,6 +13903,7 @@ impl Render for Shuffle {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
                     this.drag_candidate = None;
+                    this.terminal_resize = None;
                     this.end_resize();
                     this.end_scroll_drag(cx);
                     this.hbar_drag = None;
@@ -14227,11 +13975,6 @@ impl Render for Shuffle {
         }
 
         root = root.child(main_row).child(self.render_studio_status(cx));
-
-        // Terminal-mode command bar at the bottom.
-        if prefs().terminal {
-            root = root.child(self.render_terminal_bar(cx));
-        }
 
         if let Some(panel) = self.render_jobs_panel() {
             root = root.child(panel);
@@ -14522,56 +14265,6 @@ fn expand_path(s: &str) -> PathBuf {
     } else {
         PathBuf::from(s)
     }
-}
-
-/// Resolve a `cd` argument against `cwd` (handles `~`, absolute, relative, `..`).
-fn resolve_dir(cwd: &Path, arg: &str) -> PathBuf {
-    let arg = arg.trim();
-    if arg.is_empty() || arg == "~" {
-        return if arg == "~" { home_dir() } else { cwd.to_path_buf() };
-    }
-    if let Some(rest) = arg.strip_prefix("~/") {
-        return normalize_path(&home_dir().join(rest));
-    }
-    let p = PathBuf::from(arg);
-    let joined = if p.is_absolute() { p } else { cwd.join(p) };
-    normalize_path(&joined)
-}
-
-/// Lexically normalize a path, collapsing `.` and `..` without touching disk.
-fn normalize_path(p: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut out = PathBuf::new();
-    for comp in p.components() {
-        match comp {
-            Component::ParentDir => {
-                out.pop();
-            }
-            Component::CurDir => {}
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
-}
-
-/// Longest common string prefix across the given strings.
-fn longest_common_prefix<'a>(it: impl Iterator<Item = &'a str>) -> String {
-    let mut prefix: Option<String> = None;
-    for s in it {
-        match prefix {
-            None => prefix = Some(s.to_string()),
-            Some(ref mut p) => {
-                let common: String = p
-                    .chars()
-                    .zip(s.chars())
-                    .take_while(|(a, b)| a == b)
-                    .map(|(a, _)| a)
-                    .collect();
-                *p = common;
-            }
-        }
-    }
-    prefix.unwrap_or_default()
 }
 
 /// Open the Settings window (shared by the menu action and the palette).
@@ -19259,8 +18952,8 @@ fn save_prefs(p: &Prefs) {
             let _ = fs::create_dir_all(parent);
         }
         let body = format!(
-            "terminal={}\nterm_history={}\npreview={}\npreview_pages={}\ninfo={}\nshow_parent={}\nsidebar_collapsed={}\nrecent_limit={}\npalette_history={}\ngroups_enabled={}\nshow_filter_button={}\nshow_fps={}\nscript_actions={}\nssh_use_system={}\nssh_configured={}\nwaterfall={}\npalette_opacity={}\n",
-            p.terminal, p.term_history, p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.recent_limit, p.palette_history, p.groups_enabled, p.show_filter_button, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured, p.waterfall, p.palette_opacity
+            "preview={}\npreview_pages={}\ninfo={}\nshow_parent={}\nsidebar_collapsed={}\nrecent_limit={}\npalette_history={}\ngroups_enabled={}\nshow_filter_button={}\nshow_fps={}\nscript_actions={}\nssh_use_system={}\nssh_configured={}\nwaterfall={}\npalette_opacity={}\n",
+            p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.recent_limit, p.palette_history, p.groups_enabled, p.show_filter_button, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured, p.waterfall, p.palette_opacity
         );
         let _ = fs::write(&file, body);
     }
@@ -19382,8 +19075,6 @@ fn load_prefs() -> Prefs {
                 };
                 let on = v.trim() == "true";
                 match k.trim() {
-                    "terminal" => p.terminal = on,
-                    "term_history" => p.term_history = on,
                     "preview" => p.preview = on,
                     "preview_pages" => p.preview_pages = on,
                     "info" => p.info = on,
@@ -19998,7 +19689,7 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-    fn scratch(name: &str) -> PathBuf {
+    pub(super) fn scratch(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("shuffle-test-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();

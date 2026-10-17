@@ -1,0 +1,51 @@
+export ZDOTDIR="$SHUFFLE_STUDIO_USER_ZDOTDIR"
+if [[ "$SHUFFLE_STUDIO_TEST_SHELL" != 1 && -r "$ZDOTDIR/.zshrc" ]]; then
+  source "$ZDOTDIR/.zshrc"
+fi
+if [[ "$SHUFFLE_STUDIO_TEST_SHELL" == 1 ]]; then
+  HISTFILE=/dev/null
+  PROMPT='studio-test%# '
+fi
+# OSC 7 identifies the local working folder; OSC 133 identifies a ready prompt.
+function _shuffle_studio_cwd() {
+  local studio_directory="$PWD"
+  studio_directory="${studio_directory//\%/%25}"
+  studio_directory="${studio_directory// /%20}"
+  studio_directory="${studio_directory//\#/%23}"
+  studio_directory="${studio_directory//\?/%3F}"
+  studio_directory="${studio_directory//$'\n'/%0A}"
+  studio_directory="${studio_directory//$'\r'/%0D}"
+  studio_directory="${studio_directory//$'\e'/%1B}"
+  studio_directory="${studio_directory//$'\a'/%07}"
+  printf '\e]7;file://localhost%s\a' "$studio_directory"
+}
+function _shuffle_studio_ready() {
+  _shuffle_studio_cwd
+  printf '\e]133;A\a'
+}
+function _shuffle_studio_busy() {
+  printf '\e]133;C\a'
+}
+# A ZLE widget changes directory without replacing an unfinished command line.
+# Directory bytes arrive through a private file, never as executable shell text.
+function _shuffle_studio_cd() {
+  local target
+  IFS= builtin read -r -d '' target < "$SHUFFLE_STUDIO_CWD_REQUEST"
+  if ! builtin cd -- "$target"; then
+    printf '\e]133;D;1\a'
+  fi
+  _shuffle_studio_ready
+  zle reset-prompt
+}
+autoload -Uz add-zsh-hook
+add-zsh-hook chpwd _shuffle_studio_cwd
+add-zsh-hook precmd _shuffle_studio_ready
+add-zsh-hook preexec _shuffle_studio_busy
+zle -N _shuffle_studio_cd
+for map in emacs viins vicmd; do
+  bindkey -M "$map" $'\e[99;1~' _shuffle_studio_cd
+done
+
+if [[ "$SHUFFLE_STUDIO_TEST_SHELL" == 1 ]]; then
+  export ZDOTDIR="$SHUFFLE_STUDIO_INTEGRATION_DIR"
+fi
