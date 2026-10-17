@@ -5,10 +5,10 @@ cd "$(dirname "$0")"
 if [ -d /Applications/Xcode.app/Contents/Developer ]; then
     export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 fi
-APP="Shuffle Studio.app"
+APP="Getter.app"
 PROFILE="${STUDIO_BUILD_PROFILE:-release}"
 TARGET="${CARGO_TARGET_DIR:-target}"
-BINARY="$TARGET/$PROFILE/shuffle-studio"
+BINARY="$TARGET/$PROFILE/getter"
 if [ ! -f "$BINARY" ]; then
     echo "Build the $PROFILE binary first with ./build.sh."
     exit 1
@@ -16,7 +16,7 @@ fi
 VERSION=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1)
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BINARY" "$APP/Contents/MacOS/shuffle-studio"
+cp "$BINARY" "$APP/Contents/MacOS/getter"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 mkdir -p "$APP/Contents/Resources/Licenses"
 cp LICENSE "$APP/Contents/Resources/Licenses/Shuffle-MIT.txt"
@@ -32,10 +32,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-    <key>CFBundleName</key><string>Shuffle Studio</string>
-    <key>CFBundleDisplayName</key><string>Shuffle Studio</string>
-    <key>CFBundleExecutable</key><string>shuffle-studio</string>
-    <key>CFBundleIdentifier</key><string>local.shuffle-studio.app</string>
+    <key>CFBundleName</key><string>Getter</string>
+    <key>CFBundleDisplayName</key><string>Getter</string>
+    <key>CFBundleExecutable</key><string>getter</string>
+    <key>CFBundleIdentifier</key><string>local.getter.app</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
@@ -46,6 +46,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSHumanReadableCopyright</key><string>Based on Shuffle. Original code © Jaime Guzman, MIT license.</string>
 </dict></plist>
 PLIST
-codesign --force --sign - --identifier local.shuffle-studio.app "$APP"
+codesign --force --sign - --identifier local.getter.app "$APP"
 codesign --verify --deep --strict "$APP"
 echo "Built $PWD/$APP"

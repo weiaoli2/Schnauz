@@ -25,6 +25,7 @@ struct Process {
     killer: Box<dyn ChildKiller + Send + Sync>,
     exited: Arc<AtomicBool>,
     request_file: PathBuf,
+    shell_pid: Option<u32>,
 }
 impl Process {
     fn input(&self, bytes: &[u8]) -> std::io::Result<()> {
@@ -33,11 +34,48 @@ impl Process {
     }
 
     fn change_directory(&self, folder: &Path) -> std::io::Result<()> {
+        if self.has_foreground_app() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "A terminal app is running",
+            ));
+        }
         use std::os::unix::ffi::OsStrExt;
         let mut bytes = folder.as_os_str().as_bytes().to_vec();
         bytes.push(0);
-        crate::workspaces::atomic_write(&self.request_file, &bytes)?;
+        crate::projects::atomic_write(&self.request_file, &bytes)?;
         self.input(CD_WIDGET)
+    }
+
+    fn has_foreground_app(&self) -> bool {
+        match (
+            self.shell_pid,
+            self.master.lock().unwrap().process_group_leader(),
+        ) {
+            (Some(shell), Some(foreground)) => foreground as u32 != shell,
+            _ => false,
+        }
+    }
+
+    fn is_idle_shell(&self) -> bool {
+        let Some(shell) = self.shell_pid else {
+            return false;
+        };
+        if self.exited.load(Ordering::Acquire)
+            || self.master.lock().unwrap().process_group_leader() != Some(shell as i32)
+        {
+            return false;
+        }
+        // A prompt alone isn't enough: a background or suspended job must also
+        // survive. Check only on an explicit recovery click, never every frame.
+        let mut children = [0 as libc::pid_t; 128];
+        unsafe {
+            libc::proc_listchildpids(
+                shell as libc::pid_t,
+                children.as_mut_ptr().cast(),
+                std::mem::size_of_val(&children) as i32,
+            ) == 0
+        }
     }
 }
 
@@ -71,7 +109,7 @@ fn spawn_process(
         (".zprofile", include_str!("terminal-shell/zprofile")),
         (".zshrc", include_str!("terminal-shell/zshrc")),
     ] {
-        crate::workspaces::atomic_write(&integration.join(name), source.as_bytes())
+        crate::projects::atomic_write(&integration.join(name), source.as_bytes())
             .map_err(|e| e.to_string())?;
     }
     let requests = settings.join("terminal/requests");
@@ -92,7 +130,7 @@ fn spawn_process(
     command.cwd(cwd);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    command.env("TERM_PROGRAM", "ShuffleStudio");
+    command.env("TERM_PROGRAM", "Getter");
     command.env("ZDOTDIR", &integration);
     command.env("SHUFFLE_STUDIO_INTEGRATION_DIR", &integration);
     command.env(
@@ -113,6 +151,7 @@ fn spawn_process(
         .map_err(|e| e.to_string())?;
     drop(pair.slave);
     let killer = child.clone_killer();
+    let shell_pid = child.process_id();
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = SharedWriter(Arc::new(Mutex::new(
         pair.master.take_writer().map_err(|e| e.to_string())?,
@@ -130,9 +169,32 @@ fn spawn_process(
             killer,
             exited,
             request_file,
+            shell_pid,
         },
         reader,
     ))
+}
+
+#[derive(Default)]
+struct ForegroundSync {
+    running: bool,
+    browser_moved: bool,
+}
+impl ForegroundSync {
+    fn started(&mut self) {
+        // Enter is also delivered by editors, Codex, REPLs and other CLIs.
+        // Only the transition out of the shell prompt begins a new command.
+        if !self.running {
+            self.browser_moved = false;
+        }
+        self.running = true;
+    }
+    fn prompt_ready(&mut self) -> bool {
+        let follow = !self.browser_moved;
+        self.running = false;
+        self.browser_moved = false;
+        follow
+    }
 }
 
 pub(super) struct Session {
@@ -140,6 +202,7 @@ pub(super) struct Session {
     pub view: Entity<TerminalView>,
     pub cwd: PathBuf,
     pub ready: bool,
+    guard: ForegroundSync,
     pub pending: Option<PathBuf>,
     process: Process,
 }
@@ -152,11 +215,17 @@ impl Session {
             self.pending = None;
             return;
         }
+        if self.guard.running || self.process.has_foreground_app() {
+            self.guard.running = true;
+            self.guard.browser_moved = true;
+            self.pending = None;
+            return;
+        }
         self.pending = Some(folder);
         self.flush_directory();
     }
     fn flush_directory(&mut self) {
-        if !self.ready || self.exited() {
+        if !self.ready || self.guard.running || self.exited() {
             return;
         }
         if self.pending.as_ref() == Some(&self.cwd) {
@@ -189,77 +258,9 @@ impl Shuffle {
             .as_ref()
             .is_none_or(|session| session.exited());
         if restart {
-            let cwd = self.tab(pane).current_dir.clone();
-            let settings = config_dir().unwrap_or_else(std::env::temp_dir);
-            let (process, reader) = match spawn_process(&cwd, &settings, false) {
-                Ok(pair) => pair,
-                Err(error) => {
-                    self.set_notice(format!("Couldn't start terminal: {error}"), cx);
-                    return;
-                }
-            };
-            let id = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
-            let parent = cx.entity().downgrade();
-            let parent_exit = parent.clone();
-            let resize_master = process.master.clone();
-            let writer = process.writer.clone();
-            let config = TerminalConfig {
-                font_family: "Menlo".into(),
-                font_size: px(12.0),
-                cols: 100,
-                rows: 18,
-                scrollback: 10000,
-                line_height_multiplier: 1.15,
-                padding: Edges::all(px(8.0)),
-                colors: ColorPalette::builder()
-                    .background(0x15, 0x18, 0x22)
-                    .foreground(0xdc, 0xe1, 0xec)
-                    .cursor(0xa5, 0xb4, 0xfc)
-                    .build(),
-            };
-            let view = cx.new(|cx| {
-                TerminalView::new(writer, reader, config, cx)
-                    .with_resize_callback(move |cols, rows| {
-                        let _ = resize_master.lock().unwrap().resize(PtySize {
-                            cols: cols.min(u16::MAX as usize) as u16,
-                            rows: rows.min(u16::MAX as usize) as u16,
-                            pixel_width: 0,
-                            pixel_height: 0,
-                        });
-                    })
-                    .with_shell_callback(move |event, window, cx| {
-                        if matches!(event, ShellEvent::Focused | ShellEvent::CommandStarted) {
-                            let _ = parent
-                                .update(cx, |this, cx| this.terminal_shell_event(id, event, cx));
-                        } else {
-                            // Protocol events are drained while drawing the terminal.
-                            // Update its parent after this frame so the new cwd/status
-                            // is guaranteed another frame without waiting for input.
-                            let parent = parent.clone();
-                            let event = event.clone();
-                            window.on_next_frame(move |_, cx| {
-                                let _ = parent.update(cx, |this, cx| {
-                                    this.terminal_shell_event(id, &event, cx)
-                                });
-                            });
-                        }
-                    })
-                    .with_exit_callback(move |window, _| {
-                        let parent = parent_exit.clone();
-                        window.on_next_frame(move |_, cx| {
-                            let _ = parent.update(cx, |_, cx| cx.notify());
-                        });
-                    })
-            });
-            self.tab_mut(pane).terminal = Some(Session {
-                id,
-                view,
-                cwd,
-                ready: false,
-                pending: None,
-                process,
-            });
-            self.tab_mut(pane).terminal_open = true;
+            if !self.start_terminal(pane, cx) {
+                return;
+            }
         } else {
             self.tab_mut(pane).terminal_open = !self.tab(pane).terminal_open;
         }
@@ -277,6 +278,109 @@ impl Shuffle {
             window.focus(&self.focus);
         }
         cx.notify();
+    }
+
+    fn start_terminal(&mut self, pane: usize, cx: &mut Context<Self>) -> bool {
+        let cwd = self.tab(pane).current_dir.clone();
+        let settings = config_dir().unwrap_or_else(std::env::temp_dir);
+        let (process, reader) = match spawn_process(&cwd, &settings, false) {
+            Ok(pair) => pair,
+            Err(error) => {
+                self.set_notice(format!("Couldn't start terminal: {error}"), cx);
+                return false;
+            }
+        };
+        let id = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
+        let parent = cx.entity().downgrade();
+        let parent_exit = parent.clone();
+        let resize_master = process.master.clone();
+        let writer = process.writer.clone();
+        let config = TerminalConfig {
+            font_family: "Menlo".into(),
+            font_size: px(12.0),
+            cols: 100,
+            rows: 18,
+            scrollback: 10000,
+            line_height_multiplier: 1.15,
+            padding: Edges::all(px(8.0)),
+            colors: ColorPalette::builder()
+                .background(0x15, 0x18, 0x22)
+                .foreground(0xdc, 0xe1, 0xec)
+                .cursor(0xa5, 0xb4, 0xfc)
+                .build(),
+        };
+        let view = cx.new(|cx| {
+            TerminalView::new(writer, reader, config, cx)
+                .with_resize_callback(move |cols, rows| {
+                    let _ = resize_master.lock().unwrap().resize(PtySize {
+                        cols: cols.min(u16::MAX as usize) as u16,
+                        rows: rows.min(u16::MAX as usize) as u16,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    });
+                })
+                .with_shell_callback(move |event, window, cx| {
+                    if matches!(event, ShellEvent::Focused | ShellEvent::CommandStarted) {
+                        let _ =
+                            parent.update(cx, |this, cx| this.terminal_shell_event(id, event, cx));
+                    } else {
+                        // Protocol events are drained while drawing the terminal.
+                        // Update its parent after this frame so the new cwd/status
+                        // is guaranteed another frame without waiting for input.
+                        let parent = parent.clone();
+                        let event = event.clone();
+                        window.on_next_frame(move |_, cx| {
+                            let _ = parent
+                                .update(cx, |this, cx| this.terminal_shell_event(id, &event, cx));
+                        });
+                    }
+                })
+                .with_exit_callback(move |window, _| {
+                    let parent = parent_exit.clone();
+                    window.on_next_frame(move |_, cx| {
+                        let _ = parent.update(cx, |_, cx| cx.notify());
+                    });
+                })
+        });
+        self.tab_mut(pane).terminal = Some(Session {
+            id,
+            view,
+            cwd,
+            ready: false,
+            guard: ForegroundSync::default(),
+            pending: None,
+            process,
+        });
+        self.tab_mut(pane).terminal_open = true;
+        true
+    }
+
+    fn recover_terminal(&mut self, pane: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let tab = self.tab(pane);
+        let Some(session) = tab.terminal.as_ref() else {
+            return;
+        };
+        if tab.remote.is_some() || session.cwd == tab.current_dir || session.exited() {
+            return;
+        }
+        if !session.ready
+            || session.guard.running
+            || session.pending.is_some()
+            || !session.process.is_idle_shell()
+        {
+            self.set_notice(
+                "Finish or stop terminal jobs before recovering folder sync.".into(),
+                cx,
+            );
+            return;
+        }
+        // Spawn successfully before replacing the old session. The panel stays
+        // open, and recovery leaves keyboard focus in the file browser.
+        if self.start_terminal(pane, cx) {
+            self.active_pane = pane;
+            window.focus(&self.focus);
+            cx.notify();
+        }
     }
 
     pub(super) fn sync_terminal_directory(&mut self, pane: usize) {
@@ -298,6 +402,60 @@ impl Shuffle {
             })
         });
         let Some((pane, tab_index)) = target else {
+            // A project switch parks its live tabs rather than ending their
+            // shells. Record protocol events without changing the visible project.
+            for live in self.project_sessions.values_mut() {
+                for tab in live.panes.iter_mut().flat_map(|p| &mut p.tabs) {
+                    let Some(session) = tab.terminal.as_mut().filter(|s| s.id == id) else {
+                        continue;
+                    };
+                    match event {
+                        ShellEvent::WorkingDirectory(url) => {
+                            if let Some(folder) =
+                                crate::clipboard_path::parse_path(url, &home_dir())
+                                    .filter(|p| p.is_dir())
+                            {
+                                session.cwd = folder.clone();
+                                if session.pending.as_ref() == Some(&folder) {
+                                    session.pending = None;
+                                }
+                                if tab.terminal_open
+                                    && !session.guard.running
+                                    && session.pending.is_none()
+                                {
+                                    tab.current_dir = folder;
+                                    tab.entries = read_entries_fast(&tab.current_dir);
+                                    tab.find_query = None;
+                                    tab.selection.clear();
+                                    tab.anchor = None;
+                                    tab.col_chain.clear();
+                                    tab.col_active = 0;
+                                    tab.recompute_results();
+                                }
+                            }
+                        }
+                        ShellEvent::PromptReady => {
+                            session.ready = true;
+                            let follow = session.guard.prompt_ready()
+                                && tab.terminal_open
+                                && session.pending.is_none();
+                            if follow {
+                                tab.current_dir = session.cwd.clone();
+                                tab.entries = read_entries_fast(&tab.current_dir);
+                                tab.recompute_results();
+                            }
+                        }
+                        ShellEvent::CommandStarted => {
+                            session.ready = false;
+                            session.guard.started();
+                            session.pending = None;
+                        }
+                        ShellEvent::DirectoryChangeFailed => session.pending = None,
+                        ShellEvent::Focused => {}
+                    }
+                    return;
+                }
+            }
             return;
         };
         let tab = &mut self.panes[pane].tabs[tab_index];
@@ -316,39 +474,58 @@ impl Shuffle {
                 if session.pending.as_ref() == Some(&folder) {
                     session.pending = None;
                 }
-                // A newer queued browser navigation wins over an older shell report.
-                if tab.terminal_open && session.pending.is_none() && tab.current_dir != folder {
-                    if self.panes[pane].active == tab_index {
-                        let previous_active = self.active_pane;
-                        self.navigate_in(pane, folder, cx);
-                        self.active_pane = previous_active;
-                    } else {
-                        let tab = &mut self.panes[pane].tabs[tab_index];
-                        tab.current_dir = folder.clone();
-                        tab.entries = read_entries_fast(&folder);
-                        sort_entries(&mut tab.entries, tab.sort_key, tab.sort_asc);
-                        tab.find_query = None;
-                        tab.recompute_results();
-                        tab.selection.clear();
-                        tab.anchor = None;
-                        tab.col_chain.clear();
-                        tab.col_active = 0;
-                    }
+                // A foreground app may emit its own cwd reports. Record them
+                // without moving the browser while the app owns the terminal.
+                if !session.guard.running {
+                    self.follow_terminal_folder(pane, tab_index, cx);
                 }
             }
             ShellEvent::PromptReady => {
                 session.ready = true;
+                let follow = session.guard.prompt_ready();
                 if tab.terminal_open {
                     session.flush_directory();
+                }
+                if follow {
+                    self.follow_terminal_folder(pane, tab_index, cx);
                 }
             }
             ShellEvent::DirectoryChangeFailed => {
                 session.pending = None;
                 self.set_notice("The terminal couldn't enter that folder.".into(), cx);
             }
-            ShellEvent::CommandStarted => session.ready = false,
+            ShellEvent::CommandStarted => {
+                session.ready = false;
+                session.guard.started();
+                session.pending = None;
+            }
         }
         cx.notify();
+    }
+
+    fn follow_terminal_folder(&mut self, pane: usize, index: usize, cx: &mut Context<Self>) {
+        let tab = &self.panes[pane].tabs[index];
+        let session = tab.terminal.as_ref().unwrap();
+        if !tab.terminal_open || session.pending.is_some() || tab.current_dir == session.cwd {
+            return;
+        }
+        let folder = session.cwd.clone();
+        if self.panes[pane].active == index {
+            let active = self.active_pane;
+            self.navigate_in(pane, folder, cx);
+            self.active_pane = active;
+        } else {
+            let tab = &mut self.panes[pane].tabs[index];
+            tab.current_dir = folder.clone();
+            tab.entries = read_entries_fast(&folder);
+            sort_entries(&mut tab.entries, tab.sort_key, tab.sort_asc);
+            tab.find_query = None;
+            tab.recompute_results();
+            tab.selection.clear();
+            tab.anchor = None;
+            tab.col_chain.clear();
+            tab.col_active = 0;
+        }
     }
 
     pub(super) fn render_terminal_panel(
@@ -362,12 +539,13 @@ impl Shuffle {
         }
         let session = tab.terminal.as_ref()?;
         let t = theme();
+        let synced = session.cwd == tab.current_dir && session.pending.is_none();
         let label = if session.exited() {
             "Session ended"
-        } else if session.pending.is_some() {
-            "Folder change queued"
+        } else if synced {
+            "Synced"
         } else {
-            "zsh"
+            "Unsynced"
         };
         Some(
             div()
@@ -415,7 +593,22 @@ impl Shuffle {
                                 .truncate()
                                 .child(display_path(&session.cwd)),
                         )
-                        .child(label)
+                        .child(
+                            div()
+                                .id(("terminal-sync", pane))
+                                .text_color(rgb(if synced { 0x83d7ac } else { 0xf0c577 }))
+                                .child(label)
+                                .when(!synced && !session.exited(), |d| {
+                                    d.cursor_pointer()
+                                        .hover(|s| s.text_color(rgb(0xffffff)))
+                                        .tooltip(tip("Restart in this folder when idle. Clears scrollback, shell variables and unfinished input."))
+                                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                            cx.stop_propagation();
+                                            this.recover_terminal(pane, window, cx);
+                                        }))
+                                }),
+                        )
+                        .when(session.guard.running, |d| d.child("· Folder sync paused"))
                         .child(
                             div()
                                 .id(("terminal-hide", pane))
@@ -508,6 +701,21 @@ mod tests {
     }
 
     #[test]
+    fn enter_inside_foreground_app_never_reenables_directory_sync() {
+        let mut guard = ForegroundSync::default();
+        guard.started();
+        guard.browser_moved = true;
+        // A Codex prompt or an editor's quit command can contain many Enters.
+        guard.started();
+        guard.started();
+        assert!(!guard.prompt_ready());
+        assert!(!guard.running);
+        // A later explicit shell cd can follow the terminal normally.
+        guard.started();
+        assert!(guard.prompt_ready());
+    }
+
+    #[test]
     fn real_pty_preserves_shell_state_resizes_runs_vim_and_syncs_paths() {
         let root = crate::tests::scratch("real-terminal");
         let start = root.join("start");
@@ -516,6 +724,7 @@ mod tests {
         fs::create_dir_all(&destination).unwrap();
         let mut probe = Probe::start(&start, &root.join("profile"));
         probe.ready();
+        assert!(probe.process.is_idle_shell());
         assert_eq!(
             probe
                 .cwd
@@ -565,12 +774,24 @@ mod tests {
             .process
             .input(b"/usr/bin/vim -Nu NONE -n -i NONE terminal-test.txt\r")
             .unwrap();
-        probe.wait(|_, text| text.contains("\x1b[?1049h") || text.contains("terminal-test.txt"));
+        probe.wait(|_, text| text.contains("\x1b[?1049h"));
+        let request_before = fs::read(&probe.process.request_file).unwrap();
+        assert!(probe.process.has_foreground_app());
+        assert!(!probe.process.is_idle_shell());
+        assert_eq!(
+            probe.process.change_directory(&start).unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        assert_eq!(
+            fs::read(&probe.process.request_file).unwrap(),
+            request_before
+        );
         probe
             .process
             .input(b"iInteractive terminal works\x1b:wq\r")
             .unwrap();
         probe.ready();
+        assert!(probe.process.is_idle_shell());
         assert_eq!(
             fs::read_to_string(destination.join("terminal-test.txt")).unwrap(),
             "Interactive terminal works\n"
@@ -590,7 +811,25 @@ mod tests {
             events.contains(&ShellEvent::DirectoryChangeFailed)
                 && events.contains(&ShellEvent::PromptReady)
         });
+        // Background jobs can leave a ready prompt but must block recovery.
+        probe.command("sleep 30 & STUDIO_TEST_JOB=$!");
+        assert!(!probe.process.has_foreground_app());
+        assert!(!probe.process.is_idle_shell());
+        probe.command(
+            "kill $STUDIO_TEST_JOB; wait $STUDIO_TEST_JOB 2>/dev/null; unset STUDIO_TEST_JOB",
+        );
+        assert!(probe.process.is_idle_shell());
         drop(probe);
+        // An idle restart uses the browser's folder and a fresh shell.
+        let mut restarted = Probe::start(&start, &root.join("profile"));
+        restarted.ready();
+        assert_eq!(
+            restarted.cwd.as_ref().map(|p| fs::canonicalize(p).unwrap()),
+            Some(fs::canonicalize(&start).unwrap())
+        );
+        restarted.command("printf '\\nRESTART_STATE:%s\\n' ${SHUFFLE_TEST_STATE-unset}");
+        assert!(String::from_utf8_lossy(&restarted.output).contains("RESTART_STATE:unset"));
+        drop(restarted);
         fs::remove_dir_all(root).unwrap();
     }
 }

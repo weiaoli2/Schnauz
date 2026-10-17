@@ -1,8 +1,136 @@
-//! Studio's workspace controls and application chrome.
+//! Getter's project controls and application chrome.
 use super::*;
-use crate::workspaces::{Layout, Library, SavedPane, SavedTab};
+use crate::projects::{Layout, Library, SavedPane, SavedTab};
+
+pub(super) struct ProjectSession {
+    pub panes: Vec<Pane>,
+    pub active_pane: usize,
+    pub split_ratio: f32,
+}
 
 impl Shuffle {
+    pub(super) fn render_hidden_button(&self, pane: usize, cx: &Context<Self>) -> AnyElement {
+        let t = theme();
+        let shown = self.tab(pane).show_hidden;
+        div()
+            .id(("hidden-toggle", pane))
+            .flex_none()
+            .w(px(24.0))
+            .h(px(22.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .cursor_pointer()
+            .when(shown, |d| d.bg(rgb(t.surface)))
+            .hover(|d| d.bg(rgb(t.hover)))
+            .tooltip(tip(if shown {
+                "Hide hidden files and folders"
+            } else {
+                "Show hidden files and folders"
+            }))
+            .child(
+                gpui::canvas(
+                    |bounds, _, _| bounds,
+                    move |_, bounds, window, _| {
+                        let p = |x, y| bounds.origin + point(px(x), px(y));
+                        let mut eye = gpui::PathBuilder::stroke(px(1.25));
+                        eye.move_to(p(1.0, 8.0));
+                        eye.cubic_bezier_to(p(15.0, 8.0), p(5.0, 1.0), p(11.0, 1.0));
+                        eye.cubic_bezier_to(p(1.0, 8.0), p(11.0, 15.0), p(5.0, 15.0));
+                        eye.move_to(p(10.0, 8.0));
+                        eye.arc_to(point(px(2.0), px(2.0)), px(0.0), true, true, p(6.0, 8.0));
+                        eye.arc_to(point(px(2.0), px(2.0)), px(0.0), true, true, p(10.0, 8.0));
+                        if !shown {
+                            eye.move_to(p(2.0, 2.0));
+                            eye.line_to(p(14.0, 14.0));
+                        }
+                        if let Ok(path) = eye.build() {
+                            window.paint_path(path, rgb(if shown { t.accent } else { t.text_dim }));
+                        }
+                    },
+                )
+                .size(px(16.0)),
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                let tab = this.tab_mut(pane);
+                tab.show_hidden = !tab.show_hidden;
+                let filter = tab.entry_filter;
+                tab.set_entry_filter(filter);
+                this.save_session();
+                this.prewarm_icons(cx);
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
+    pub(super) fn copy_with_feedback(
+        &mut self,
+        pane: usize,
+        paths: &[PathBuf],
+        cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+        if !copy_files_to_pasteboard(paths) {
+            self.set_notice("Couldn't copy these items to the clipboard.".into(), cx);
+            return;
+        }
+        let message = if paths.len() == 1 {
+            let kind = if is_browsable_folder(&paths[0], paths[0].is_dir()) {
+                "folder"
+            } else {
+                "file"
+            };
+            format!("Copied {kind} ‘{}’", path_label(&paths[0]))
+        } else {
+            format!(
+                "Copied {} items · {}",
+                paths.len(),
+                paths
+                    .iter()
+                    .take(3)
+                    .map(|p| path_label(p))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        self.tab_mut(pane).copy_feedback = Some((message, Instant::now()));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(6)).await;
+            this.update(cx, |_, cx| cx.notify()).ok();
+        })
+        .detach();
+    }
+
+    pub(super) fn render_copy_feedback(&self, pane: usize) -> Option<AnyElement> {
+        let (message, start) = self.tab(pane).copy_feedback.as_ref()?;
+        if start.elapsed() >= Duration::from_secs(6) {
+            return None;
+        }
+        let t = theme();
+        Some(
+            div()
+                .absolute()
+                .left_3()
+                .bottom_3()
+                .max_w(relative(0.75))
+                .px_3()
+                .py_2()
+                .rounded_lg()
+                .border_1()
+                .border_color(rgb(t.border))
+                .bg(rgb(t.surface))
+                .shadow_md()
+                .text_size(px(UI_SMALL_FONT_SIZE))
+                .text_color(rgb(t.text))
+                .child(div().truncate().child(format!("✓ {message}")))
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn paste_from_clipboard(&mut self, cx: &mut Context<Self>) {
         let pane = self.active_pane;
         // Finder's copied file objects retain ordinary copy/paste behavior.
@@ -38,6 +166,14 @@ impl Shuffle {
             tab.view = view;
             self.panes[pane].tabs.push(tab);
             self.panes[pane].active = self.panes[pane].tabs.len() - 1;
+        }
+        if selected_file.as_ref().is_some_and(|path| {
+            use std::os::macos::fs::MetadataExt;
+            path.file_name()
+                .is_some_and(|s| s.as_encoded_bytes().starts_with(b"."))
+                || fs::metadata(path).is_ok_and(|m| m.st_flags() & libc::UF_HIDDEN != 0)
+        }) {
+            self.tab_mut(pane).show_hidden = true;
         }
         if selected_file.is_some() && self.tab(pane).entry_filter == EntryFilter::Folders {
             self.tab_mut(pane).set_entry_filter(EntryFilter::All);
@@ -181,6 +317,7 @@ impl Shuffle {
                         sort: sort_key_name(tab.sort_key).into(),
                         ascending: tab.sort_asc,
                         filter: tab.entry_filter,
+                        show_hidden: tab.show_hidden,
                     });
                 }
             }
@@ -216,6 +353,7 @@ impl Shuffle {
                         tab.sort_key = sort_key_from_name(&saved.sort).unwrap_or(SortKey::None);
                         tab.sort_asc = saved.ascending;
                         tab.entry_filter = saved.filter;
+                        tab.show_hidden = saved.show_hidden;
                         sort_entries(&mut tab.entries, tab.sort_key, tab.sort_asc);
                         tab.recompute_results();
                         tab
@@ -244,146 +382,163 @@ impl Shuffle {
         true
     }
 
-    pub(super) fn open_workspace_dialog(&mut self, cx: &mut Context<Self>) {
-        self.workspace_dialog = Some(String::new());
-        self.workspace_dialog_error = self.workspace_load_error.clone();
+    pub(super) fn open_project_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus);
+        self.new_text_file = None;
+        self.project_dialog = Some(String::new());
+        self.project_dialog_error = self.project_load_error.clone();
         self.context_menu = None;
         self.sidebar_menu = None;
         self.palette_open = false;
         cx.notify();
     }
 
-    fn persist_library(&mut self, candidate: Library) -> Result<(), String> {
-        if let Some(error) = &self.workspace_load_error {
+    pub(super) fn persist_library(&mut self, candidate: Library) -> Result<(), String> {
+        if let Some(error) = &self.project_load_error {
             return Err(error.clone());
         }
-        let path = config_file("workspaces.json").ok_or("Cannot find the settings folder.")?;
+        let path = config_file("projects.json").ok_or("Cannot find the settings folder.")?;
         candidate
             .save(&path)
-            .map_err(|error| format!("Couldn't save the workspace: {error}"))?;
-        self.workspaces = candidate;
+            .map_err(|error| format!("Couldn't save the project: {error}"))?;
+        self.projects = candidate;
         Ok(())
     }
 
-    fn save_workspace(&mut self, cx: &mut Context<Self>) {
-        let Some(name) = self.workspace_dialog.clone() else {
+    fn save_project(&mut self, cx: &mut Context<Self>) {
+        let Some(name) = self.project_dialog.clone() else {
             return;
         };
-        let mut library = self.workspaces.clone();
+        let layout = self.capture_layout();
+        let mut library = self.projects.clone();
+        library.remember_layout(layout.clone());
         let result = library
-            .create(&name, self.capture_layout())
-            .and_then(|id| self.persist_library(library).map(|_| id));
+            .create(&name, layout)
+            .and_then(|id| self.persist_library(library).map(|_| id))
+            .and_then(|id| self.switch_project(Some(id), cx));
         match result {
-            Ok(id) => {
-                self.active_workspace = Some(id);
-                self.workspace_dialog = None;
-                self.workspace_dialog_error = None;
-                self.collapsed_sections.remove("WORKSPACES");
-                self.set_notice(format!("Saved workspace ‘{}’", name.trim()), cx);
+            Ok(()) => {
+                self.project_dialog = None;
+                self.project_dialog_error = None;
+                self.collapsed_sections.remove("PROJECTS");
+                self.collapsed_sections.remove("PROJECT FAVORITES");
+                self.set_notice(format!("Created project ‘{}’", name.trim()), cx);
             }
             Err(error) => {
-                self.workspace_dialog_error = Some(error);
+                self.project_dialog_error = Some(error);
                 cx.notify();
             }
         }
     }
 
-    pub(super) fn restore_workspace(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(saved) = self
-            .workspaces
-            .items
-            .iter()
-            .find(|workspace| workspace.id == id)
-            .cloned()
-        else {
-            return;
-        };
-        let old_count = saved.layout.tab_count();
-        if !self.apply_layout(&saved.layout) {
-            self.sidebar_menu = None;
-            self.set_notice("The folders in this workspace are unavailable. Reconnect the drive or update the workspace.".into(), cx);
-            return;
+    fn switch_project(&mut self, id: Option<u64>, cx: &mut Context<Self>) -> Result<(), String> {
+        self.sidebar_menu = None;
+        if self.projects.active == id {
+            cx.notify();
+            return Ok(());
         }
-        self.active_workspace = Some(id);
+        let mut library = self.projects.clone();
+        library.remember_layout(self.capture_layout());
+        let layout = match id {
+            Some(id) => library
+                .items
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| p.layout.clone())
+                .ok_or("Project not found")?,
+            None => library
+                .personal_layout
+                .clone()
+                .unwrap_or_else(|| self.capture_layout()),
+        };
+        let available = layout
+            .available()
+            .ok_or("This project's folders are unavailable. Reconnect the drive and try again.")?;
+        let old = self.projects.active;
+        library.active = id;
+        // Persist the outgoing layout and destination together before switching.
+        self.persist_library(library)?;
+        let current = ProjectSession {
+            panes: std::mem::take(&mut self.panes),
+            active_pane: self.active_pane,
+            split_ratio: self.split_ratio,
+        };
+        self.project_sessions.insert(old, current);
+        self.apply_layout(&available);
+        if let Some(live) = self.project_sessions.remove(&id) {
+            self.panes = live.panes;
+            self.active_pane = live.active_pane;
+            self.split_ratio = live.split_ratio;
+        }
+        self.terminal_resize = None;
         for pane in 0..self.panes.len() {
             self.reload_pane(pane, cx);
+            self.sync_terminal_directory(pane);
         }
         self.save_session();
-        let skipped = old_count.saturating_sub(self.capture_layout().tab_count());
-        let message = if skipped > 0 {
-            format!(
-                "Opened ‘{}’ · {skipped} unavailable folder(s) skipped",
-                saved.name
-            )
-        } else {
-            format!("Opened workspace ‘{}’", saved.name)
-        };
-        self.set_notice(message, cx);
+        cx.notify();
+        Ok(())
     }
 
-    pub(super) fn update_workspace(&mut self, id: u64, cx: &mut Context<Self>) {
-        let layout = self.capture_layout();
-        self.sidebar_menu = None;
-        if layout.tab_count() == 0 {
-            self.set_notice(
-                "Open a local folder before updating a workspace.".into(),
-                cx,
-            );
-            return;
-        }
-        let mut library = self.workspaces.clone();
-        let Some(workspace) = library
-            .items
-            .iter_mut()
-            .find(|workspace| workspace.id == id)
-        else {
-            return;
-        };
-        workspace.layout = layout;
-        match self.persist_library(library) {
+    pub(super) fn restore_project(&mut self, id: u64, cx: &mut Context<Self>) {
+        match self.switch_project(Some(id), cx) {
             Ok(()) => {
-                self.active_workspace = Some(id);
-                self.set_notice("Workspace updated with the current layout.".into(), cx);
+                let name = self
+                    .projects
+                    .items
+                    .iter()
+                    .find(|p| p.id == id)
+                    .unwrap()
+                    .name
+                    .clone();
+                self.set_notice(format!("Opened project ‘{name}’"), cx);
             }
             Err(error) => self.set_notice(error, cx),
         }
     }
 
-    pub(super) fn remove_workspace(&mut self, id: u64, cx: &mut Context<Self>) {
+    fn restore_personal(&mut self, cx: &mut Context<Self>) {
+        if let Err(error) = self.switch_project(None, cx) {
+            self.set_notice(error, cx);
+        }
+    }
+
+    pub(super) fn remove_project(&mut self, id: u64, cx: &mut Context<Self>) {
         self.sidebar_menu = None;
-        let mut library = self.workspaces.clone();
-        library.items.retain(|workspace| workspace.id != id);
+        if self.projects.active == Some(id) {
+            if let Err(error) = self.switch_project(None, cx) {
+                self.set_notice(error, cx);
+                return;
+            }
+        }
+        let mut library = self.projects.clone();
+        library.items.retain(|project| project.id != id);
         match self.persist_library(library) {
             Ok(()) => {
-                if self.active_workspace == Some(id) {
-                    self.active_workspace = None;
-                }
-                self.set_notice(
-                    "Workspace removed. Your files and open tabs are unchanged.".into(),
-                    cx,
-                );
+                self.project_sessions.remove(&Some(id));
+                self.set_notice("Project removed. Your files are unchanged.".into(), cx);
             }
             Err(error) => self.set_notice(error, cx),
         }
     }
 
-    pub(super) fn handle_workspace_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
+    pub(super) fn handle_project_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
         let key = &ev.keystroke;
         match key.key.as_str() {
             "escape" => {
-                self.workspace_dialog = None;
+                self.project_dialog = None;
                 cx.notify();
             }
-            "enter" => self.save_workspace(cx),
+            "enter" => self.save_project(cx),
             "backspace" => {
-                if let Some(name) = self.workspace_dialog.as_mut() {
+                if let Some(name) = self.project_dialog.as_mut() {
                     name.pop();
                 }
                 cx.notify();
             }
             "v" if key.modifiers.platform => {
                 if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    if let Some(name) = self.workspace_dialog.as_mut() {
+                    if let Some(name) = self.project_dialog.as_mut() {
                         name.push_str(text.trim());
                     }
                     cx.notify();
@@ -392,7 +547,7 @@ impl Shuffle {
             _ if !key.modifiers.platform && !key.modifiers.control => {
                 if let Some(text) = &key.key_char {
                     if !text.chars().any(char::is_control) {
-                        if let Some(name) = self.workspace_dialog.as_mut() {
+                        if let Some(name) = self.project_dialog.as_mut() {
                             name.push_str(text);
                         }
                         cx.notify();
@@ -417,6 +572,7 @@ impl Shuffle {
             pane.tabs[0].remote = self.active_tab().remote.clone();
             pane.tabs[0].view = self.active_tab().view;
             pane.tabs[0].entry_filter = self.active_tab().entry_filter;
+            pane.tabs[0].show_hidden = self.active_tab().show_hidden;
             pane.tabs[0].sort_key = self.active_tab().sort_key;
             pane.tabs[0].sort_asc = self.active_tab().sort_asc;
             self.panes.push(pane);
@@ -447,12 +603,10 @@ impl Shuffle {
         let filter = self.active_tab().entry_filter;
         let filtered = filter != EntryFilter::All;
         let tint = filter_tint(t);
-        let workspace = self.active_workspace.and_then(|id| {
-            self.workspaces
-                .items
-                .iter()
-                .find(|workspace| workspace.id == id)
-        });
+        let project = self
+            .projects
+            .active
+            .and_then(|id| self.projects.items.iter().find(|project| project.id == id));
         div()
             .flex_none()
             .flex()
@@ -475,7 +629,7 @@ impl Shuffle {
                         div()
                             .text_size(px(14.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Shuffle Studio"),
+                            .child("Getter"),
                     )
                     .child(
                         div()
@@ -484,9 +638,9 @@ impl Shuffle {
                             .child(if filtered {
                                 format!("{} · Filter active", filter.description())
                             } else {
-                                workspace
+                                project
                                     .map(|w| w.name.clone())
-                                    .unwrap_or_else(|| "Your files. Your flow.".into())
+                                    .unwrap_or_else(|| "Personal".into())
                             }),
                     ),
             )
@@ -552,16 +706,16 @@ impl Shuffle {
                     .on_click(cx.listener(|_, _: &ClickEvent, _, cx| toggle_inspector(cx))),
             )
             .child(
-                studio_button("studio-save", "Save workspace", true)
-                    .tooltip(tip("Save these folders and tabs · ⌘⇧S"))
-                    .on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| this.open_workspace_dialog(cx)),
-                    ),
+                studio_button("studio-save", "New project", true)
+                    .tooltip(tip("Create a project from these tabs · ⌘⇧S"))
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.open_project_dialog(window, cx)
+                    })),
             )
             .into_any_element()
     }
 
-    pub(super) fn push_workspace_sidebar(
+    pub(super) fn push_project_sidebar(
         &self,
         items: &mut Vec<AnyElement>,
         collapsed: bool,
@@ -571,21 +725,24 @@ impl Shuffle {
         if collapsed {
             return;
         }
-        let add = div()
-            .id("workspace-add")
-            .px_1()
-            .cursor_pointer()
-            .text_color(rgb(t.text_muted))
-            .hover(|s| s.text_color(rgb(t.accent)))
-            .child("+")
-            .tooltip(tip("Save workspace"))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_workspace_dialog(cx)))
-            .into_any_element();
-        items.push(self.section_header_el("WORKSPACES", Some(add), cx));
-        if self.collapsed_sections.contains("WORKSPACES") {
+        let add =
+            div()
+                .id("project-add")
+                .px_1()
+                .cursor_pointer()
+                .text_color(rgb(t.text_muted))
+                .hover(|s| s.text_color(rgb(t.accent)))
+                .child("+")
+                .tooltip(tip("New project"))
+                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.open_project_dialog(window, cx)
+                }))
+                .into_any_element();
+        items.push(self.section_header_el("PROJECTS", Some(add), cx));
+        if self.collapsed_sections.contains("PROJECTS") {
             return;
         }
-        if self.workspaces.items.is_empty() {
+        if self.projects.items.is_empty() {
             items.push(
                 div()
                     .mx_3()
@@ -597,16 +754,44 @@ impl Shuffle {
                     .border_color(rgb(t.border))
                     .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(t.text_muted))
-                    .child("Save a set of folders and tabs. Return to your project in one click.")
+                    .child("Create a project for its own favorites and tabs.")
                     .into_any_element(),
             );
         }
-        for workspace in &self.workspaces.items {
-            let id = workspace.id;
-            let active = self.active_workspace == Some(id);
+        items.push(
+            div()
+                .id("project-personal")
+                .mx_2()
+                .mt_1()
+                .px_3()
+                .py_2()
+                .rounded_lg()
+                .flex()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .when(self.projects.active.is_none(), |s| s.bg(rgb(t.selected)))
+                .text_color(rgb(if self.projects.active.is_none() {
+                    t.accent
+                } else {
+                    t.text_muted
+                }))
+                .hover(|s| s.bg(rgb(t.hover)))
+                .child("⌂")
+                .child("Personal")
+                .tooltip(tip("Your general browsing tabs and favorites"))
+                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    window.focus(&this.focus);
+                    this.restore_personal(cx);
+                }))
+                .into_any_element(),
+        );
+        for project in &self.projects.items {
+            let id = project.id;
+            let active = self.projects.active == Some(id);
             items.push(
                 div()
-                    .id(SharedString::from(format!("workspace-{id}")))
+                    .id(SharedString::from(format!("project-{id}")))
                     .mx_2()
                     .mt_1()
                     .px_3()
@@ -625,20 +810,22 @@ impl Shuffle {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .child(workspace.name.clone()),
+                            .child(project.name.clone()),
                     )
                     .child(
                         div()
                             .text_size(px(10.0))
-                            .child(workspace.layout.tab_count().to_string()),
+                            .child(project.layout.tab_count().to_string()),
                     )
                     .tooltip(tip(format!(
-                        "{} · {} local folder(s)\nRight-click for workspace actions",
-                        workspace.name,
-                        workspace.layout.tab_count()
+                        "{} · {} tab(s) · {} favorite(s)\nChanges are remembered automatically",
+                        project.name,
+                        project.layout.tab_count(),
+                        project.favorites.len()
                     )))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.restore_workspace(id, cx)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        window.focus(&this.focus);
+                        this.restore_project(id, cx)
                     }))
                     .on_mouse_down(
                         MouseButton::Right,
@@ -646,7 +833,7 @@ impl Shuffle {
                             this.open_sidebar_menu(
                                 f32::from(event.position.x),
                                 f32::from(event.position.y),
-                                SidebarTarget::Workspace(id),
+                                SidebarTarget::Project(id),
                                 cx,
                             );
                             cx.stop_propagation();
@@ -657,9 +844,9 @@ impl Shuffle {
         }
     }
 
-    pub(super) fn render_workspace_dialog(&self, cx: &Context<Self>) -> AnyElement {
+    pub(super) fn render_project_dialog(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
-        let name = self.workspace_dialog.clone().unwrap_or_default();
+        let name = self.project_dialog.clone().unwrap_or_default();
         div()
             .absolute()
             .top_0()
@@ -674,7 +861,7 @@ impl Shuffle {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    this.workspace_dialog = None;
+                    this.project_dialog = None;
                     cx.notify();
                 }),
             )
@@ -697,10 +884,10 @@ impl Shuffle {
                         div()
                             .text_size(px(19.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Save your workspace"),
+                            .child("Create a project"),
                     )
                     .child(div().text_size(px(UI_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
-                        "Keep local folders, tabs, view modes and your split layout together.",
+                        "A dedicated set of favorites, tabs and split panes. Changes are remembered automatically.",
                     ))
                     .child(
                         div()
@@ -720,14 +907,14 @@ impl Shuffle {
                                         t.text
                                     }))
                                     .child(if name.is_empty() {
-                                        "Workspace name".into()
+                                        "Project name".into()
                                     } else {
                                         name
                                     }),
                             )
                             .child(div().w(px(1.0)).h(px(17.0)).bg(rgb(t.accent))),
                     )
-                    .children(self.workspace_dialog_error.as_ref().map(|error| {
+                    .children(self.project_dialog_error.as_ref().map(|error| {
                         div()
                             .text_size(px(UI_SMALL_FONT_SIZE))
                             .text_color(rgb(0xd14b57))
@@ -742,26 +929,26 @@ impl Shuffle {
                                 div()
                                     .text_size(px(UI_SMALL_FONT_SIZE))
                                     .text_color(rgb(t.text_muted))
-                                    .child("↵ Save    Esc Cancel"),
+                                    .child("↵ Create    Esc Cancel"),
                             )
                             .child(
                                 div()
                                     .flex()
                                     .gap_2()
                                     .child(
-                                        studio_button("workspace-cancel", "Cancel", false)
+                                        studio_button("project-cancel", "Cancel", false)
                                             .on_click(cx.listener(
                                                 |this, _: &ClickEvent, _, cx| {
-                                                    this.workspace_dialog = None;
+                                                    this.project_dialog = None;
                                                     cx.notify();
                                                 },
                                             )),
                                     )
                                     .child(
-                                        studio_button("workspace-confirm", "Save workspace", true)
+                                        studio_button("project-confirm", "Create project", true)
                                             .on_click(cx.listener(
                                                 |this, _: &ClickEvent, _, cx| {
-                                                    this.save_workspace(cx)
+                                                    this.save_project(cx)
                                                 },
                                             )),
                                     ),
@@ -849,7 +1036,7 @@ fn filter_tint(t: Theme) -> u32 {
     blend(16) | blend(8) | blend(0)
 }
 
-fn studio_button(
+pub(super) fn studio_button(
     id: &'static str,
     label: &'static str,
     accented: bool,

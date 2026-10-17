@@ -1,8 +1,8 @@
 [package]
-name = "shuffle-studio"
+name = "getter"
 version = "0.1.0"
 edition = "2021"
-description = "Shuffle Studio — a personal workspace for your files"
+description = "Getter — a personal workspace for your files"
 publish = false
 
 [dependencies]

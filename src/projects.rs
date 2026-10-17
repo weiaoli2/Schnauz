@@ -1,4 +1,4 @@
-//! Named, local-folder workspaces. Storage is independent of the GPUI views.
+//! Named, local-folder projects. Storage is independent of the GPUI views.
 
 use crate::entry_filter::EntryFilter;
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,8 @@ pub(crate) struct SavedTab {
     pub ascending: bool,
     #[serde(default)]
     pub filter: EntryFilter,
+    #[serde(default)]
+    pub show_hidden: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -74,17 +76,25 @@ impl Layout {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct Workspace {
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct Project {
     pub id: u64,
     pub name: String,
     pub layout: Layout,
+    #[serde(default)]
+    pub favorites: Vec<PathBuf>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub(crate) struct Library {
     version: u32,
-    pub items: Vec<Workspace>,
+    pub items: Vec<Project>,
+    #[serde(default)]
+    pub active: Option<u64>,
+    #[serde(default)]
+    pub personal_layout: Option<Layout>,
+    #[serde(default)]
+    pub personal_favorites: Vec<PathBuf>,
 }
 
 impl Default for Library {
@@ -92,6 +102,9 @@ impl Default for Library {
         Self {
             version: 1,
             items: Vec::new(),
+            active: None,
+            personal_layout: None,
+            personal_favorites: Vec::new(),
         }
     }
 }
@@ -103,47 +116,105 @@ impl Library {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(error) => return Err(error),
         };
-        let library: Self = serde_json::from_slice(&bytes)
+        let mut library: Self = serde_json::from_slice(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let mut ids = HashSet::new();
         let mut names = HashSet::new();
         if library.version != 1
-            || library.items.iter().any(|workspace| {
-                workspace.id == 0
-                    || !ids.insert(workspace.id)
-                    || valid_name(&workspace.name).is_err()
-                    || !names.insert(workspace.name.trim().to_lowercase())
+            || library.items.iter().any(|project| {
+                project.id == 0
+                    || !ids.insert(project.id)
+                    || valid_name(&project.name).is_err()
+                    || !names.insert(project.name.trim().to_lowercase())
             })
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Invalid workspace library",
+                "Invalid project library",
             ));
         }
+        library.active = library
+            .active
+            .filter(|id| library.items.iter().any(|p| p.id == *id));
         Ok(library)
+    }
+
+    pub fn load_migrating(path: &Path, legacy: &Path, favorites: Vec<PathBuf>) -> io::Result<Self> {
+        if path.exists() {
+            return Self::load(path);
+        }
+        let mut library = Self::load(legacy)?;
+        library.personal_favorites = favorites;
+        Ok(library)
+    }
+
+    pub fn favorites(&self) -> &[PathBuf] {
+        self.active
+            .and_then(|id| self.items.iter().find(|p| p.id == id))
+            .map(|p| p.favorites.as_slice())
+            .unwrap_or(&self.personal_favorites)
+    }
+
+    pub fn set_favorite(&mut self, path: PathBuf, pinned: bool) {
+        let favorites = self
+            .active
+            .and_then(|id| self.items.iter_mut().find(|p| p.id == id))
+            .map(|p| &mut p.favorites)
+            .unwrap_or(&mut self.personal_favorites);
+        if pinned {
+            if !favorites.contains(&path) {
+                favorites.push(path);
+            }
+        } else {
+            favorites.retain(|p| p != &path);
+        }
+    }
+
+    pub fn remember_layout(&mut self, layout: Layout) {
+        if layout.tab_count() == 0 {
+            return;
+        }
+        if let Some(project) = self
+            .active
+            .and_then(|id| self.items.iter_mut().find(|p| p.id == id))
+        {
+            project.layout = layout;
+        } else {
+            self.personal_layout = Some(layout);
+        }
     }
 
     pub fn create(&mut self, name: &str, layout: Layout) -> Result<u64, String> {
         let name = valid_name(name)?;
+        if name.eq_ignore_ascii_case("Personal") {
+            return Err(
+                "Personal is reserved for your general browsing. Choose another name.".into(),
+            );
+        }
         if self
             .items
             .iter()
-            .any(|workspace| workspace.name.to_lowercase() == name.to_lowercase())
+            .any(|project| project.name.to_lowercase() == name.to_lowercase())
         {
-            return Err("That name is already used. Choose another name, or update the saved workspace from its menu.".into());
+            return Err("That name is already used. Choose another name.".into());
         }
         if layout.tab_count() == 0 {
-            return Err("Open a local folder before saving a workspace.".into());
+            return Err("Open a local folder before saving a project.".into());
         }
         let id = self
             .items
             .iter()
-            .map(|workspace| workspace.id)
+            .map(|project| project.id)
             .max()
             .unwrap_or(0)
             .checked_add(1)
-            .ok_or("Cannot create another workspace")?;
-        self.items.push(Workspace { id, name, layout });
+            .ok_or("Cannot create another project")?;
+        self.items.push(Project {
+            id,
+            name,
+            layout,
+            favorites: Vec::new(),
+        });
         Ok(id)
     }
 
@@ -157,7 +228,7 @@ impl Library {
 fn valid_name(name: &str) -> Result<String, String> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("Give your workspace a name.".into());
+        return Err("Give your project a name.".into());
     }
     if name.chars().count() > 80 || name.chars().any(char::is_control) {
         return Err("Use up to 80 characters without line breaks.".into());
@@ -201,8 +272,8 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let path = std::env::temp_dir()
-                .join(format!("studio-workspace-{}-{nonce}", std::process::id()));
+            let path =
+                std::env::temp_dir().join(format!("studio-project-{}-{nonce}", std::process::id()));
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }
@@ -219,6 +290,7 @@ mod tests {
             sort: "name".into(),
             ascending: false,
             filter: EntryFilter::Folders,
+            show_hidden: false,
         }
     }
 
@@ -237,7 +309,7 @@ mod tests {
         };
         let mut library = Library::default();
         library.create("  Design / 设计  ", layout.clone()).unwrap();
-        let path = scratch.0.join("settings/workspaces.json");
+        let path = scratch.0.join("settings/projects.json");
         library.save(&path).unwrap();
         let restored = Library::load(&path).unwrap();
         assert_eq!(restored.items[0].name, "Design / 设计");
@@ -278,7 +350,7 @@ mod tests {
     #[test]
     fn corrupted_storage_is_reported_and_left_intact() {
         let scratch = Scratch::new();
-        let path = scratch.0.join("workspaces.json");
+        let path = scratch.0.join("projects.json");
         fs::write(&path, b"{broken").unwrap();
         assert!(Library::load(&path).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"{broken");
@@ -297,5 +369,67 @@ mod tests {
         let json = serde_json::to_vec(&layout).unwrap();
         let restored: Layout = serde_json::from_slice(&json).unwrap();
         assert_eq!(restored, layout);
+    }
+
+    #[test]
+    fn projects_isolate_favorites_and_remember_each_layout_after_restart() {
+        let scratch = Scratch::new();
+        let make_layout = |name: &str| Layout {
+            panes: vec![SavedPane {
+                tabs: vec![tab(scratch.0.join(name))],
+                active: 0,
+            }],
+            active_pane: 0,
+            split_ratio: 0.5,
+        };
+        let mut library = Library::default();
+        library.remember_layout(make_layout("personal"));
+        library.set_favorite(scratch.0.join("personal pin"), true);
+        let a = library.create("Design", make_layout("design")).unwrap();
+        let b = library.create("Writing", make_layout("writing")).unwrap();
+        library.active = Some(a);
+        assert!(library.favorites().is_empty());
+        let pin = scratch.0.join("素材\nnotes");
+        library.set_favorite(pin.clone(), true);
+        library.set_favorite(pin.clone(), true);
+        library.remember_layout(make_layout("design new folder"));
+        library.active = Some(b);
+        assert!(library.favorites().is_empty());
+        library.set_favorite(scratch.0.join("writing pin"), true);
+        library.active = Some(a);
+        assert_eq!(library.favorites(), &[pin.clone()]);
+        let path = scratch.0.join("projects.json");
+        library.save(&path).unwrap();
+        let mut restored = Library::load(&path).unwrap();
+        assert_eq!(restored, library);
+        assert_eq!(restored.items[0].layout, make_layout("design new folder"));
+        restored.set_favorite(pin, false);
+        assert!(restored.favorites().is_empty());
+        restored.active = None;
+        assert_eq!(restored.favorites(), &[scratch.0.join("personal pin")]);
+        assert_eq!(restored.personal_layout, Some(make_layout("personal")));
+    }
+
+    #[test]
+    fn migrates_legacy_workspaces_without_modifying_original_or_reimporting_pins() {
+        let scratch = Scratch::new();
+        let legacy = scratch.0.join("workspaces.json");
+        let bytes = br#"{"version":1,"items":[{"id":1,"name":"Existing","layout":{"panes":[{"tabs":[{"path":"/tmp","view":"list","sort":"none","ascending":true}],"active":0}],"active_pane":0,"split_ratio":0.5}}]}"#;
+        fs::write(&legacy, bytes).unwrap();
+        let path = scratch.0.join("projects.json");
+        let pin = scratch.0.join("old bookmark");
+        let mut library = Library::load_migrating(&path, &legacy, vec![pin.clone()]).unwrap();
+        assert_eq!(library.items[0].name, "Existing");
+        assert!(library.items[0].favorites.is_empty());
+        assert_eq!(library.favorites(), &[pin.clone()]);
+        library.set_favorite(pin, false);
+        library.save(&path).unwrap();
+        let restored =
+            Library::load_migrating(&path, &legacy, vec![scratch.0.join("stale")]).unwrap();
+        assert!(restored.favorites().is_empty());
+        assert_eq!(fs::read(legacy).unwrap(), bytes);
+        assert!(library
+            .create("Personal", library.items[0].layout.clone())
+            .is_err());
     }
 }

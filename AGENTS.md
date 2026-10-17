@@ -1,18 +1,18 @@
-# Shuffle Studio
+# Getter
 
 Independent personal macOS app based on WizenPainter/shuffle, starting at
 50a94466dadef2c483913bc2cd5c76999cda4dda. The local branch is `studio`;
 `studio-starting-point` preserves the unmodified source. `upstream` is reference only.
 
 - Rust + GPUI. Keep the native renderer and Mac integrations.
-- `src/theme.rs`: themes; `src/studio.rs`: custom chrome and workspace UI;
-  `src/workspaces.rs`: typed persistence; `src/main.rs`: existing file manager.
+- `src/theme.rs`: themes; `src/studio.rs`: custom chrome and project UI;
+  `src/projects.rs`: typed persistence; `src/main.rs`: existing file manager.
 - Retain the original MIT LICENSE and attribution.
-- App identity: Shuffle Studio, `local.shuffle-studio.app`. Never enable the
+- App identity: Getter, `local.getter.app`. Never enable the
   original Shuffle self-updater or publish to its GitHub repository.
 - For a normal build run `./build.sh`; for a faster development build use
   `STUDIO_BUILD_PROFILE=debug ./build.sh`. Rust stable and Xcode are required.
-- Run `./test.sh` after workspace or file-operation changes. Use disposable
+- Run `./test.sh` after project or file-operation changes. Use disposable
   folders for copy, move, rename and delete verification.
 - Native UI QA can set `SHUFFLE_STUDIO_CONFIG_DIR`, `SHUFFLE_STUDIO_START_DIR`
   and `SHUFFLE_STUDIO_INDEX_ROOT` to disposable paths. Do not change HOME.
@@ -26,7 +26,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - User feedback: no automatic recursive folder-size calculations while browsing.
   Main text is 12 logical px/pt, small labels 11, file rows 26 px. Keep it compact.
 - All/Folders/Files visibility is independent for each tab and persists in sessions
-  and workspaces. Keep every view, selection and keyboard navigation consistent
+  and projects. Keep every view, selection and keyboard navigation consistent
   with the visible results; tint the top bar while a type filter is active.
 - App bundles keep physical directory semantics for file operations, but display
   as applications with native icons cached per app path. Single-click selects,
@@ -37,5 +37,19 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   the left. Keep the current folder visible, including in narrow split panes.
 - The terminal is a persistent native PTY with an Alacritty-backed component in
   `vendor/gpui-terminal`; old one-shot command mode is removed. Keep two-way cwd
-  sync via OSC 7 and prompt hooks. Browser changes must queue while a foreground
-  program runs, and must not replace unfinished shell input or execute paths as code.
+  sync via OSC 7 and prompt hooks. Browser changes must be ignored while a foreground
+  program runs, including Codex; never queue them to apply later. Preserve unfinished
+  shell input and never execute paths as code.
+- Unsynced is an explicit recovery button. Restart only at a ready shell prompt
+  with the shell owning the PTY and no child jobs. Keep the panel open and file
+  browser focused. Never restart automatically after a foreground app exits.
+
+- Projects replace the old workspace UI. Each owns its favorites and autosaved
+  local layout; Personal has separate favorites/layout. Migrate legacy workspaces
+  and bookmarks without modifying their original files. Keep live PTYs when switching.
+- Hidden items (dot names and macOS UF_HIDDEN) are hidden by default; the per-tab eye
+  toggle applies in every view and combines with type/text filters.
+- Hide the inspector without an actual previewable single selection. Show text as
+  readable native text in a scrollable panel, with bounded reads for large files.
+- New Text File asks for a name before creating anything, appends .txt, and uses
+  create_new so existing data cannot be overwritten. Copy feedback names items in-pane.

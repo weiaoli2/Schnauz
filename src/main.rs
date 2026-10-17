@@ -6,7 +6,7 @@
 //! - Favorites: Applications, Pictures, Documents, Downloads.
 //! - Locations: Macintosh HD (/) and the current user's home directory.
 //! Clicking any item navigates the main listing. The active location is
-//! highlighted. State lives in ~/Library/Application Support/Shuffle Studio/.
+//! highlighted. State lives in ~/Library/Application Support/Getter/.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -65,7 +65,7 @@ actions!(
         GoApplications,
         GoComputer,
         FocusSearch,
-        SaveWorkspace,
+        NewProject,
         ToggleStudioSplit,
         ToggleInspector,
     ]
@@ -75,7 +75,9 @@ actions!(
 
 mod theme;
 use theme::*;
-mod workspaces;
+mod projects;
+mod text_preview;
+mod new_text_file;
 mod entry_filter;
 use entry_filter::EntryFilter;
 mod studio;
@@ -503,6 +505,7 @@ enum KeyAction {
     BatchRename,
     Undo,
     Paste,
+    Copy,
     // Command-palette (Cmd+P) text editing. These act only while the palette is
     // open, so they're excluded from the normal (global) key dispatch.
     PaletteCursorStart,
@@ -537,6 +540,7 @@ impl KeyAction {
         KeyAction::BatchRename,
         KeyAction::Undo,
         KeyAction::Paste,
+        KeyAction::Copy,
         KeyAction::PaletteCursorStart,
         KeyAction::PaletteCursorEnd,
         KeyAction::PaletteSelectAll,
@@ -588,6 +592,7 @@ impl KeyAction {
             KeyAction::BatchRename => "batch_rename",
             KeyAction::Undo => "undo",
             KeyAction::Paste => "paste",
+            KeyAction::Copy => "copy",
             KeyAction::PaletteCursorStart => "palette_cursor_start",
             KeyAction::PaletteCursorEnd => "palette_cursor_end",
             KeyAction::PaletteSelectAll => "palette_select_all",
@@ -622,6 +627,7 @@ impl KeyAction {
             KeyAction::BatchRename => "Rename selected items…",
             KeyAction::Undo => "Undo last file operation",
             KeyAction::Paste => "Paste path or files",
+            KeyAction::Copy => "Copy files",
             KeyAction::PaletteCursorStart => "Palette: cursor to start",
             KeyAction::PaletteCursorEnd => "Palette: cursor to end",
             KeyAction::PaletteSelectAll => "Palette: select all",
@@ -646,6 +652,7 @@ impl KeyAction {
             KeyAction::BatchRename => Some("cmd-shift-r"),
             KeyAction::Undo => Some("cmd-z"),
             KeyAction::Paste => Some("cmd-v"),
+            KeyAction::Copy => Some("cmd-c"),
             KeyAction::PaletteCursorStart => Some("cmd-left"),
             KeyAction::PaletteCursorEnd => Some("cmd-right"),
             KeyAction::PaletteSelectAll => Some("cmd-a"),
@@ -1674,7 +1681,7 @@ impl Settings {
     fn render_update_row(&self, cx: &mut Context<Self>) -> AnyElement {
         if !upstream_updates_enabled() {
             return div().flex().flex_col().gap_1()
-                .child(format!("Shuffle Studio {}", env!("CARGO_PKG_VERSION")))
+                .child(format!("Getter {}", env!("CARGO_PKG_VERSION")))
                 .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(theme().text_muted))
                     .child("Personal build · updates are installed from this project's builds."))
                 .into_any_element();
@@ -2088,7 +2095,7 @@ impl Settings {
         vec![
             settings_header(
                 "Customization",
-                "Make Shuffle Studio yours \u{2014} palette, menus, and app icon.",
+                "Make Getter yours \u{2014} palette, menus, and app icon.",
             )
             .into_any_element(),
             settings_section(
@@ -3157,7 +3164,7 @@ struct Group {
 /// What a right-click in the sidebar targeted (drives its context menu).
 #[derive(Clone)]
 enum SidebarTarget {
-    Workspace(u64),
+    Project(u64),
     /// Empty sidebar space → offer "New Group".
     Empty,
     /// A pinned bookmark path → offer "Remove Bookmark".
@@ -3193,9 +3200,11 @@ struct Entry {
     created: Option<SystemTime>,
     /// Whether size/dates have been read (the fast first pass leaves them empty).
     loaded: bool,
+    hidden_flag: bool,
 }
 
 impl Entry {
+    fn is_hidden(&self) -> bool { self.name.starts_with('.') || self.hidden_flag }
     /// App bundles retain directory semantics for file operations, but are
     /// presented as applications in the browser and its file/folder filters.
     fn is_folder(&self) -> bool {
@@ -3294,6 +3303,9 @@ struct Tab {
     /// `find_results` holds the matching `entries` indices, best match first.
     find_query: Option<String>,
     entry_filter: EntryFilter,
+    show_hidden: bool,
+    has_hidden: bool,
+    copy_feedback: Option<(String, Instant)>,
     find_results: Vec<usize>,
     /// Text cursor (char index) within `find_query`.
     find_cursor: usize,
@@ -3355,7 +3367,7 @@ impl Tab {
     }
 
     fn is_filtered(&self) -> bool {
-        self.entry_filter != EntryFilter::All || self.find_query.is_some()
+        self.entry_filter != EntryFilter::All || self.find_query.is_some() || (!self.show_hidden && self.has_hidden)
     }
 
     fn visible_entries(&self) -> impl Iterator<Item = &Entry> {
@@ -3373,11 +3385,12 @@ impl Tab {
 
     /// Combine the type switch with the text query, preserving the current sort.
     fn recompute_results(&mut self) {
+        self.has_hidden = self.entries.iter().any(Entry::is_hidden);
         let tab = self;
         let q = tab.find_query.as_deref().unwrap_or("").trim();
         if q.is_empty() {
             tab.find_results = tab.entries.iter().enumerate()
-                .filter_map(|(i, entry)| tab.entry_filter.accepts(entry.is_folder()).then_some(i))
+                .filter_map(|(i, entry)| (tab.entry_filter.accepts(entry.is_folder()) && (tab.show_hidden || !entry.is_hidden())).then_some(i))
                 .collect();
             return;
         }
@@ -3406,7 +3419,7 @@ impl Tab {
 
         let mut scored: Vec<(i32, usize)> = Vec::new();
         for (i, e) in tab.entries.iter().enumerate() {
-            if !tab.entry_filter.accepts(e.is_folder()) {
+            if !tab.entry_filter.accepts(e.is_folder()) || (!tab.show_hidden && e.is_hidden()) {
                 continue;
             }
             if !fq.matches_entry(&e.name, e.is_dir, e.size, e.modified) {
@@ -3445,7 +3458,7 @@ impl Tab {
     fn new(dir: PathBuf) -> Self {
         // Fast first paint; full metadata is filled in from the background.
         let entries = read_entries_fast(&dir);
-        Tab {
+        let mut tab = Tab {
             current_dir: dir.clone(),
             terminal: None,
             terminal_open: false,
@@ -3459,6 +3472,9 @@ impl Tab {
             path_anchor: None,
             find_query: None,
             entry_filter: EntryFilter::All,
+            show_hidden: false,
+            has_hidden: false,
+            copy_feedback: None,
             find_results: Vec::new(),
             find_cursor: 0,
             find_anchor: None,
@@ -3480,7 +3496,9 @@ impl Tab {
             dir_sig: None,
             col_sigs: HashMap::new(),
             remote: None,
-        }
+        };
+        tab.recompute_results();
+        tab
     }
 }
 
@@ -3577,7 +3595,6 @@ struct Shuffle {
     /// True while the scrollbar-fade repaint ticker task is alive.
     fade_ticker: bool,
     recents: Vec<PathBuf>,
-    bookmarks: Vec<PathBuf>,
     /// User-defined sidebar groups (when the feature is enabled).
     groups: Vec<Group>,
     /// Open sidebar context menu: (x, y, what was clicked).
@@ -3675,11 +3692,12 @@ struct Shuffle {
     undo_stack: Vec<UndoOp>,
     /// The tabs/split layout as last written to session.txt (skip rewrites).
     saved_session: String,
-    workspaces: workspaces::Library,
-    workspace_load_error: Option<String>,
-    active_workspace: Option<u64>,
-    workspace_dialog: Option<String>,
-    workspace_dialog_error: Option<String>,
+    projects: projects::Library,
+    project_load_error: Option<String>,
+    project_sessions: HashMap<Option<u64>, studio::ProjectSession>,
+    project_dialog: Option<String>,
+    project_dialog_error: Option<String>,
+    new_text_file: Option<new_text_file::Form>,
     /// The open Get Info card, if any.
     info_panel: Option<InfoPanel>,
     /// The open "Rename N Items" dialog, if any.
@@ -3730,6 +3748,10 @@ enum UpdateStatus {
 
 impl Shuffle {
     fn new(dir: PathBuf, cx: &mut Context<Self>) -> Self {
+        cx.on_app_quit(|this, _| {
+            this.save_session();
+            async {}
+        }).detach();
         ensure_base_icons(); // real folder/file icons ready before first render
         ensure_sidebar_icons(); // Applications/Documents/… + Mac/home icons
         ensure_dynamic_sidebar_icons(); // cloud providers + mounted volumes
@@ -3934,12 +3956,14 @@ impl Shuffle {
             this.prewarm_icons(cx);
         })
         .detach();
-        let workspace_result = config_file("workspaces.json")
+        let project_result = config_dir()
             .ok_or_else(|| "Cannot find the settings folder.".to_string())
-            .and_then(|path| workspaces::Library::load(&path).map_err(|error| format!("Couldn't read saved workspaces: {error}. The existing file has been preserved.")));
-        let (workspaces, workspace_load_error) = match workspace_result {
+            .and_then(|dir| projects::Library::load_migrating(
+                &dir.join("projects.json"), &dir.join("workspaces.json"), read_path_list("bookmarks.txt")
+            ).map_err(|error| format!("Couldn't read projects: {error}. The existing file has been preserved.")));
+        let (projects, project_load_error) = match project_result {
             Ok(library) => (library, None),
-            Err(error) => (workspaces::Library::default(), Some(error)),
+            Err(error) => (projects::Library::default(), Some(error)),
         };
         Self {
             panes: vec![Pane::new(dir)],
@@ -3950,7 +3974,6 @@ impl Shuffle {
             collapse_anim: None,
             fade_ticker: false,
             recents: read_path_list("recents.txt"),
-            bookmarks: read_path_list("bookmarks.txt"),
             groups: load_groups(),
             sidebar_menu: None,
             group_dialog: None,
@@ -4000,8 +4023,8 @@ impl Shuffle {
             next_job_id: 0,
             undo_stack: Vec::new(),
             saved_session: String::new(),
-            workspaces, workspace_load_error, active_workspace: None,
-            workspace_dialog: None, workspace_dialog_error: None,
+            projects, project_load_error, project_sessions: HashMap::new(),
+            project_dialog: None, project_dialog_error: None, new_text_file: None,
             info_panel: None,
             batch_rename: None,
         }
@@ -4377,6 +4400,8 @@ impl Shuffle {
     fn sort_tab(&mut self, pane: usize) {
         let (key, asc) = (self.tab(pane).sort_key, self.tab(pane).sort_asc);
         sort_entries(&mut self.tab_mut(pane).entries, key, asc);
+        let hidden = self.tab(pane).entries.iter().any(Entry::is_hidden);
+        self.tab_mut(pane).has_hidden = hidden;
     }
 
     /// Set the sort criterion (clicking the same column toggles direction).
@@ -4752,11 +4777,16 @@ impl Shuffle {
     }
 
     fn save_session(&mut self) {
+        let mut candidate = self.projects.clone();
+        candidate.remember_layout(self.capture_layout());
+        if candidate != self.projects {
+            if let Err(error) = self.persist_library(candidate) { eprintln!("{error}"); }
+        }
         let session = self.session_string();
         if session.is_empty() { return; }
         if session != self.saved_session {
             if let Some(path) = config_file("session.json") {
-                if workspaces::atomic_write(&path, session.as_bytes()).is_ok() {
+                if projects::atomic_write(&path, session.as_bytes()).is_ok() {
                     self.saved_session = session;
                 }
             }
@@ -4764,9 +4794,14 @@ impl Shuffle {
     }
 
     fn restore_session(&mut self) -> bool {
-        let Some(bytes) = config_file("session.json").and_then(|path| fs::read(path).ok()) else { return false };
-        let Ok(layout) = serde_json::from_slice::<workspaces::Layout>(&bytes) else { return false };
-        self.apply_layout(&layout)
+        let saved = self.projects.active
+            .and_then(|id| self.projects.items.iter().find(|p| p.id == id).map(|p| p.layout.clone()))
+            .or_else(|| self.projects.personal_layout.clone())
+            .or_else(|| config_file("session.json").and_then(|p| fs::read(p).ok())
+                .and_then(|bytes| serde_json::from_slice::<projects::Layout>(&bytes).ok()));
+        if saved.as_ref().is_some_and(|layout| self.apply_layout(layout)) { return true; }
+        self.projects.active = None;
+        false
     }
 
     // ----- Get Info -----
@@ -6129,6 +6164,7 @@ impl Shuffle {
 
     /// After an in-place edit, drop stale caches and refresh the listing.
     fn refresh_after_edit(&mut self, pane: usize, path: PathBuf, cx: &mut Context<Self>) {
+        TEXT_PREVIEW_CACHE.with(|c| { c.borrow_mut().remove(&path); });
         PREVIEW_CACHE.with(|c| {
             c.borrow_mut().remove(&path);
         });
@@ -6270,7 +6306,7 @@ impl Shuffle {
                 let label = if many { format!("Copy {n} Items") } else { "Copy".to_string() };
                 nodes.push(mi(label, move |this, _, cx| {
                     this.close_context_menu(cx);
-                    copy_files_to_pasteboard(&ts);
+                    this.copy_with_feedback(pane, &ts, cx);
                 }));
             }
             {
@@ -6382,8 +6418,8 @@ impl Shuffle {
                     let _ = Command::new("open").arg("-R").arg(&p).spawn();
                 }));
                 let p = path.clone();
-                let already = self.bookmarks.iter().any(|b| b == &p);
-                let label = if already { "Remove Bookmark" } else { "Add to Bookmarks" };
+                let already = self.projects.favorites().iter().any(|b| b == &p);
+                let label = if already { "Remove from Favorites" } else { "Add to Favorites" };
                 nodes.push(mi(label, move |this, _, cx| {
                     this.close_context_menu(cx);
                     if already {
@@ -6452,6 +6488,9 @@ impl Shuffle {
         nodes.push(mi("New Folder", move |this, window, cx| {
             this.close_context_menu(cx);
             this.new_folder(pane, window, cx);
+        }));
+        nodes.push(mi("New Text File…", move |this, window, cx| {
+            this.open_text_file_dialog(pane, window, cx);
         }));
         nodes.push(mi("New File", move |this, window, cx| {
             this.close_context_menu(cx);
@@ -7553,7 +7592,7 @@ impl Shuffle {
                             .child("Connect over SSH"),
                     )
                     .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
-                        "How should Shuffle Studio authenticate to SFTP servers? You can change this \
+                        "How should Getter authenticate to SFTP servers? You can change this \
                          anytime in Settings \u{2192} Connections.",
                     ))
                     .child(choice(
@@ -7672,11 +7711,10 @@ impl Shuffle {
         let groups_on = prefs().groups_enabled;
         let mut items: Vec<AnyElement> = Vec::new();
         match target {
-            SidebarTarget::Workspace(id) => {
-                items.push(ctx_item("Open workspace", cx.listener(move |this, _: &ClickEvent, _, cx| this.restore_workspace(id, cx))).into_any_element());
-                items.push(ctx_item("Update with current tabs", cx.listener(move |this, _: &ClickEvent, _, cx| this.update_workspace(id, cx))).into_any_element());
+            SidebarTarget::Project(id) => {
+                items.push(ctx_item("Open project", cx.listener(move |this, _: &ClickEvent, window, cx| { window.focus(&this.focus); this.restore_project(id, cx); })).into_any_element());
                 items.push(ctx_separator().into_any_element());
-                items.push(ctx_item("Remove workspace", cx.listener(move |this, _: &ClickEvent, _, cx| this.remove_workspace(id, cx))).into_any_element());
+                items.push(ctx_item("Remove project", cx.listener(move |this, _: &ClickEvent, _, cx| this.remove_project(id, cx))).into_any_element());
             }
             SidebarTarget::Empty => {
                 if groups_on {
@@ -7691,7 +7729,7 @@ impl Shuffle {
             }
             SidebarTarget::Bookmark(p) => {
                 items.push(
-                    ctx_item("Remove Bookmark", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    ctx_item("Remove from Favorites", cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.close_sidebar_menu(cx);
                         this.remove_bookmark(&p, cx);
                     }))
@@ -7860,7 +7898,7 @@ impl Shuffle {
     fn build_index(&self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let index = cx
-                .background_spawn(async move { FileIndex::build(std::env::var_os("SHUFFLE_STUDIO_INDEX_ROOT").map(PathBuf::from).unwrap_or_else(home_dir)) })
+                .background_spawn(async move { FileIndex::build(std::env::var_os("GETTER_INDEX_ROOT").or_else(|| std::env::var_os("SHUFFLE_STUDIO_INDEX_ROOT")).map(PathBuf::from).unwrap_or_else(home_dir)) })
                 .await;
             this.update(cx, |this, cx| {
                 this.index = Some(Arc::new(index));
@@ -8541,6 +8579,10 @@ impl Shuffle {
             }
             KeyAction::Undo => self.undo_last(cx),
             KeyAction::Paste => self.paste_from_clipboard(cx),
+            KeyAction::Copy => {
+                let targets = self.action_targets(pane);
+                if self.tab(pane).remote.is_none() { self.copy_with_feedback(pane, &targets, cx); }
+            }
             KeyAction::Refresh => {
                 let dir = self.tab(pane).current_dir.clone();
                 if self.tab(pane).remote.is_none() && cloud_kind(&dir).is_some() && cloudctl_path().is_some() {
@@ -8565,8 +8607,9 @@ impl Shuffle {
         let cmd = ks.modifiers.platform;
         let key = ks.key.as_str();
 
-        if self.workspace_dialog.is_some() {
-            self.handle_workspace_key(ev, cx);
+        if self.new_text_file.is_some() { self.handle_text_file_key(ev, cx); return; }
+        if self.project_dialog.is_some() {
+            self.handle_project_key(ev, cx);
             return;
         }
 
@@ -10064,6 +10107,7 @@ impl Shuffle {
         let mut new = Tab::new(dir);
         new.remote = remote;
         new.entry_filter = self.panes[pane].tabs[tab].entry_filter;
+        new.show_hidden = self.panes[pane].tabs[tab].show_hidden;
         new.view = self.panes[pane].tabs[tab].view;
         new.sort_key = self.panes[pane].tabs[tab].sort_key;
         new.sort_asc = self.panes[pane].tabs[tab].sort_asc;
@@ -10205,7 +10249,7 @@ impl Shuffle {
             tab.visible_entries().cloned().collect()
         } else {
             column_entries(dir).into_iter()
-                .filter(|entry| tab.entry_filter.accepts(entry.is_folder()))
+                .filter(|entry| tab.entry_filter.accepts(entry.is_folder()) && (tab.show_hidden || !entry.is_hidden()))
                 .collect()
         }
     }
@@ -10985,8 +11029,13 @@ impl Shuffle {
         }
         cx.spawn(async move |this, cx| {
             let p = path.clone();
-            let img = cx.background_spawn(async move { build_preview(&p) }).await;
+            let (text, img) = cx.background_spawn(async move {
+                let text = text_preview::read(&p).map(Arc::new);
+                let img = if text.is_none() { build_preview(&p) } else { None };
+                (text, img)
+            }).await;
             let _ = this.update(cx, |_, cx| {
+                TEXT_PREVIEW_CACHE.with(|c| { c.borrow_mut().insert(path.clone(), text); });
                 PREVIEW_CACHE.with(|c| {
                     c.borrow_mut().insert(path, img);
                 });
@@ -11147,16 +11196,33 @@ impl Shuffle {
         if !show_preview && !p.info {
             return None;
         }
+        let tab = self.active_tab();
+        if tab.selection.len() != 1 { return None; }
+        let sel = tab.selection.iter().next()?.clone();
+        let text = TEXT_PREVIEW_CACHE.with(|c| c.borrow().get(&sel).cloned().flatten());
+        let visual = lookup_preview(&sel).flatten().is_some()
+            || lookup_pdf_page(&sel, self.preview_page).flatten().is_some();
+        if text.is_none() && !visual { return None; }
         let t = theme();
-        let Some(sel) = self.active_tab().anchor.clone() else {
-            return Some(div().w(px(280.0)).h_full().flex_none().flex().flex_col()
-                .items_center().justify_center().gap_3().px_6().bg(rgb(t.sidebar))
-                .border_l_1().border_color(rgb(t.border))
-                .child(div().text_size(px(30.0)).text_color(rgb(t.accent)).child("◧"))
-                .child(div().font_weight(FontWeight::MEDIUM).child("A closer look"))
-                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child("Select a file to see its preview and details."))
-                .into_any_element());
-        };
+        if show_preview {
+            if let Some(text) = text {
+                return Some(
+                    div().id("inspector").flex_none().w(px(420.0)).h_full()
+                        .min_h_0().flex().flex_col().gap_3().p_4()
+                        .bg(rgb(t.sidebar)).border_l_1().border_color(rgb(t.border))
+                        .child(div().flex_none().font_weight(FontWeight::SEMIBOLD)
+                            .truncate().child(path_label(&sel)))
+                        .child(div().id(SharedString::from(format!("text-preview:{}", sel.display())))
+                            .flex_1().min_h_0().overflow_y_scroll().p_4().rounded_md()
+                            .bg(rgb(t.bg)).text_color(rgb(t.text))
+                            .text_size(px(14.0)).font_family("Menlo")
+                            .child(if text.text.is_empty() { "Empty text file".to_string() } else { text.text.clone() }))
+                        .when(text.truncated, |d| d.child(div().text_size(px(UI_SMALL_FONT_SIZE))
+                            .text_color(rgb(t.text_muted)).child("Preview shortened for this large file.")))
+                        .into_any_element()
+                );
+            }
+        }
 
         let mut col = div()
             .id("inspector")
@@ -11525,10 +11591,11 @@ impl Shuffle {
 
     /// Pin an arbitrary path (file or folder) to the Bookmarks section.
     fn bookmark_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if !self.bookmarks.iter().any(|b| b == &path) {
-            self.bookmarks.push(path);
-            write_path_list("bookmarks.txt", &self.bookmarks);
-            cx.notify();
+        let mut candidate = self.projects.clone();
+        candidate.set_favorite(path, true);
+        match self.persist_library(candidate) {
+            Ok(()) => cx.notify(),
+            Err(error) => self.set_notice(error, cx),
         }
     }
 
@@ -11543,11 +11610,11 @@ impl Shuffle {
 
     /// Remove a bookmark (from the right-click "Remove Bookmark" action).
     fn remove_bookmark(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let before = self.bookmarks.len();
-        self.bookmarks.retain(|b| b != path);
-        if self.bookmarks.len() != before {
-            write_path_list("bookmarks.txt", &self.bookmarks);
-            cx.notify();
+        let mut candidate = self.projects.clone();
+        candidate.set_favorite(path.to_path_buf(), false);
+        match self.persist_library(candidate) {
+            Ok(()) => cx.notify(),
+            Err(error) => self.set_notice(error, cx),
         }
     }
 
@@ -11978,10 +12045,10 @@ impl Shuffle {
                 .into_any_element(),
         );
 
-        self.push_workspace_sidebar(&mut items, collapsed, cx);
+        self.push_project_sidebar(&mut items, collapsed, cx);
 
         // --- Favorites (Applications, Documents, …) ---
-        if self.begin_section(&mut items, "FAVORITES", collapsed, cx) {
+        if self.begin_section(&mut items, "LOCATIONS", collapsed, cx) {
             for (label, slug) in SIDEBAR_FAVORITES {
                 let path = fav_path(slug);
                 if !cached_is_dir(&path) {
@@ -12036,16 +12103,17 @@ impl Shuffle {
                     this.add_bookmark(cx);
                 }))
                 .into_any_element();
-            items.push(self.section_header_el("BOOKMARKS", Some(plus), cx));
-            !self.collapsed_sections.contains("BOOKMARKS")
+            let title = if self.projects.active.is_some() { "PROJECT FAVORITES" } else { "MY FAVORITES" };
+            items.push(self.section_header_el(title, Some(plus), cx));
+            !self.collapsed_sections.contains(title)
         };
         if show_bookmarks {
-            if self.bookmarks.is_empty() {
+            if self.projects.favorites().is_empty() {
                 if !collapsed {
                     items.push(empty_hint("Click + to pin a folder").into_any_element());
                 }
             } else {
-                for p in &self.bookmarks {
+                for p in self.projects.favorites() {
                     push_bookmark_nav(&mut items, cx, &mut key, p.clone(), current, collapsed);
                 }
             }
@@ -12516,6 +12584,7 @@ impl Shuffle {
             // File actions (hidden on remote tabs, which can't create locally).
             .when(!is_remote && !tiny, |d| d.child(new_folder_btn))
             .when(!is_remote, |d| d.child(share_btn).child(delete_btn))
+            .child(self.render_hidden_button(pane, cx))
             .when(!tiny, |d| d.child(search_btn))
             .when(compact, |d| d.child(view_menu_btn))
             .when(!compact, |d| {
@@ -13051,7 +13120,8 @@ impl Shuffle {
                     .min_h_0()
                     .child(body)
                     .children(self.rename_error_pill(pane))
-                    .child(self.render_filter_box(pane, cx)),
+                    .child(self.render_filter_box(pane, cx))
+                    .children(self.render_copy_feedback(pane)),
             )
             .children(self.render_terminal_panel(pane, cx))
     }
@@ -13843,7 +13913,7 @@ impl Render for Shuffle {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
             // Native menu-bar actions (File / View / Go menus).
-            .on_action(cx.listener(|this, _: &SaveWorkspace, _, cx| this.open_workspace_dialog(cx)))
+            .on_action(cx.listener(|this, _: &NewProject, window, cx| this.open_project_dialog(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleStudioSplit, _, cx| this.toggle_studio_split(cx)))
             .on_action(cx.listener(|_, _: &ToggleInspector, _, cx| studio::toggle_inspector(cx)))
             .on_action(cx.listener(|this, _: &NewTab, _, cx| {
@@ -14038,8 +14108,9 @@ impl Render for Shuffle {
         if self.group_dialog.is_some() {
             root = root.child(self.render_group_dialog(cx));
         }
-        if self.workspace_dialog.is_some() {
-            root = root.child(self.render_workspace_dialog(cx));
+        if self.new_text_file.is_some() { root = root.child(self.render_text_file_dialog(cx)); }
+        if self.project_dialog.is_some() {
+            root = root.child(self.render_project_dialog(cx));
         }
         if prefs().show_fps {
             root = root.child(fps_overlay());
@@ -14374,7 +14445,7 @@ fn quick_look_paths(paths: &[PathBuf]) {
 /// Put files on the general pasteboard as file URLs — Finder, Terminal, and
 /// every other app understand a paste after this (same writer the drag-out
 /// code uses).
-fn copy_files_to_pasteboard(paths: &[PathBuf]) {
+fn copy_files_to_pasteboard(paths: &[PathBuf]) -> bool {
     use objc2::runtime::ProtocolObject;
     use objc2_app_kit::{NSPasteboard, NSPasteboardWriting};
     use objc2_foundation::NSArray;
@@ -14386,7 +14457,7 @@ fn copy_files_to_pasteboard(paths: &[PathBuf]) {
         .collect();
     let writers: Vec<&ProtocolObject<dyn NSPasteboardWriting>> =
         urls.iter().map(|u| ProtocolObject::from_ref(&**u)).collect();
-    let _ = pb.writeObjects(&NSArray::from_slice(&writers));
+    pb.writeObjects(&NSArray::from_slice(&writers))
 }
 
 /// Read file URLs off the general pasteboard (whatever Copy above — or
@@ -14540,7 +14611,7 @@ struct ScriptAction {
     types: Vec<String>,
 }
 
-/// The folder scripts live in: `…/Application Support/Shuffle Studio/actions`.
+/// The folder scripts live in: `…/Application Support/Getter/actions`.
 fn script_actions_dir() -> Option<PathBuf> {
     config_dir().map(|d| d.join("actions"))
 }
@@ -16762,6 +16833,7 @@ fn parse_sftp_ls(out: &str) -> Vec<Entry> {
             modified: None,
             created: None,
             loaded: true,
+            hidden_flag: false,
         });
     }
     sort_default(&mut entries);
@@ -17111,6 +17183,8 @@ fn build_macos_icon(path: &Path) -> Option<Arc<RenderImage>> {
 
 thread_local! {
     /// Cache of generated file previews. `None` = generation failed/unavailable.
+    static TEXT_PREVIEW_CACHE: RefCell<HashMap<PathBuf, Option<Arc<text_preview::TextPreview>>>> =
+        RefCell::new(HashMap::new());
     static PREVIEW_CACHE: RefCell<HashMap<PathBuf, Option<Arc<RenderImage>>>> =
         RefCell::new(HashMap::new());
     /// Cache of gathered file information.
@@ -17241,6 +17315,7 @@ fn remote_preview_temp(remote: &Path) -> PathBuf {
 /// Generate a preview image for any file via macOS QuickLook (`qlmanage -t`),
 /// then decode it into a GPUI `RenderImage`. Runs off the render thread.
 fn build_preview(path: &Path) -> Option<Arc<RenderImage>> {
+    if !path.is_file() { return None; }
     let out_dir = std::env::temp_dir().join("shuffle-preview");
     let _ = fs::create_dir_all(&out_dir);
     let name = path.file_name()?.to_string_lossy().into_owned();
@@ -17408,6 +17483,10 @@ fn read_entries(dir: &Path) -> Vec<Entry> {
                 modified,
                 created,
                 loaded: true,
+                hidden_flag: md.as_ref().is_some_and(|m| {
+                    use std::os::macos::fs::MetadataExt;
+                    m.st_flags() & libc::UF_HIDDEN != 0
+                }),
             });
         }
     }
@@ -17436,6 +17515,7 @@ fn read_entries_fast(dir: &Path) -> Vec<Entry> {
                 modified: None,
                 created: None,
                 loaded: false,
+                hidden_flag: false,
             });
         }
     }
@@ -17929,7 +18009,7 @@ fn command_matches(q: &str) -> Vec<PaletteItem> {
     if hit {
         out.push(PaletteItem {
             title: "Settings".to_string(),
-            subtitle: "Open Shuffle Studio settings".to_string(),
+            subtitle: "Open Getter settings".to_string(),
             action: Action::OpenSettings,
             is_dir: false,
         });
@@ -18470,9 +18550,12 @@ fn home_dir() -> PathBuf {
 }
 
 fn config_dir() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("SHUFFLE_STUDIO_CONFIG_DIR") { return Some(PathBuf::from(path)); }
-    std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join("Library/Application Support/Shuffle Studio"))
+    if let Some(path) = std::env::var_os("GETTER_CONFIG_DIR")
+        .or_else(|| std::env::var_os("SHUFFLE_STUDIO_CONFIG_DIR")) { return Some(PathBuf::from(path)); }
+    let support = home_dir().join("Library/Application Support");
+    let current = support.join("Getter");
+    let legacy = support.join("Shuffle Studio");
+    Some(if !current.exists() && legacy.is_dir() { legacy } else { current })
 }
 
 fn config_file(name: &str) -> Option<PathBuf> {
@@ -18482,7 +18565,7 @@ fn config_file(name: &str) -> Option<PathBuf> {
 /// The directory to open on launch: the last-visited one if still valid,
 /// otherwise the home directory.
 fn load_last_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os("SHUFFLE_STUDIO_START_DIR") {
+    if let Some(path) = std::env::var_os("GETTER_START_DIR").or_else(|| std::env::var_os("SHUFFLE_STUDIO_START_DIR")) {
         let path = PathBuf::from(path);
         if path.is_dir() { return path; }
     }
@@ -19141,7 +19224,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 3 && args[1] == "--index-bench" {
         let t0 = std::time::Instant::now();
-        let index = FileIndex::build(std::env::var_os("SHUFFLE_STUDIO_INDEX_ROOT").map(PathBuf::from).unwrap_or_else(home_dir));
+        let index = FileIndex::build(std::env::var_os("GETTER_INDEX_ROOT").or_else(|| std::env::var_os("SHUFFLE_STUDIO_INDEX_ROOT")).map(PathBuf::from).unwrap_or_else(home_dir));
         eprintln!(
             "index: {} entries built in {} ms",
             index.entries.len(),
@@ -19519,17 +19602,17 @@ fn main() {
         cx.bind_keys([
             KeyBinding::new("cmd-,", OpenSettings, None),
             KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-shift-s", SaveWorkspace, None),
+            KeyBinding::new("cmd-shift-s", NewProject, None),
             KeyBinding::new("cmd-shift-d", ToggleStudioSplit, None),
             KeyBinding::new("cmd-shift-i", ToggleInspector, None),
         ]);
         cx.set_menus(vec![
             Menu {
-                name: "Shuffle Studio".into(),
+                name: "Getter".into(),
                 items: vec![
                     MenuItem::action("Settings…", OpenSettings),
                     MenuItem::separator(),
-                    MenuItem::action("Quit Shuffle Studio", Quit),
+                    MenuItem::action("Quit Getter", Quit),
                 ],
             },
             Menu {
@@ -19537,7 +19620,7 @@ fn main() {
                 items: vec![
                     MenuItem::action("New Tab", NewTab),
                     MenuItem::action("New Folder", NewFolder),
-                    MenuItem::action("Save Workspace…", SaveWorkspace),
+                    MenuItem::action("New Project…", NewProject),
                     MenuItem::separator(),
                     MenuItem::action("Close Tab", CloseTab),
                     MenuItem::action("Move to Trash", MoveToTrash),
@@ -19715,6 +19798,37 @@ mod tests {
         tab.set_entry_filter(EntryFilter::Files);
         assert_eq!(other.entry_filter, EntryFilter::All);
         assert_eq!(other.visible_count(), 6);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn hidden_visibility_combines_with_type_and_text_filters() {
+        let dir = scratch("hidden-filter");
+        for name in ["Visible", ".secret folder"] { fs::create_dir(dir.join(name)).unwrap(); }
+        for name in ["visible.txt", ".secret.txt", "Finder hidden.txt"] { fs::write(dir.join(name), "text").unwrap(); }
+        let flagged = std::ffi::CString::new(dir.join("Finder hidden.txt").as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::chflags(flagged.as_ptr(), libc::UF_HIDDEN) }, 0);
+        let mut tab = Tab::new(dir.clone());
+        tab.entries = read_entries(&dir);
+        tab.recompute_results();
+        let names = |t: &Tab| t.visible_entries().map(|e| e.name.clone()).collect::<Vec<_>>();
+        assert!(!tab.show_hidden);
+        assert_eq!(names(&tab), ["Visible", "visible.txt"]);
+        tab.show_hidden = true;
+        tab.recompute_results();
+        assert_eq!(tab.visible_count(), 5);
+        tab.set_entry_filter(EntryFilter::Folders);
+        assert_eq!(tab.visible_count(), 2);
+        tab.show_hidden = false;
+        tab.recompute_results();
+        assert_eq!(names(&tab), ["Visible"]);
+        tab.set_entry_filter(EntryFilter::Files);
+        tab.find_query = Some("secret".into());
+        tab.recompute_results();
+        assert_eq!(tab.visible_count(), 0);
+        tab.show_hidden = true;
+        tab.recompute_results();
+        assert_eq!(names(&tab), [".secret.txt"]);
         fs::remove_dir_all(dir).unwrap();
     }
 
