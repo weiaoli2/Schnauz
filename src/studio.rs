@@ -1,4 +1,4 @@
-//! Getter's project controls and application chrome.
+//! Schnauz's project controls and application chrome.
 use super::*;
 use crate::projects::{Layout, Library, SavedPane, SavedTab};
 
@@ -456,6 +456,7 @@ impl Shuffle {
             .ok_or("This project's folders are unavailable. Reconnect the drive and try again.")?;
         let old = self.projects.active;
         library.active = id;
+        self.space_map = None;
         // Persist the outgoing layout and destination together before switching.
         self.persist_library(library)?;
         let current = ProjectSession {
@@ -623,17 +624,18 @@ impl Shuffle {
                 div()
                     .flex()
                     .flex_col()
-                    .w(px(170.0))
+                    .w(px(96.0))
                     .flex_none()
                     .child(
                         div()
                             .text_size(px(14.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Getter"),
+                            .child("Schnauz"),
                     )
                     .child(
                         div()
                             .text_size(px(10.0))
+                            .truncate()
                             .text_color(rgb(t.text_muted))
                             .child(if filtered {
                                 format!("{} · Filter active", filter.description())
@@ -644,36 +646,7 @@ impl Shuffle {
                             }),
                     ),
             )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .id("studio-search")
-                    .w(px(240.0))
-                    .h(px(30.0))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_3()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(rgb(t.border))
-                    .bg(rgb(t.bg))
-                    .text_color(rgb(t.text_muted))
-                    .cursor_pointer()
-                    .hover(|s| s.border_color(rgb(t.accent)))
-                    .child("⌕")
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_size(px(UI_SMALL_FONT_SIZE))
-                            .child("Search files and commands"),
-                    )
-                    .child(div().text_size(px(10.0)).child("⌘P"))
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.toggle_palette(window, cx)
-                    })),
-            )
-            .child(div().flex_1())
+            .child(self.render_file_search(cx))
             .child(
                 studio_button(
                     "studio-split",

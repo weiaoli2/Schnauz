@@ -1,4 +1,4 @@
-# Getter
+# Schnauz
 
 A personal Mac file manager based on [Shuffle](https://github.com/WizenPainter/shuffle).
 This is an independent local version, with its own application identity and settings.
@@ -27,7 +27,26 @@ This is an independent local version, with its own application identity and sett
   or **Unsynced**. Click **Unsynced** to restart in the browser's folder once idle,
   without moving focus into the terminal. Running, background and suspended jobs
   block recovery. A restart clears scrollback, shell variables and unfinished input.
-- The existing native file browser, search, file operations and Mac integrations.
+- The existing native file browser, file operations and Mac integrations.
+
+The top search bar defaults to **Current Folder + File**. Current Folder includes
+subfolders; Drive searches the containing volume. Names match literal parts without
+fuzzy guesses, ignoring case. Spaces mean AND: `test .txt` requires `test` in the
+name and `.txt` at the end. **Content** checks only text content, supports UTF-8 and
+BOM-marked UTF-16, and never matches by name. Search runs only after typing, reports
+results progressively and cancels when changed or closed. Hidden-item visibility
+follows the active tab. Results are capped at 500 with a notice to refine the query.
+Click a result or press Enter to reveal it in the browser. Escape closes search and
+restores Current Folder + File. No home-folder index is built at launch.
+
+Right-click a folder, empty folder area or sidebar folder and choose **Inspect…**
+for an on-demand size map on the right. The window widens when the display has room.
+Rectangle area represents file sizes, with colors grouped by file type. Click a
+folder heading to open it on the left and zoom; click a file tile to reveal and
+select it on the left. Use ↑ to zoom out or Refresh to scan again. The map includes
+hidden items and uses metadata without reading file contents. Directory symlinks
+and other volumes are not traversed. Permission failures or the 500,000-item memory
+limit show an explicit partial-map notice. Closing the panel cancels the scan.
 
 Click **New project** or press **⌘⇧S** to create a project from the current tabs.
 Click a project in the sidebar to switch to its own favorites and last layout.
@@ -58,7 +77,7 @@ command panel and its settings have been removed.
 
 | Shortcut | Action |
 |---|---|
-| ⌘P | Search files and commands |
+| ⌘P | Focus file search |
 | ⌘⇧S | New project |
 | ⌘⇧D | Split or join panes |
 | ⌘⇧I | Show or hide preview |
@@ -74,7 +93,7 @@ macOS 14 or later and is built for the current Mac's processor.
 
 ```sh
 ./build.sh
-open "Getter.app"
+open "Schnauz.app"
 ```
 
 For development: `STUDIO_BUILD_PROFILE=debug ./build.sh`. The app is locally
@@ -85,8 +104,8 @@ ad-hoc signed; public distribution and Apple notarization are not configured.
 ./test.sh
 ```
 
-Normal settings live in `~/Library/Application Support/Getter/`. Existing
-Shuffle Studio settings are reused automatically if present.
+Normal settings live in `~/Library/Application Support/Schnauz/`. Existing
+Getter or Shuffle Studio settings are reused automatically if present.
 This prepared workspace reuses its local compiler cache in offline mode.
 If adding a new dependency, use `CARGO_NET_OFFLINE=false ./build.sh` to fetch it.
 For native UI checks, `SHUFFLE_STUDIO_CONFIG_DIR`, `SHUFFLE_STUDIO_START_DIR`
@@ -101,6 +120,8 @@ and `SHUFFLE_STUDIO_INDEX_ROOT` can point at disposable test folders.
 - `src/clipboard_path.rs`: pasted-path interpretation
 - `src/new_text_file.rs`: named text-file creation without overwriting
 - `src/text_preview.rs`: bounded native text previews
+- `src/file_search.rs`, `src/search_ui.rs`: scoped name/content search and its toolbar
+- `src/space_map.rs`, `src/space_ui.rs`: explicit folder scans and interactive size map
 - `src/studio_terminal.rs`, `src/terminal-shell/`: PTY sessions and folder synchronization
 - `src/main.rs`: the existing GPUI file browser and file operations
 - `scripts/package_icon.sh`: package the Schnauzer artwork as a Mac app icon

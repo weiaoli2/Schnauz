@@ -1,8 +1,8 @@
 [package]
-name = "getter"
+name = "schnauz"
 version = "0.1.0"
 edition = "2021"
-description = "Getter — a personal workspace for your files"
+description = "Schnauz — a personal workspace for your files"
 publish = false
 
 [dependencies]

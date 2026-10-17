@@ -2010,26 +2010,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "getter"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "gpui",
- "gpui-terminal",
- "image",
- "jwalk",
- "libc",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "portable-pty",
- "raw-window-handle",
- "rayon",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "gif"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4766,6 +4746,26 @@ dependencies = [
  "quote",
  "serde_derive_internals",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "schnauz"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gpui",
+ "gpui-terminal",
+ "image",
+ "jwalk",
+ "libc",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "portable-pty",
+ "raw-window-handle",
+ "rayon",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-# Getter
+# Schnauz
 
 Independent personal macOS app based on WizenPainter/shuffle, starting at
 50a94466dadef2c483913bc2cd5c76999cda4dda. The local branch is `studio`;
@@ -8,7 +8,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - `src/theme.rs`: themes; `src/studio.rs`: custom chrome and project UI;
   `src/projects.rs`: typed persistence; `src/main.rs`: existing file manager.
 - Retain the original MIT LICENSE and attribution.
-- App identity: Getter, `local.getter.app`. Never enable the
+- App identity: Schnauz, `local.schnauz.app`. Never enable the
   original Shuffle self-updater or publish to its GitHub repository.
 - For a normal build run `./build.sh`; for a faster development build use
   `STUDIO_BUILD_PROFILE=debug ./build.sh`. Rust stable and Xcode are required.
@@ -53,3 +53,13 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   readable native text in a scrollable panel, with bounded reads for large files.
 - New Text File asks for a name before creating anything, appends .txt, and uses
   create_new so existing data cannot be overwritten. Copy feedback names items in-pane.
+
+- Top search is filenames/content only, never app commands. Default every fresh
+  search to Current Folder + File; spaces mean AND and .ext is a filename suffix.
+  Search recursively on demand, cancel stale work and show progressive results.
+  Content mode must validate text rather than matching binary bytes or filenames.
+  Do not restore startup home indexing.
+- Inspect… is an explicit folder-size scan, available on folder, background and
+  sidebar menus. Keep automatic browsing calculations off. Preserve the right-hand
+  map while navigating from its file tiles or folder headings; never open a file
+  merely by clicking its tile. Cancel replaced/closed scans and flag partial maps.

@@ -6,7 +6,7 @@
 //! - Favorites: Applications, Pictures, Documents, Downloads.
 //! - Locations: Macintosh HD (/) and the current user's home directory.
 //! Clicking any item navigates the main listing. The active location is
-//! highlighted. State lives in ~/Library/Application Support/Getter/.
+//! highlighted. State lives in ~/Library/Application Support/Schnauz/.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -83,6 +83,10 @@ use entry_filter::EntryFilter;
 mod studio;
 mod clipboard_path;
 mod studio_terminal;
+mod file_search;
+mod search_ui;
+mod space_map;
+mod space_ui;
 
 // ----- feature preferences (the General tab toggles) -------------------------
 
@@ -605,7 +609,7 @@ impl KeyAction {
     /// Human label shown in Settings.
     fn label(self) -> &'static str {
         match self {
-            KeyAction::CommandPalette => "Command palette",
+            KeyAction::CommandPalette => "File search",
             KeyAction::NewTab => "New tab",
             KeyAction::CloseTab => "Close tab",
             KeyAction::Find => "Filter current folder",
@@ -1541,8 +1545,8 @@ impl Settings {
                 vec![
                     toggle_row(
                         "tg-palette-history",
-                        "Command palette history",
-                        "Give Cmd+P its own query history: press Up/Down in the palette to cycle through your previous searches.",
+                        "Search history",
+                        "Remember submitted file searches. Use the configured history shortcuts to revisit them.",
                         p.palette_history,
                         cx.listener(|_, _: &ClickEvent, _, cx| {
                             let mut np = prefs();
@@ -1681,7 +1685,7 @@ impl Settings {
     fn render_update_row(&self, cx: &mut Context<Self>) -> AnyElement {
         if !upstream_updates_enabled() {
             return div().flex().flex_col().gap_1()
-                .child(format!("Getter {}", env!("CARGO_PKG_VERSION")))
+                .child(format!("Schnauz {}", env!("CARGO_PKG_VERSION")))
                 .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(theme().text_muted))
                     .child("Personal build · updates are installed from this project's builds."))
                 .into_any_element();
@@ -2095,7 +2099,7 @@ impl Settings {
         vec![
             settings_header(
                 "Customization",
-                "Make Getter yours \u{2014} palette, menus, and app icon.",
+                "Make Schnauz yours \u{2014} palette, menus, and app icon.",
             )
             .into_any_element(),
             settings_section(
@@ -3007,12 +3011,6 @@ enum PaletteAction {
 enum Action {
     /// Open a path (navigate into it if a dir, else open the file).
     Open(PathBuf, bool),
-    /// Copy the current directory's path to the clipboard.
-    CopyDir,
-    /// Open the Settings window.
-    OpenSettings,
-    /// Inert (e.g. "path not found").
-    None,
 }
 
 /// An open right-click context menu: where it sits, and the entry it targets
@@ -3164,6 +3162,7 @@ struct Group {
 /// What a right-click in the sidebar targeted (drives its context menu).
 #[derive(Clone)]
 enum SidebarTarget {
+    Folder(PathBuf),
     Project(u64),
     /// Empty sidebar space → offer "New Group".
     Empty,
@@ -3609,9 +3608,11 @@ struct Shuffle {
     /// In-progress drag of a List view's horizontal scrollbar thumb:
     /// (pane, cursor x at grab, columns scrolled at grab).
     hbar_drag: Option<(usize, f32, f32)>,
-    // Command palette (Cmd+P).
+    // File search (Cmd+P), plus folder context actions.
     focus: FocusHandle,
     palette_open: bool,
+    file_search: search_ui::State,
+    space_map: Option<space_ui::State>,
     query: String,
     /// Text-cursor position in `query`, as a char index (0..=char count).
     query_cursor: usize,
@@ -3629,8 +3630,6 @@ struct Shuffle {
     palette_actions: Option<usize>,
     search_gen: u64,
     palette_scroll: ScrollHandle,
-    /// In-memory fuzzy index of ~/ (None until the background build finishes).
-    index: Option<Arc<FileIndex>>,
     context_menu: Option<ContextMenu>,
     /// In-progress inline rename, if any.
     rename: Option<Rename>,
@@ -3984,6 +3983,8 @@ impl Shuffle {
             hbar_drag: None,
             focus: cx.focus_handle(),
             palette_open: false,
+            file_search: search_ui::State::default(),
+            space_map: None,
             query: String::new(),
             query_cursor: 0,
             query_anchor: None,
@@ -3994,7 +3995,6 @@ impl Shuffle {
             palette_actions: None,
             search_gen: 0,
             palette_scroll: ScrollHandle::new(),
-            index: None,
             context_menu: None,
             rename: None,
             sort_menu: None,
@@ -6185,6 +6185,12 @@ impl Shuffle {
         let mut nodes: Vec<MenuNode> = Vec::new();
         let paste_n = pasteboard_file_paths().len();
         let on_background = target.is_none();
+        let inspect = target.as_ref().and_then(|(path,is_dir)| is_dir.then_some(path.clone()))
+            .or_else(|| on_background.then(|| self.tab(pane).current_dir.clone()));
+        if let Some(folder) = inspect {
+            nodes.push(mi("Inspect…", move |this,window,cx| this.inspect_folder(pane,folder.clone(),window,cx)));
+            push_menu_sep(&mut nodes);
+        }
         if let Some((path, is_dir)) = target {
             // Clicking inside a multi-selection acts on the whole selection
             // (Finder semantics); clicking outside it acts on just that item.
@@ -7592,7 +7598,7 @@ impl Shuffle {
                             .child("Connect over SSH"),
                     )
                     .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
-                        "How should Getter authenticate to SFTP servers? You can change this \
+                        "How should Schnauz authenticate to SFTP servers? You can change this \
                          anytime in Settings \u{2192} Connections.",
                     ))
                     .child(choice(
@@ -7710,7 +7716,21 @@ impl Shuffle {
         let (x, y, target) = self.sidebar_menu.clone().expect("only when open");
         let groups_on = prefs().groups_enabled;
         let mut items: Vec<AnyElement> = Vec::new();
+        let folder = match &target {
+            SidebarTarget::Folder(p) | SidebarTarget::Bookmark(p) | SidebarTarget::GroupMember(_,p) => Some(p.clone()),
+            SidebarTarget::Empty => Some(self.active_tab().current_dir.clone()).filter(|_| self.active_tab().remote.is_none()),
+            SidebarTarget::Tab(p,t) => self.panes.get(*p).and_then(|p|p.tabs.get(*t)).filter(|t|t.remote.is_none()).map(|t|t.current_dir.clone()),
+            SidebarTarget::NavBar(p) => Some(self.tab(*p)).filter(|t|t.remote.is_none()).map(|t|t.current_dir.clone()),
+            _ => None,
+        };
+        if let Some(folder) = folder.filter(|p|p.is_dir()) {
+            items.push(ctx_item("Inspect…",cx.listener(move|this,_:&ClickEvent,window,cx|{
+                this.inspect_folder(this.active_pane,folder.clone(),window,cx);
+            })).into_any_element());
+            if !matches!(&target, SidebarTarget::Folder(_)) { items.push(ctx_separator().into_any_element()); }
+        }
         match target {
+            SidebarTarget::Folder(_) => {},
             SidebarTarget::Project(id) => {
                 items.push(ctx_item("Open project", cx.listener(move |this, _: &ClickEvent, window, cx| { window.focus(&this.focus); this.restore_project(id, cx); })).into_any_element());
                 items.push(ctx_separator().into_any_element());
@@ -7892,21 +7912,6 @@ impl Shuffle {
                         .children(items),
                 ),
             )
-    }
-
-    /// Build the ~/ fuzzy index on a background thread, then store it.
-    fn build_index(&self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            let index = cx
-                .background_spawn(async move { FileIndex::build(std::env::var_os("GETTER_INDEX_ROOT").or_else(|| std::env::var_os("SHUFFLE_STUDIO_INDEX_ROOT")).map(PathBuf::from).unwrap_or_else(home_dir)) })
-                .await;
-            this.update(cx, |this, cx| {
-                this.index = Some(Arc::new(index));
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
     }
 
     /// Quietly ask GitHub for the latest published release and, if it's newer
@@ -8146,20 +8151,18 @@ impl Shuffle {
     // ----- command palette (Cmd+P) -----
 
     fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.palette_open = !self.palette_open;
-        if self.palette_open {
-            self.query.clear();
-            self.query_cursor = 0;
-            self.query_anchor = None;
-            self.palette_hist_pos = None;
-            self.selected = 0;
-            self.refresh_palette(cx);
-            window.focus(&self.focus);
-        }
-        cx.notify();
+        if self.palette_open { self.close_palette(cx); }
+        else { self.focus_file_search(true, window, cx); }
     }
 
     fn close_palette(&mut self, cx: &mut Context<Self>) {
+        self.file_search.cancel();
+        if self.file_search.inline {
+            self.file_search.scope = file_search::Scope::CurrentFolder;
+            self.file_search.mode = file_search::Mode::File;
+            self.query.clear(); self.query_cursor = 0; self.query_anchor = None;
+        }
+        self.search_gen = self.search_gen.wrapping_add(1);
         self.palette_open = false;
         self.palette_actions = None;
         cx.notify();
@@ -8178,6 +8181,8 @@ impl Shuffle {
         cx: &mut Context<Self>,
     ) {
         self.active_pane = pane;
+        self.file_search.cancel();
+        self.file_search.inline = false;
         self.palette_open = true;
         self.query.clear();
         self.query_cursor = 0;
@@ -8197,174 +8202,8 @@ impl Shuffle {
         cx.notify();
     }
 
-    /// Default items shown when the query is empty: the available commands.
-    fn default_commands(&self) -> Vec<PaletteItem> {
-        vec![PaletteItem {
-            title: "Copy current directory".to_string(),
-            subtitle: self.active_tab().current_dir.to_string_lossy().into_owned(),
-            action: Action::CopyDir,
-            is_dir: true,
-        }]
-    }
-
-    /// Recompute the palette contents for the current query. Path-like queries
-    /// resolve synchronously; name queries kick off a debounced async search.
     fn refresh_palette(&mut self, cx: &mut Context<Self>) {
-        self.search_gen = self.search_gen.wrapping_add(1);
-        let gen = self.search_gen;
-        self.selected = 0;
-        self.palette_actions = None;
-        self.palette_scroll.set_offset(point(px(0.0), px(0.0)));
-        let q = self.query.trim().to_string();
-
-        if q.is_empty() {
-            self.palette_items = self.default_commands();
-            cx.notify();
-            return;
-        }
-
-        // Path mode: browse a directory live. Split the query into a base dir
-        // and a partial name; list the base's entries, ranked (typo-tolerant)
-        // by how well they match the partial.
-        if q.starts_with('/') || q.starts_with('~') {
-            let (base, partial) = split_path_query(&q);
-            if !base.is_dir() {
-                self.palette_items = vec![PaletteItem {
-                    title: "Path not found".to_string(),
-                    subtitle: base.to_string_lossy().into_owned(),
-                    action: Action::None,
-                    is_dir: false,
-                }];
-                cx.notify();
-                return;
-            }
-
-            let mut scored: Vec<(i32, String, bool)> = list_dir_names(&base)
-                .into_iter()
-                .map(|(name, is_dir)| {
-                    let score = if partial.is_empty() {
-                        0
-                    } else {
-                        match_score(&partial, &name)
-                    };
-                    (score, name, is_dir)
-                })
-                .collect();
-
-            if partial.is_empty() {
-                // Directories first, then alphabetical.
-                scored.sort_by(|a, b| {
-                    b.2.cmp(&a.2)
-                        .then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase()))
-                });
-            } else {
-                // Best match first; ties → dirs first, then alphabetical.
-                scored.sort_by(|a, b| {
-                    b.0.cmp(&a.0)
-                        .then_with(|| b.2.cmp(&a.2))
-                        .then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase()))
-                });
-            }
-
-            self.palette_items = scored
-                .into_iter()
-                .take(50)
-                .map(|(_, name, is_dir)| {
-                    let path = base.join(&name);
-                    let subtitle = path.to_string_lossy().into_owned();
-                    PaletteItem {
-                        title: name,
-                        subtitle,
-                        action: Action::Open(path, is_dir),
-                        is_dir,
-                    }
-                })
-                .collect();
-            cx.notify();
-            return;
-        }
-
-        // Operator-driven search: content:/kind:/ext:/size:/date: run a
-        // dedicated global search (Spotlight for content, the index otherwise)
-        // instead of the plain fuzzy name lookup below.
-        let fq = FilterQuery::parse(&q);
-        if fq.content.is_some() || fq.has_local_filters() {
-            self.palette_items = Vec::new();
-            self.selected = 0;
-            cx.notify();
-            let index = self.index.clone();
-            let home = home_dir();
-            cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(40))
-                    .await;
-                if !this.update(cx, |this, _| this.search_gen == gen).unwrap_or(false) {
-                    return;
-                }
-                let results = cx
-                    .background_spawn(async move {
-                        palette_operator_search(&fq, index.as_deref(), &home)
-                    })
-                    .await;
-                this.update(cx, |this, cx| {
-                    if this.search_gen != gen {
-                        return;
-                    }
-                    this.palette_items = results;
-                    this.selected = 0;
-                    cx.notify();
-                })
-                .ok();
-            })
-            .detach();
-            return;
-        }
-
-        // Search from the very first character (the in-memory index is fast
-        // enough). Empty queries were already handled above.
-
-        // Built-in commands (e.g. Settings) show instantly, ahead of the
-        // async file results, so typing "settings" surfaces it immediately.
-        self.palette_items = command_matches(&q);
-        self.selected = 0;
-        cx.notify();
-        let index = self.index.clone();
-        cx.spawn(async move |this, cx| {
-            // Debounce: bail if a newer keystroke superseded us.
-            cx.background_executor()
-                .timer(Duration::from_millis(40))
-                .await;
-            let current = this.update(cx, |this, _| this.search_gen == gen).unwrap_or(false);
-            if !current {
-                return;
-            }
-            // In-memory index (fast, true fuzzy) once built; Spotlight until then.
-            let qs = q.clone();
-            let hits = match index {
-                Some(idx) => cx.background_spawn(async move { idx.search(&qs, 40) }).await,
-                None => cx.background_spawn(async move { search_filesystem(&qs) }).await,
-            };
-            this.update(cx, |this, cx| {
-                if this.search_gen != gen {
-                    return;
-                }
-                let mut items = command_matches(&q);
-                items.extend(hits.into_iter().map(|(name, path, is_dir)| {
-                    let subtitle = path.to_string_lossy().into_owned();
-                    PaletteItem {
-                        title: name,
-                        subtitle,
-                        action: Action::Open(path, is_dir),
-                        is_dir,
-                    }
-                }));
-                this.palette_items = items;
-                this.selected = 0;
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+        self.refresh_file_search(cx);
     }
 
     fn move_selection(&mut self, delta: i64, cx: &mut Context<Self>) {
@@ -8392,7 +8231,18 @@ impl Shuffle {
         self.record_palette_history();
         match action {
             Action::Open(path, is_dir) => {
+                let search = self.file_search.inline;
                 self.close_palette(cx);
+                if search {
+                    if is_browsable_folder(&path, is_dir) { self.navigate_to(path, cx); }
+                    else if let Some(parent) = path.parent() {
+                        let pane = self.active_pane;
+                        if self.tab(pane).entry_filter == EntryFilter::Folders { self.tab_mut(pane).set_entry_filter(EntryFilter::All); }
+                        self.navigate_to(parent.to_path_buf(), cx);
+                        self.reveal_in_pane(self.active_pane, path, cx);
+                    }
+                    return;
+                }
                 if is_dir {
                     self.navigate_to(path, cx);
                 } else {
@@ -8401,16 +8251,7 @@ impl Shuffle {
                     let _ = Command::new("open").arg(&path).spawn();
                 }
             }
-            Action::CopyDir => {
-                let text = self.active_tab().current_dir.to_string_lossy().into_owned();
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
-                self.close_palette(cx);
-            }
-            Action::OpenSettings => {
-                self.close_palette(cx);
-                open_settings_window(cx);
-            }
-            Action::None => {}
+
         }
     }
 
@@ -8439,9 +8280,7 @@ impl Shuffle {
         let Some(item) = self.palette_items.get(self.selected) else {
             return;
         };
-        let Action::Open(path, is_dir) = item.action.clone() else {
-            return;
-        };
+        let Action::Open(path, is_dir) = item.action.clone();
         self.record_palette_history();
         let parent = || path.parent().map(Path::to_path_buf).unwrap_or_else(|| path.clone());
         match act {
@@ -8787,7 +8626,7 @@ impl Shuffle {
         }
 
         // ⌘K toggles the actions panel for the selected file/folder.
-        if cmd && key == "k" {
+        if cmd && key == "k" && !self.file_search.inline {
             if self.palette_actions.is_some() {
                 self.palette_actions = None;
             } else if !self.palette_action_list().is_empty() {
@@ -9043,14 +8882,7 @@ impl Shuffle {
             .enumerate()
             .map(|(i, item)| {
                 let selected = i == self.selected;
-                // Commands get a glyph (gear for Settings); files/dirs get real
-                // Finder icons.
-                let icon: AnyElement = if matches!(item.action, Action::OpenSettings) {
-                    div().text_color(rgb(t.text_muted)).child("⚙").into_any_element()
-                } else {
-                    let dir_like = item.is_dir || matches!(item.action, Action::CopyDir);
-                    icon_element(Path::new(&item.subtitle), dir_like)
-                };
+                let icon = icon_element(Path::new(&item.subtitle), item.is_dir);
                 let base = div()
                     .id(("pal", i))
                     .flex()
@@ -9125,7 +8957,6 @@ impl Shuffle {
         let enter_label = match self.palette_items.get(self.selected).map(|i| &i.action) {
             Some(Action::Open(_, true)) => "Open folder",
             Some(Action::Open(_, false)) => "Open file",
-            Some(_) => "Run",
             None => "Open",
         };
         let has_actions = !self.palette_action_list().is_empty();
@@ -13897,7 +13728,8 @@ impl Render for Shuffle {
             .min_h_0()
             .child(self.render_sidebar(cx))
             .child(self.render_content(cx));
-        if let Some(inspector) = self.render_inspector(cx) {
+        if let Some(map) = self.render_space_map(cx) { main_row = main_row.child(map); }
+        else if let Some(inspector) = self.render_inspector(cx) {
             main_row = main_row.child(inspector);
         }
 
@@ -14079,7 +13911,8 @@ impl Render for Shuffle {
             root = root.child(panel);
         }
         if self.palette_open {
-            root = root.child(self.render_palette(cx));
+            root = if self.file_search.inline { root.child(self.render_file_results(cx)) }
+                else { root.child(self.render_palette(cx)) };
         }
         if self.context_menu.is_some() {
             root = root.child(self.render_context_menu(cx));
@@ -14134,6 +13967,7 @@ fn push_nav(
     *key += 1;
     let active = target.as_path() == current;
     let nav_target = target.clone();
+    let right_target = target.clone();
     // Tooltip: the friendly path (`~/Documents/Projects`). When expanded the
     // label is already visible, so lead with it for clarity.
     let path_str = display_path(&target);
@@ -14152,7 +13986,10 @@ fn push_nav(
         cx.listener(move |this, _: &ClickEvent, _, cx| {
             this.navigate_to(nav_target.clone(), cx);
         }),
-        |_, _, _| {},
+        cx.listener(move |this,ev:&MouseDownEvent,_,cx| {
+            this.open_sidebar_menu(f32::from(ev.position.x),f32::from(ev.position.y),SidebarTarget::Folder(right_target.clone()),cx);
+            cx.stop_propagation();
+        }),
     );
     items.push(item.into_any_element());
 }
@@ -14611,7 +14448,7 @@ struct ScriptAction {
     types: Vec<String>,
 }
 
-/// The folder scripts live in: `…/Application Support/Getter/actions`.
+/// The folder scripts live in: `…/Application Support/Schnauz/actions`.
 fn script_actions_dir() -> Option<PathBuf> {
     config_dir().map(|d| d.join("actions"))
 }
@@ -17607,50 +17444,6 @@ fn sort_entries(entries: &mut [Entry], key: SortKey, asc: bool) {
     }
 }
 
-/// Split a path-like query into (base directory, partial trailing name).
-/// Handles `~`/`~/` expansion. A trailing `/` means "list this dir" (no partial).
-fn split_path_query(q: &str) -> (PathBuf, String) {
-    let home = home_dir().to_string_lossy().into_owned();
-    let expanded = if q == "~" {
-        format!("{home}/")
-    } else if let Some(rest) = q.strip_prefix("~/") {
-        format!("{home}/{rest}")
-    } else {
-        q.to_string()
-    };
-
-    if expanded.ends_with('/') {
-        let base = expanded.trim_end_matches('/');
-        let base = if base.is_empty() { "/" } else { base };
-        return (PathBuf::from(base), String::new());
-    }
-    match expanded.rsplit_once('/') {
-        Some((base, partial)) => {
-            let base = if base.is_empty() { "/" } else { base };
-            (PathBuf::from(base), partial.to_string())
-        }
-        None => (PathBuf::from(expanded), String::new()),
-    }
-}
-
-/// Lightweight directory listing for the palette: (name, is_dir). Uses the
-/// readdir file-type (cheap), only stat-ing symlinks to resolve dir-ness.
-fn list_dir_names(dir: &Path) -> Vec<(String, bool)> {
-    let mut out = Vec::new();
-    if let Ok(read_dir) = fs::read_dir(dir) {
-        for entry in read_dir.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let is_dir = match entry.file_type() {
-                Ok(t) if t.is_dir() => true,
-                Ok(t) if t.is_symlink() => entry.path().is_dir(),
-                _ => false,
-            };
-            out.push((name, is_dir));
-        }
-    }
-    out
-}
-
 /// Character bigrams of a string.
 fn bigrams(s: &str) -> Vec<(char, char)> {
     let chars: Vec<char> = s.chars().collect();
@@ -17997,50 +17790,6 @@ fn find_score(q: &str, name: &str) -> Option<i32> {
     None
 }
 
-/// Built-in app commands whose name matches `q` (prefix or close typo), shown
-/// in the palette ahead of file results. Currently just "Settings".
-fn command_matches(q: &str) -> Vec<PaletteItem> {
-    let ql = q.to_lowercase();
-    let mut out = Vec::new();
-    let aliases = ["settings", "preferences", "config"];
-    let hit = aliases
-        .iter()
-        .any(|a| a.starts_with(&ql) || dice(&ql, a) >= 0.6);
-    if hit {
-        out.push(PaletteItem {
-            title: "Settings".to_string(),
-            subtitle: "Open Getter settings".to_string(),
-            action: Action::OpenSettings,
-            is_dir: false,
-        });
-    }
-    out
-}
-
-fn match_score(partial: &str, name: &str) -> i32 {
-    let p = partial.to_lowercase();
-    let n = name.to_lowercase();
-    if p.is_empty() {
-        return 0;
-    }
-    let mut score = 0;
-    if n == p {
-        score += 10_000;
-    }
-    if n.starts_with(&p) {
-        score += 4_000;
-    }
-    if n.contains(&p) {
-        score += 1_500;
-    }
-    if let Some(fs) = fuzzy_score(&p, &n) {
-        score += 800 + fs;
-    }
-    score += (dice(&p, &n) * 2_000.0) as i32;
-    score -= (n.len() as i32) / 4; // mild preference for shorter names
-    score
-}
-
 /// Case-insensitive fuzzy (subsequence) score of `needle` against `haystack`.
 /// Higher is better; `None` if `needle` isn't a subsequence. Rewards
 /// contiguous runs and word-start matches, lightly penalizes length.
@@ -18360,8 +18109,6 @@ fn index_score(query: &[char], name: &str) -> Option<i32> {
     }
 }
 
-/// Spotlight-backed name search: gather candidates with `mdfind`, then fuzzy
-/// rank by filename. Used as a fallback while the in-memory index is building.
 /// Full-text search inside `dir` via Spotlight: paths whose content matches
 /// `term`. Scoped with `-onlyin` so it's fast and folder-local. Returns the
 /// absolute paths (the in-folder filter keeps only direct children of these).
@@ -18391,146 +18138,6 @@ fn mdfind_content(dir: &Path, term: &str) -> HashSet<PathBuf> {
     out
 }
 
-/// Operator-driven global search for the command palette: content:/kind:/ext:/
-/// size:/date: over the home index (or Spotlight for content), returning up to
-/// 40 palette items. Runs off the UI thread.
-///
-/// Staged to keep metadata I/O bounded: cheap predicates (kind/ext + name)
-/// narrow the candidate set first; only the surviving top slice is `stat`ed for
-/// size/date, so a `kind:pdf` over a 100k-entry index never stats everything.
-fn palette_operator_search(
-    fq: &FilterQuery,
-    index: Option<&FileIndex>,
-    home: &Path,
-) -> Vec<PaletteItem> {
-    // 1. Raw candidates: Spotlight content hits, else the whole name index.
-    let mut cands: Vec<(String, PathBuf, bool)> = Vec::new();
-    if let Some(term) = &fq.content {
-        for p in mdfind_content(home, term).into_iter().take(4000) {
-            let Some(name) = p.file_name().map(|n| n.to_string_lossy().into_owned()) else {
-                continue;
-            };
-            let is_dir = p.is_dir();
-            cands.push((name, p, is_dir));
-        }
-    } else if let Some(idx) = index {
-        cands.reserve(idx.entries.len());
-        for e in &idx.entries {
-            cands.push((e.name.clone(), e.path.clone(), e.is_dir));
-        }
-    }
-
-    // 2. Cheap filter (kind/ext) + optional name ranking — no disk I/O.
-    let has_text = !fq.text.is_empty();
-    let mut scored: Vec<(i32, String, PathBuf, bool)> = Vec::new();
-    for (name, path, is_dir) in cands {
-        if !fq.kinds.is_empty() && !fq.kinds.iter().any(|k| k.matches(&name, is_dir)) {
-            continue;
-        }
-        if !fq.exts.is_empty() {
-            let ext = Path::new(&name)
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_lowercase());
-            match ext {
-                Some(e) if fq.exts.iter().any(|x| x == &e) => {}
-                _ => continue,
-            }
-        }
-        let score = if has_text {
-            match find_score(&fq.text, &name) {
-                Some(s) => s,
-                None => continue,
-            }
-        } else {
-            0
-        };
-        scored.push((score, name, path, is_dir));
-    }
-
-    // 3. Rank, then cap before the (potentially) stat-heavy stage.
-    if has_text {
-        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.len().cmp(&b.1.len())));
-    } else {
-        scored.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
-    }
-    scored.truncate(400);
-
-    // 4. Apply size/date (needs metadata) only to the survivors.
-    let need_meta = fq.size.is_some() || fq.after.is_some() || fq.before.is_some();
-    let mut out = Vec::new();
-    for (_, name, path, is_dir) in scored {
-        if need_meta {
-            let md = fs::metadata(&path).ok();
-            let size = md.as_ref().map(|m| m.len()).unwrap_or(0);
-            let mtime = md.as_ref().and_then(|m| m.modified().ok());
-            if !fq.matches_entry(&name, is_dir, size, mtime) {
-                continue;
-            }
-        }
-        out.push(PaletteItem {
-            title: name,
-            subtitle: display_path(&path),
-            action: Action::Open(path, is_dir),
-            is_dir,
-        });
-        if out.len() >= 40 {
-            break;
-        }
-    }
-    out
-}
-
-fn search_filesystem(query: &str) -> Vec<(String, PathBuf, bool)> {
-    let mut child = match Command::new("mdfind")
-        .arg("-name")
-        .arg(query)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(_) => return Vec::new(),
-    };
-
-    let Some(stdout) = child.stdout.take() else {
-        let _ = child.kill();
-        return Vec::new();
-    };
-
-    // Same ranking as the in-memory index (is_dir unknown pre-stat → false; the
-    // exact/prefix/coverage/depth signals still rank "Documents" correctly).
-    let q: Vec<char> = query.chars().flat_map(|c| c.to_lowercase()).collect();
-    let q_str: String = q.iter().collect();
-    let mut scored: Vec<(i32, String, PathBuf)> = Vec::new();
-    // Cap how much we read so a broad query can't stall us.
-    for line in BufReader::new(stdout).lines().take(4000) {
-        let Ok(line) = line else { continue };
-        if line.is_empty() {
-            continue;
-        }
-        let path = PathBuf::from(&line);
-        let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
-            continue;
-        };
-        if let Some(score) = score_entry(&q, &q_str, &name, &path, false) {
-            scored.push((score, name, path));
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
-    scored.truncate(40);
-    scored
-        .into_iter()
-        .map(|(_, name, path)| {
-            let is_dir = path.is_dir();
-            (name, path, is_dir)
-        })
-        .collect()
-}
-
 /// A short, human label for a path (last component; "/" → "Macintosh HD").
 fn path_label(p: &Path) -> String {
     if p == Path::new("/") {
@@ -18550,12 +18157,16 @@ fn home_dir() -> PathBuf {
 }
 
 fn config_dir() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("GETTER_CONFIG_DIR")
+    if let Some(path) = std::env::var_os("SCHNAUZ_CONFIG_DIR").or_else(|| std::env::var_os("GETTER_CONFIG_DIR"))
         .or_else(|| std::env::var_os("SHUFFLE_STUDIO_CONFIG_DIR")) { return Some(PathBuf::from(path)); }
     let support = home_dir().join("Library/Application Support");
-    let current = support.join("Getter");
-    let legacy = support.join("Shuffle Studio");
-    Some(if !current.exists() && legacy.is_dir() { legacy } else { current })
+    let current = support.join("Schnauz");
+    if current.is_dir() { return Some(current); }
+    for name in ["Getter", "Shuffle Studio"] {
+        let legacy = support.join(name);
+        if legacy.is_dir() { return Some(legacy); }
+    }
+    Some(current)
 }
 
 fn config_file(name: &str) -> Option<PathBuf> {
@@ -18565,7 +18176,7 @@ fn config_file(name: &str) -> Option<PathBuf> {
 /// The directory to open on launch: the last-visited one if still valid,
 /// otherwise the home directory.
 fn load_last_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os("GETTER_START_DIR").or_else(|| std::env::var_os("SHUFFLE_STUDIO_START_DIR")) {
+    if let Some(path) = std::env::var_os("SCHNAUZ_START_DIR").or_else(|| std::env::var_os("GETTER_START_DIR")).or_else(|| std::env::var_os("SHUFFLE_STUDIO_START_DIR")) {
         let path = PathBuf::from(path);
         if path.is_dir() { return path; }
     }
@@ -19608,11 +19219,11 @@ fn main() {
         ]);
         cx.set_menus(vec![
             Menu {
-                name: "Getter".into(),
+                name: "Schnauz".into(),
                 items: vec![
                     MenuItem::action("Settings…", OpenSettings),
                     MenuItem::separator(),
-                    MenuItem::action("Quit Getter", Quit),
+                    MenuItem::action("Quit Schnauz", Quit),
                 ],
             },
             Menu {
@@ -19679,7 +19290,6 @@ fn open_main_window(cx: &mut App) {
             let view = cx.new(|cx| {
                 let mut finder = Shuffle::new(load_last_dir(), cx);
                 finder.prewarm_icons(cx);
-                finder.build_index(cx);
                 // Quietly check GitHub for a newer release (shows a banner if so).
                 finder.check_for_update(cx);
                 // Reopen last run's tabs + split (else the last folder), then

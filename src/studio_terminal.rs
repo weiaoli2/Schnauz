@@ -130,7 +130,7 @@ fn spawn_process(
     command.cwd(cwd);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
-    command.env("TERM_PROGRAM", "Getter");
+    command.env("TERM_PROGRAM", "Schnauz");
     command.env("ZDOTDIR", &integration);
     command.env("SHUFFLE_STUDIO_INTEGRATION_DIR", &integration);
     command.env(
