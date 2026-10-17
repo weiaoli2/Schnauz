@@ -1,6 +1,7 @@
 //! Named, local-folder projects. Storage is independent of the GPUI views.
 
 use crate::entry_filter::EntryFilter;
+use crate::SftpServer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
@@ -76,6 +77,50 @@ impl Layout {
     }
 }
 
+/// Explicit project shortcuts and history. No automatically discovered roots.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub(crate) struct Sidebar {
+    pub locations: Vec<PathBuf>,
+    pub cloud: Vec<PathBuf>,
+    pub server_folders: Vec<PathBuf>,
+    pub servers: Vec<SftpServer>,
+    pub tagged: Vec<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Section {
+    Locations,
+    Cloud,
+    ServerFolders,
+    Tagged,
+}
+impl Sidebar {
+    pub fn paths(&self, section: Section) -> &[PathBuf] {
+        match section {
+            Section::Locations => &self.locations,
+            Section::Cloud => &self.cloud,
+            Section::ServerFolders => &self.server_folders,
+            Section::Tagged => &self.tagged,
+        }
+    }
+    pub fn set_path(&mut self, section: Section, path: PathBuf, add: bool) {
+        let paths = match section {
+            Section::Locations => &mut self.locations,
+            Section::Cloud => &mut self.cloud,
+            Section::ServerFolders => &mut self.server_folders,
+            Section::Tagged => &mut self.tagged,
+        };
+        if add {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        } else {
+            paths.retain(|p| p != &path);
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub(crate) struct Project {
     pub id: u64,
@@ -83,6 +128,8 @@ pub(crate) struct Project {
     pub layout: Layout,
     #[serde(default)]
     pub favorites: Vec<PathBuf>,
+    #[serde(default)]
+    pub sidebar: Sidebar,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -95,6 +142,10 @@ pub(crate) struct Library {
     pub personal_layout: Option<Layout>,
     #[serde(default)]
     pub personal_favorites: Vec<PathBuf>,
+    #[serde(default)]
+    pub personal_sidebar: Sidebar,
+    #[serde(default)]
+    sidebar_migrated: bool,
 }
 
 impl Default for Library {
@@ -105,6 +156,8 @@ impl Default for Library {
             active: None,
             personal_layout: None,
             personal_favorites: Vec::new(),
+            personal_sidebar: Sidebar::default(),
+            sidebar_migrated: false,
         }
     }
 }
@@ -146,6 +199,40 @@ impl Library {
         let mut library = Self::load(legacy)?;
         library.personal_favorites = favorites;
         Ok(library)
+    }
+
+    pub fn migrate_sidebar(&mut self, servers: Vec<SftpServer>) -> bool {
+        if self.sidebar_migrated {
+            return false;
+        }
+        self.personal_sidebar.servers = servers;
+        self.sidebar_migrated = true;
+        true
+    }
+
+    pub fn sidebar(&self) -> &Sidebar {
+        self.sidebar_for(self.active)
+            .unwrap_or(&self.personal_sidebar)
+    }
+    pub fn sidebar_for(&self, id: Option<u64>) -> Option<&Sidebar> {
+        match id {
+            Some(id) => self.items.iter().find(|p| p.id == id).map(|p| &p.sidebar),
+            None => Some(&self.personal_sidebar),
+        }
+    }
+    pub fn sidebar_mut(&mut self) -> &mut Sidebar {
+        self.sidebar_for_mut(self.active)
+            .expect("active project exists")
+    }
+    pub fn sidebar_for_mut(&mut self, id: Option<u64>) -> Option<&mut Sidebar> {
+        match id {
+            Some(id) => self
+                .items
+                .iter_mut()
+                .find(|p| p.id == id)
+                .map(|p| &mut p.sidebar),
+            None => Some(&mut self.personal_sidebar),
+        }
     }
 
     pub fn favorites(&self) -> &[PathBuf] {
@@ -214,6 +301,7 @@ impl Library {
             name,
             layout,
             favorites: Vec::new(),
+            sidebar: Sidebar::default(),
         });
         Ok(id)
     }
@@ -408,6 +496,103 @@ mod tests {
         restored.active = None;
         assert_eq!(restored.favorites(), &[scratch.0.join("personal pin")]);
         assert_eq!(restored.personal_layout, Some(make_layout("personal")));
+    }
+
+    #[test]
+    fn project_sidebar_is_empty_then_isolated_and_shared_explicitly_after_restart() {
+        let scratch = Scratch::new();
+        let layout = Layout {
+            panes: vec![SavedPane {
+                tabs: vec![tab(scratch.0.clone())],
+                active: 0,
+            }],
+            active_pane: 0,
+            split_ratio: 0.5,
+        };
+        let mut library = Library::default();
+        let a = library.create("Design", layout.clone()).unwrap();
+        let b = library.create("Code", layout).unwrap();
+        assert_eq!(library.sidebar_for(Some(a)).unwrap(), &Sidebar::default());
+        let location = scratch.0.join("shared folder");
+        let file = location.join("spec.txt");
+        library.active = Some(a);
+        library
+            .sidebar_mut()
+            .set_path(Section::Locations, location.clone(), true);
+        library
+            .sidebar_mut()
+            .set_path(Section::Cloud, location.clone(), true);
+        library
+            .sidebar_mut()
+            .set_path(Section::Tagged, file.clone(), true);
+        library
+            .sidebar_mut()
+            .set_path(Section::Tagged, file.clone(), true);
+        library.sidebar_mut().servers.push(SftpServer {
+            host: "design-host".into(),
+            name: "Design server".into(),
+            ..Default::default()
+        });
+        assert_eq!(library.sidebar().tagged, vec![file.clone()]);
+        library.active = Some(b);
+        assert_eq!(library.sidebar(), &Sidebar::default());
+        // Sharing from a sidebar menu updates its destination without switching.
+        library.sidebar_for_mut(Some(a)).unwrap().set_path(
+            Section::Locations,
+            location.clone(),
+            true,
+        );
+        library.sidebar_for_mut(Some(b)).unwrap().set_path(
+            Section::Locations,
+            location.clone(),
+            true,
+        );
+        library
+            .sidebar_for_mut(None)
+            .unwrap()
+            .set_path(Section::Locations, location.clone(), true);
+        assert_eq!(library.active, Some(b));
+        let path = scratch.0.join("projects.json");
+        library.save(&path).unwrap();
+        let mut restored = Library::load(&path).unwrap();
+        assert_eq!(restored, library);
+        for id in [None, Some(a), Some(b)] {
+            assert_eq!(
+                restored.sidebar_for(id).unwrap().locations,
+                vec![location.clone()]
+            );
+        }
+        assert!(restored.sidebar().tagged.is_empty());
+        assert!(restored.sidebar().servers.is_empty());
+        restored.active = Some(a);
+        assert_eq!(restored.sidebar().servers[0].host, "design-host");
+        restored
+            .sidebar_mut()
+            .set_path(Section::Tagged, file, false);
+        assert!(restored.sidebar().tagged.is_empty());
+        restored
+            .sidebar_mut()
+            .set_path(Section::Locations, location, false);
+        assert!(restored.sidebar().locations.is_empty());
+        assert_eq!(restored.sidebar_for(Some(b)).unwrap().locations.len(), 1);
+    }
+
+    #[test]
+    fn old_servers_migrate_once_to_personal_without_filling_new_projects() {
+        let mut library = Library::default();
+        let server = SftpServer {
+            name: "Existing".into(),
+            host: "legacy-host".into(),
+            ..Default::default()
+        };
+        assert!(library.migrate_sidebar(vec![server.clone()]));
+        assert!(!library.migrate_sidebar(vec![]));
+        assert_eq!(library.personal_sidebar.servers, vec![server]);
+        let json = serde_json::to_vec(&library).unwrap();
+        let mut restored: Library = serde_json::from_slice(&json).unwrap();
+        restored.personal_sidebar.servers.clear();
+        assert!(!restored.migrate_sidebar(vec![SftpServer::default()]));
+        assert!(restored.personal_sidebar.servers.is_empty());
     }
 
     #[test]

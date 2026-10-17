@@ -8,8 +8,7 @@ impl Shuffle {
             .iter()
             .map(Pane::active_tab)
             .filter(|t| {
-                t.view == ViewMode::Gallery
-                    || (prefs().preview && self.space_map.is_none() && t.selection.len() == 1)
+                prefs().preview && self.space_map.is_none() && t.selection.len() == 1
             })
             .filter_map(|t| t.anchor.clone())
             .collect();
@@ -41,6 +40,7 @@ impl Shuffle {
         .detach();
     }
     pub(super) fn ensure_preview(&self, path: PathBuf, force: bool, cx: &mut Context<Self>) {
+        if video_preview::is_video(&path) { return; }
         if (!force && !prefs().preview)
             || lookup_preview(&path).is_some()
             || self.preview_pending.borrow().contains_key(&path)
@@ -371,8 +371,9 @@ fn build_preview_cancellable(path: &Path, cancel: &AtomicBool) -> Option<Arc<Ren
         NEXT_PREVIEW.fetch_add(1, Ordering::Relaxed)
     )));
     fs::create_dir_all(&directory.0).ok()?;
+    let edge = if video_preview::is_picture(path) { 1600 } else { 600 };
     let mut child = Command::new("qlmanage")
-        .args(["-t", "-s", "600", "-o"])
+        .args(["-t", "-s", &edge.to_string(), "-o"])
         .arg(&directory.0)
         .arg(path)
         .stdout(Stdio::null())
@@ -384,7 +385,7 @@ fn build_preview_cancellable(path: &Path, cancel: &AtomicBool) -> Option<Arc<Ren
     }
     let name = path.file_name()?.to_string_lossy();
     let png = directory.0.join(format!("{name}.png"));
-    let decoded = image::open(png).ok()?.thumbnail(600, 600);
+    let decoded = image::open(png).ok()?.thumbnail(edge, edge);
     let rgba = decoded.to_rgba8();
     let (w, h) = rgba.dimensions();
     let mut raw = rgba.into_raw();

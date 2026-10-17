@@ -428,9 +428,10 @@ impl Shuffle {
                                     tab.find_query = None;
                                     tab.selection.clear();
                                     tab.anchor = None;
-                                    tab.col_chain.clear();
-                                    tab.col_active = 0;
+
                                     tab.recompute_results();
+                                    let style = self.folder_views.resolve(&tab.current_dir).cloned().unwrap_or_default();
+                                    list_ui::apply_style(tab, &style);
                                 }
                             }
                         }
@@ -443,6 +444,8 @@ impl Shuffle {
                                 tab.current_dir = session.cwd.clone();
                                 tab.entries = read_entries_fast(&tab.current_dir);
                                 tab.recompute_results();
+                                let style = self.folder_views.resolve(&tab.current_dir).cloned().unwrap_or_default();
+                                list_ui::apply_style(tab, &style);
                             }
                         }
                         ShellEvent::CommandStarted => {
@@ -523,8 +526,8 @@ impl Shuffle {
             tab.recompute_results();
             tab.selection.clear();
             tab.anchor = None;
-            tab.col_chain.clear();
-            tab.col_active = 0;
+            let style = self.folder_views.resolve(&tab.current_dir).cloned().unwrap_or_default();
+            list_ui::apply_style(tab, &style);
         }
     }
 

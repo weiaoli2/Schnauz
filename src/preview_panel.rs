@@ -3,6 +3,7 @@ use super::*;
 
 pub(super) struct Drag {
     pane: usize,
+    owner: usize,
     start_x: f32,
     start_width: f32,
     width: f32,
@@ -15,6 +16,15 @@ fn bounded_width(requested: f32, pane_width: f32) -> f32 {
     requested.clamp(220_f32.min(max), max)
 }
 
+pub(super) fn preview_width(this: &Shuffle, pane: usize) -> f32 {
+    bounded_width(
+        this.preview_resize
+            .as_ref()
+            .map_or(this.active_tab().preview_width as f32, |d| d.width),
+        pane_width(pane),
+    )
+}
+
 impl Shuffle {
     pub(super) fn resize_preview(&mut self, x: f32, cx: &mut Context<Self>) {
         if let Some(drag) = &mut self.preview_resize {
@@ -25,9 +35,9 @@ impl Shuffle {
 
     pub(super) fn finish_preview_resize(&mut self, cx: &mut Context<Self>) {
         if let Some(drag) = self.preview_resize.take() {
-            let mut next = prefs();
-            next.preview_width = drag.width.round() as u16;
-            apply_prefs(next, cx);
+            let owner = drag.owner.min(self.panes.len() - 1);
+            self.tab_mut(owner).preview_width = (drag.width.round() as u16).clamp(220, 1200);
+            self.remember_folder_view(owner, cx);
             cx.notify();
         }
     }
@@ -38,12 +48,7 @@ impl Shuffle {
         pane: usize,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let width = bounded_width(
-            self.preview_resize
-                .as_ref()
-                .map_or(prefs().preview_width as f32, |d| d.width),
-            pane_width(pane),
-        );
+        let width = preview_width(self, pane);
         div()
             .relative()
             .flex_none()
@@ -74,12 +79,12 @@ impl Shuffle {
                         cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                             if ev.click_count >= 2 {
                                 this.preview_resize = None;
-                                let mut next = prefs();
-                                next.preview_width = 420;
-                                apply_prefs(next, cx);
+                                this.tab_mut(this.active_pane).preview_width = 420;
+                                this.remember_folder_view(this.active_pane, cx);
                             } else {
                                 this.preview_resize = Some(Drag {
                                     pane,
+                                    owner: this.active_pane,
                                     start_x: f32::from(ev.position.x),
                                     start_width: width,
                                     width,

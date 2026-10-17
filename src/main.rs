@@ -1,7 +1,7 @@
 //! Schnauz — a personal Mac file manager based on Shuffle.
 //!
-//! Design and product direction: Oliver Weber.
-//! Implementation of Schnauz adaptations: Codex.
+//! Developer, design and product direction: Oliver Weber.
+//! Implementation assistance for Schnauz adaptations: Codex.
 //! Original codebase: Shuffle by Jaime Guzman (WizenPainter), MIT license.
 //! Original copyright: Copyright (c) 2026 Jaime Guzman.
 //! See LICENSE and CREDITS.txt for attribution and license notices.
@@ -20,9 +20,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
-use chrono::{DateTime, Local};
 use gpui::{
-    actions, anchored, div, ease_out_quint, img, point, prelude::*, px, relative, rgb, rgba, size,
+    actions, div, ease_out_quint, img, point, prelude::*, px, relative, rgb, rgba, size,
     uniform_list, Animation, AnimationExt, AnyElement, App,
     Application, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle, ElementId, ExternalPaths, FocusHandle, FontWeight, ImageSource,
     KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit,
@@ -39,13 +38,12 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSData, NSFileManager, NSObject, NSString, NSURL};
 
-const RECENTS_CAP: usize = 12;
 const UI_FONT_SIZE: f32 = 12.0;
 const UI_SMALL_FONT_SIZE: f32 = 11.0;
 
 // Menu-bar actions. OpenSettings/Quit are app-level; the rest are dispatched to
 // the focused explorer window and handled in `Shuffle::render`'s root.
-actions!(shuffle, [OpenSettings, Quit]);
+actions!(shuffle, [OpenAbout, OpenSettings, Quit]);
 actions!(
     shuffle,
     [
@@ -55,8 +53,6 @@ actions!(
         MoveToTrash,
         ViewList,
         ViewIcons,
-        ViewColumns,
-        ViewGallery,
         ToggleSidebar,
         GoBack,
         GoForward,
@@ -75,6 +71,7 @@ actions!(
 mod theme;
 use theme::*;
 mod projects;
+mod project_sidebar;
 mod text_preview;
 mod new_text_file;
 mod entry_filter;
@@ -88,14 +85,21 @@ mod space_map;
 mod space_ui;
 mod cache;
 mod folder_watch;
-mod columns;
+mod folder_views;
+mod list_ui;
+mod native_menus;
+mod toolbar_icons;
+use folder_views::{Column, ListLayout, ViewMode};
+use toolbar_icons::{ui_icon, Icon};
 mod previews;
 mod preview_panel;
 mod mascot;
 mod settings;
+mod about;
+mod video_preview;
+mod system_dates;
 use settings::*;
 use previews::*;
-use columns::{clear_column_cache,forget_column_listing};
 use cache::Cache;
 
 // ----- feature preferences (the General tab toggles) -------------------------
@@ -116,7 +120,6 @@ struct Prefs {
     /// Collapse the left sidebar to an icon-only rail.
     sidebar_collapsed: bool,
     /// How many Recents to show in the sidebar (0 hides the section).
-    recent_limit: usize,
     /// Give the command palette (Cmd+P) its own Up/Down query history.
     palette_history: bool,
     /// Enable custom sidebar "groups" of files/folders.
@@ -149,7 +152,6 @@ impl Default for Prefs {
             info: true,
             show_parent: false,
             sidebar_collapsed: false,
-            recent_limit: 3,
             palette_history: false,
             groups_enabled: false,
             show_filter_button: true,
@@ -175,7 +177,6 @@ thread_local! {
         info: true,
         show_parent: false,
         sidebar_collapsed: false,
-        recent_limit: 3,
         palette_history: false,
         groups_enabled: false,
         show_filter_button: true,
@@ -276,13 +277,6 @@ impl MenuStyle {
     }
 }
 
-impl MenuStyle {
-    /// The background as an rgba value with the configured opacity applied.
-    fn bg_rgba(&self) -> Rgba {
-        let a = (self.opacity.min(100) as u32 * 255) / 100;
-        Theme::alpha(self.bg, a)
-    }
-}
 
 #[derive(Clone, Copy)]
 struct MenuStyleGlobal(MenuStyle);
@@ -802,8 +796,6 @@ fn view_mode_key(v: ViewMode) -> &'static str {
     match v {
         ViewMode::List => "list",
         ViewMode::Icons => "icons",
-        ViewMode::Columns => "columns",
-        ViewMode::Gallery => "gallery",
     }
 }
 
@@ -811,8 +803,7 @@ fn view_mode_from_key(s: &str) -> Option<ViewMode> {
     Some(match s {
         "list" => ViewMode::List,
         "icons" => ViewMode::Icons,
-        "columns" => ViewMode::Columns,
-        "gallery" => ViewMode::Gallery,
+        "columns" | "gallery" => ViewMode::List, // Migrate legacy saved views.
         _ => return None,
     })
 }
@@ -825,6 +816,8 @@ fn sort_key_name(k: SortKey) -> &'static str {
         SortKey::Modified => "modified",
         SortKey::Created => "created",
         SortKey::Size => "size",
+        SortKey::Extension => "extension",
+        SortKey::Permissions => "permissions",
     }
 }
 
@@ -836,13 +829,14 @@ fn sort_key_from_name(s: &str) -> Option<SortKey> {
         "modified" => SortKey::Modified,
         "created" => SortKey::Created,
         "size" => SortKey::Size,
+        "extension" => SortKey::Extension,
+        "permissions" => SortKey::Permissions,
         _ => return None,
     })
 }
 
 // Default column widths for the main listing; all are user-resizable.
 const ICON_W: f32 = 18.0;
-const MIN_COL_W: f32 = 50.0;
 
 // Command-palette result row height, and how many show before scrolling.
 const PALETTE_ROW_H: f32 = 26.0;
@@ -872,119 +866,9 @@ const RENAME_ERR_COLOR: u32 = 0xef4444;
 /// Set by the chip's drag constructor; cleared on drop or when the drag ends.
 static TAB_DRAG_LIVE: AtomicBool = AtomicBool::new(false);
 
-/// The four resizable columns of the main listing.
-#[derive(Clone, Copy, PartialEq)]
-enum Column {
-    Name,
-    Kind,
-    Date,
-    Size,
-}
-
-impl Column {
-    fn key(self) -> usize {
-        match self {
-            Column::Name => 0,
-            Column::Kind => 1,
-            Column::Date => 2,
-            Column::Size => 3,
-        }
-    }
-}
-
-/// Current pixel widths of each column.
+/// Width drag uses the displayed column width and writes once on release.
 #[derive(Clone, Copy)]
-struct ColumnWidths {
-    name: f32,
-    kind: f32,
-    date: f32,
-    size: f32,
-}
-
-impl Default for ColumnWidths {
-    fn default() -> Self {
-        Self {
-            name: 320.0,
-            kind: 165.0,
-            date: 185.0,
-            size: 90.0,
-        }
-    }
-}
-
-impl ColumnWidths {
-    fn get(&self, col: Column) -> f32 {
-        match col {
-            Column::Name => self.name,
-            Column::Kind => self.kind,
-            Column::Date => self.date,
-            Column::Size => self.size,
-        }
-    }
-
-    /// Lay the preferred widths out in a pane whose rows are `avail` px wide.
-    /// Name takes whatever is left (Finder / File Pilot style). When that would
-    /// squeeze it below a readable minimum, the other columns shrink toward
-    /// their minimums; past that every column keeps its minimum and the list
-    /// scrolls sideways, so all columns stay reachable in a tiny pane. An
-    /// unmeasured pane (`avail` ≤ 0, first frame) gets the preferences as-is.
-    fn fit(self, avail: f32) -> ColumnWidths {
-        const NAME_MIN: f32 = 180.0;
-        if avail <= 0.0 {
-            return self;
-        }
-        let pref = [self.kind, self.date, self.size];
-        let min = [70.0f32.min(self.kind), 110.0f32.min(self.date), 60.0f32.min(self.size)];
-        {
-            let visible = [true, true, true];
-            let pick = |v: [f32; 3]| (0..3).filter(|&i| visible[i]).map(|i| v[i]).sum::<f32>();
-            let (pref_sum, min_sum) = (pick(pref), pick(min));
-            let mut out = [0.0f32; 3];
-            if avail - pref_sum >= NAME_MIN {
-                for i in 0..3 {
-                    out[i] = if visible[i] { pref[i] } else { 0.0 };
-                }
-            } else if avail - min_sum >= NAME_MIN {
-                // Shrink each visible column in proportion to its give.
-                let need = NAME_MIN - (avail - pref_sum);
-                let give = (pref_sum - min_sum).max(1.0);
-                for i in 0..3 {
-                    out[i] = if visible[i] { pref[i] - (pref[i] - min[i]) * need / give } else { 0.0 };
-                }
-            } else {
-                // Too narrow: everything at its minimum; the rest scrolls.
-                return ColumnWidths { name: NAME_MIN, kind: min[0], date: min[1], size: min[2] };
-            }
-            let rest: f32 = out.iter().sum();
-            ColumnWidths { name: avail - rest, kind: out[0], date: out[1], size: out[2] }
-        }
-    }
-
-    fn set(&mut self, col: Column, w: f32) {
-        let w = w.max(MIN_COL_W);
-        match col {
-            Column::Name => self.name = w,
-            Column::Kind => self.kind = w,
-            Column::Date => self.date = w,
-            Column::Size => self.size = w,
-        }
-    }
-}
-
-/// An in-progress column drag.
-#[derive(Clone, Copy)]
-struct Resize {
-    /// The column whose preferred width the drag changes.
-    col: Column,
-    start_x: f32,
-    start_w: f32,
-    /// +1 grows `col` with the drag; -1 shrinks it (dragging Name's edge,
-    /// since Name just fills what the other columns leave).
-    sign: f32,
-    /// The column on the other side of the dragged boundary and its starting
-    /// width: it gives up what `col` gains, so the boundary tracks the cursor.
-    partner: Option<(Column, f32)>,
-}
+struct Resize { pane: usize, col: Column, start_x: f32, start_w: f32 }
 
 /// An in-progress scrollbar-thumb drag (which pane's list is being scrolled).
 #[derive(Clone, Copy)]
@@ -1030,6 +914,7 @@ type MenuOp = Rc<dyn Fn(&mut Shuffle, &mut Window, &mut Context<Shuffle>)>;
 /// One entry in the (data-driven) right-click menu. The whole tree is built
 /// once when the menu opens and stored on [`ContextMenu`]; rendering, hover
 /// flyouts, and keyboard navigation all walk this data — no per-view closures.
+#[derive(Clone)]
 enum MenuNode {
     Item {
         label: String,
@@ -1050,23 +935,6 @@ enum MenuNode {
     Disabled(String),
 }
 
-impl MenuNode {
-    /// Rows the highlight can land on (items and submenu parents).
-    fn selectable(&self) -> bool {
-        matches!(self, MenuNode::Item { .. } | MenuNode::Sub { .. })
-    }
-
-    /// Fixed row heights so the flyout's vertical offset is exact.
-    fn height(&self) -> f32 {
-        match self {
-            MenuNode::Sep => 9.0,
-            _ => MENU_ROW_H,
-        }
-    }
-}
-
-/// Context-menu row height (fixed so flyout alignment is deterministic).
-const MENU_ROW_H: f32 = 26.0;
 
 fn mi(
     label: impl Into<String>,
@@ -1140,12 +1008,7 @@ struct ContextMenu {
     target: Option<(PathBuf, bool)>,
     /// The menu tree, built once at open.
     nodes: Vec<MenuNode>,
-    /// Index of the root `Sub` whose flyout panel is open.
-    open_sub: Option<usize>,
-    /// Highlighted root row (mouse hover or keyboard).
-    sel_root: Option<usize>,
-    /// Highlighted row inside the open flyout (`None` = focus in the root).
-    sel_sub: Option<usize>,
+
 }
 
 /// In-progress inline rename of a file/folder.
@@ -1170,8 +1033,8 @@ struct Group {
 /// What a right-click in the sidebar targeted (drives its context menu).
 #[derive(Clone)]
 enum SidebarTarget {
-    Folder(PathBuf),
     Project(u64),
+    ProjectPath(projects::Section, PathBuf),
     /// Empty sidebar space → offer "New Group".
     Empty,
     /// A pinned bookmark path → offer "Remove Bookmark".
@@ -1205,6 +1068,7 @@ struct Entry {
     size: u64,
     modified: Option<SystemTime>,
     created: Option<SystemTime>,
+    mode: Option<u32>,
     /// Whether size/dates have been read (the fast first pass leaves them empty).
     loaded: bool,
     hidden_flag: bool,
@@ -1260,6 +1124,8 @@ enum SortKey {
     Modified,
     Created,
     Size,
+    Extension,
+    Permissions,
 }
 
 impl SortKey {
@@ -1271,17 +1137,10 @@ impl SortKey {
             SortKey::Modified => "Date Modified",
             SortKey::Created => "Date Created",
             SortKey::Size => "Size",
+            SortKey::Extension => "Extension",
+            SortKey::Permissions => "Permissions",
         }
     }
-}
-
-/// How items are displayed in a pane.
-#[derive(Clone, Copy, PartialEq)]
-enum ViewMode {
-    List,
-    Icons,
-    Columns,
-    Gallery,
 }
 
 /// One open tab: an independent directory view with its own history, scroll,
@@ -1335,10 +1194,8 @@ struct Tab {
     sort_asc: bool,
     /// How items are displayed.
     view: ViewMode,
-    /// Column view: the chain of folders selected, one per cascading column.
-    col_chain: Vec<PathBuf>,
-    /// Column view: which column currently has keyboard focus.
-    col_active: usize,
+    list_layout: ListLayout,
+    preview_width: u16,
     /// Generation of the latest load, so a stale background metadata fill is
     /// discarded if the user navigated away.
     load_gen: u64,
@@ -1352,12 +1209,16 @@ struct Tab {
 }
 
 impl Tab {
+    fn retain_visible_selection(&mut self) {
+        let kept: HashSet<PathBuf> = self.visible_entries().map(|e| self.current_dir.join(&e.name))
+            .filter(|p| self.selection.contains(p)).collect();
+        self.selection = kept;
+        if self.anchor.as_ref().is_some_and(|p| !self.selection.contains(p)) { self.anchor = self.selection.iter().next().cloned(); }
+    }
     fn set_entry_filter(&mut self, filter: EntryFilter) {
         self.entry_filter = filter;
         self.selection.clear();
         self.anchor = None;
-        self.col_chain.clear();
-        self.col_active = 0;
         self.scroll_handle = UniformListScrollHandle::new();
         self.h_scroll = ScrollHandle::new();
         self.recompute_results();
@@ -1484,8 +1345,9 @@ impl Tab {
             sort_key: SortKey::None,
             sort_asc: true,
             view: ViewMode::List,
-            col_chain: Vec::new(),
-            col_active: 0,
+            list_layout: ListLayout::default(),
+            preview_width: prefs().preview_width,
+
             load_gen: 0,
             last_scroll: Instant::now(),
             scroll_epoch: 0,
@@ -1588,7 +1450,6 @@ struct Shuffle {
     collapse_anim: Option<(f32, bool)>,
     /// True while the scrollbar-fade repaint ticker task is alive.
     fade_ticker: bool,
-    recents: Vec<PathBuf>,
     /// User-defined sidebar groups (when the feature is enabled).
     groups: Vec<Group>,
     /// Open sidebar context menu: (x, y, what was clicked).
@@ -1597,7 +1458,7 @@ struct Shuffle {
     group_dialog: Option<String>,
     /// Sidebar section titles the user has collapsed (hidden their items).
     collapsed_sections: HashSet<String>,
-    widths: ColumnWidths,
+    folder_views: folder_views::Library,
     resize: Option<Resize>,
     scroll_drag: Option<ScrollDrag>,
     /// In-progress drag of a List view's horizontal scrollbar thumb:
@@ -1608,8 +1469,10 @@ struct Shuffle {
     palette_open: bool,
     file_search: search_ui::State,
     space_map: Option<space_ui::State>,
+    dismiss_space_map: bool,
     preview_pending: RefCell<HashMap<PathBuf,Arc<AtomicBool>>>,
     preview_resize: Option<preview_panel::Drag>,
+    video_preview: Option<Rc<video_preview::Session>>,
     info_pending: RefCell<HashSet<PathBuf>>,
     pdf_pending: RefCell<HashSet<(PathBuf,usize)>>,
     query: String,
@@ -1630,6 +1493,7 @@ struct Shuffle {
     search_gen: u64,
     palette_scroll: ScrollHandle,
     context_menu: Option<ContextMenu>,
+    native_menu_pending: bool,
     /// In-progress inline rename, if any.
     rename: Option<Rename>,
     /// Open "Sort By" dropdown: (pane, x, y) in window coords.
@@ -1748,11 +1612,10 @@ impl Shuffle {
     fn new(dir: PathBuf, cx: &mut Context<Self>) -> Self {
         cx.on_app_quit(|this, _| {
             this.save_session();
-            async {}
+            let job = this.folder_views.write_job();
+            async move { if let Some(job) = job { let _ = job.run(); } }
         }).detach();
         ensure_base_icons(); // real folder/file icons ready before first render
-        ensure_sidebar_icons(); // Applications/Documents/… + Mac/home icons
-        ensure_dynamic_sidebar_icons(); // cloud providers + mounted volumes
         // Sync + repaint whenever the theme changes (e.g. from Settings).
         cx.observe_global::<ThemeGlobal>(|_, cx| {
             set_active_theme(cx.global::<ThemeGlobal>().0);
@@ -1767,8 +1630,14 @@ impl Shuffle {
         })
         .detach();
         // Sync + repaint whenever the saved SFTP servers change (from Settings).
-        cx.observe_global::<SftpServersGlobal>(|_, cx| {
-            set_active_sftp_servers(cx.global::<SftpServersGlobal>().0.clone());
+        cx.observe_global::<SftpServersGlobal>(|this, cx| {
+            let servers = cx.global::<SftpServersGlobal>().0.clone();
+            set_active_sftp_servers(servers.clone());
+            if this.projects.sidebar().servers != servers {
+                let mut candidate = this.projects.clone();
+                candidate.sidebar_mut().servers = servers;
+                if let Err(error) = this.persist_library(candidate) { this.set_notice(error, cx); }
+            }
             cx.notify();
         })
         .detach();
@@ -1814,29 +1683,24 @@ impl Shuffle {
                     this.panes.iter().map(|p| {
                         let tab = p.active_tab();
                         if tab.remote.is_some() { return None; }
-                        Some((tab.current_dir.clone(), if tab.view == ViewMode::Columns { tab.col_chain.clone() } else { Vec::new() }))
+                        Some(tab.current_dir.clone())
                     }).collect::<Vec<_>>()
                 }) { Ok(dirs) => dirs, Err(_) => break };
-                let wanted = dirs.iter().flatten().flat_map(|(root,chain)| std::iter::once(root.clone()).chain(chain.iter().cloned())).collect();
+                let wanted = dirs.iter().flatten().cloned().collect();
                 let (returned, changed) = cx.background_spawn(async move {
                     let changed = watcher.changes(wanted); (watcher, changed)
                 }).await;
                 watcher = returned;
                 if this.update(cx, |this,cx| {
                     for (pane,dir) in dirs.into_iter().enumerate() {
-                        let Some((root,chain)) = dir else {continue;};
+                        let Some(root) = dir else {continue;};
                         if pane >= this.panes.len() || this.tab(pane).current_dir != root {continue;}
                         if changed.contains(&root) {
-                            forget_column_listing(&root);
                             this.reload_pane(pane,cx);
                         }
-                        if this.tab(pane).col_chain == chain {
-                            for folder in chain {if changed.contains(&folder) {forget_column_listing(&folder); cx.notify();}}
-                        }
+
                     }
-                    if SIDEBAR_DIRTY.swap(false, Ordering::AcqRel) { cx.notify(); }
                     if maintenance.elapsed() >= Duration::from_secs(1) {
-                        ensure_dynamic_sidebar_icons();
                         this.refresh_waterfall(cx);
                         this.save_session();
                         maintenance = Instant::now();
@@ -1897,8 +1761,6 @@ impl Shuffle {
             set_active_icon_pack(cx.global::<IconPackGlobal>().0.clone());
             clear_icon_cache();
             ensure_base_icons();
-            ensure_sidebar_icons();
-            ensure_dynamic_sidebar_icons();
             cx.notify();
             this.prewarm_icons(cx);
         })
@@ -1908,10 +1770,18 @@ impl Shuffle {
             .and_then(|dir| projects::Library::load_migrating(
                 &dir.join("projects.json"), &dir.join("workspaces.json"), read_path_list("bookmarks.txt")
             ).map_err(|error| format!("Couldn't read projects: {error}. The existing file has been preserved.")));
-        let (projects, project_load_error) = match project_result {
+        let (mut projects, mut project_load_error) = match project_result {
             Ok(library) => (library, None),
             Err(error) => (projects::Library::default(), Some(error)),
         };
+        if project_load_error.is_none() && projects.migrate_sidebar(load_sftp_servers()) {
+            if let Some(path) = config_file("projects.json") {
+                if let Err(error) = projects.save(&path) { project_load_error = Some(format!("Couldn't migrate project sidebar: {error}")); }
+            }
+        }
+        let servers = projects.sidebar().servers.clone();
+        set_active_sftp_servers(servers.clone());
+        cx.set_global(SftpServersGlobal(servers));
         Self {
             panes: vec![Pane::new(dir)],
             active_pane: 0,
@@ -1920,12 +1790,11 @@ impl Shuffle {
             split_epoch: 0,
             collapse_anim: None,
             fade_ticker: false,
-            recents: read_path_list("recents.txt"),
             groups: load_groups(),
             sidebar_menu: None,
             group_dialog: None,
             collapsed_sections: read_string_list("collapsed_sections.txt").into_iter().collect(),
-            widths: ColumnWidths::default(),
+            folder_views: folder_views::Library::open(config_file("folder-views.json")),
             resize: None,
             scroll_drag: None,
             hbar_drag: None,
@@ -1933,8 +1802,10 @@ impl Shuffle {
             palette_open: false,
             file_search: search_ui::State::default(),
             space_map: None,
+            dismiss_space_map: false,
             preview_pending: RefCell::new(HashMap::new()),
             preview_resize: None,
+            video_preview: None,
             info_pending: RefCell::new(HashSet::new()),
             pdf_pending: RefCell::new(HashSet::new()),
             query: String::new(),
@@ -1948,6 +1819,7 @@ impl Shuffle {
             search_gen: 0,
             palette_scroll: ScrollHandle::new(),
             context_menu: None,
+            native_menu_pending: false,
             rename: None,
             sort_menu: None,
             confirm_delete: None,
@@ -2023,9 +1895,7 @@ impl Shuffle {
             y,
             target,
             nodes,
-            open_sub: None,
-            sel_root: None,
-            sel_sub: None,
+
         });
         cx.notify();
     }
@@ -2038,112 +1908,22 @@ impl Shuffle {
 
     /// Mouse entered a root row: highlight it, and open/close the flyout
     /// (hovering a submenu parent opens it immediately, Finder-style).
-    fn menu_hover_root(&mut self, i: usize, cx: &mut Context<Self>) {
-        let Some(m) = self.context_menu.as_mut() else { return };
-        let want_sub = matches!(m.nodes.get(i), Some(MenuNode::Sub { .. })).then_some(i);
-        if m.sel_root == Some(i) && m.sel_sub.is_none() && m.open_sub == want_sub {
-            return;
-        }
-        m.sel_root = Some(i);
-        m.sel_sub = None;
-        m.open_sub = want_sub;
-        cx.notify();
-    }
+
 
     /// Mouse entered a flyout row.
-    fn menu_hover_sub(&mut self, j: usize, cx: &mut Context<Self>) {
-        let Some(m) = self.context_menu.as_mut() else { return };
-        if m.sel_sub == Some(j) {
-            return;
-        }
-        m.sel_sub = Some(j);
-        cx.notify();
-    }
+
 
     /// Run the action behind a row (`sub` addresses into the open flyout).
-    fn menu_invoke(&mut self, root: usize, sub: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
-        let op = {
-            let Some(m) = self.context_menu.as_ref() else { return };
-            let node = match (m.nodes.get(root), sub) {
-                (Some(MenuNode::Sub { items, .. }), Some(j)) => items.get(j),
-                (node, None) => node,
-                _ => None,
-            };
-            match node {
-                Some(MenuNode::Item { on, .. }) => on.clone(),
-                _ => return,
-            }
-        };
-        op(self, window, cx);
-    }
+
 
     /// Keyboard navigation while the context menu is open (it's modal: every
     /// key is swallowed). Arrows move, → opens a flyout, ← returns, Enter
     /// invokes, Esc closes.
-    fn menu_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        match key {
-            "escape" => self.close_context_menu(cx),
-            "down" | "up" => {
-                let delta: isize = if key == "down" { 1 } else { -1 };
-                if let Some(m) = self.context_menu.as_mut() {
-                    if m.sel_sub.is_some() {
-                        if let Some(MenuNode::Sub { items, .. }) =
-                            m.open_sub.and_then(|i| m.nodes.get(i))
-                        {
-                            m.sel_sub = step_menu_sel(items, m.sel_sub, delta);
-                        }
-                    } else {
-                        m.sel_root = step_menu_sel(&m.nodes, m.sel_root, delta);
-                        // Moving in the root closes any open flyout.
-                        m.open_sub = None;
-                    }
-                    cx.notify();
-                }
-            }
-            "right" => {
-                if let Some(m) = self.context_menu.as_mut() {
-                    if let Some(i) = m.sel_root {
-                        if let Some(MenuNode::Sub { items, .. }) = m.nodes.get(i) {
-                            m.open_sub = Some(i);
-                            m.sel_sub = step_menu_sel(items, None, 1);
-                            cx.notify();
-                        }
-                    }
-                }
-            }
-            "left" => {
-                if let Some(m) = self.context_menu.as_mut() {
-                    if m.open_sub.is_some() {
-                        m.open_sub = None;
-                        m.sel_sub = None;
-                        cx.notify();
-                    }
-                }
-            }
-            "enter" => {
-                let hit = self.context_menu.as_ref().and_then(|m| {
-                    let root = m.sel_root?;
-                    match (m.nodes.get(root)?, m.sel_sub) {
-                        (MenuNode::Sub { .. }, None) => Some((root, None, true)),
-                        (MenuNode::Sub { .. }, Some(j)) => Some((root, Some(j), false)),
-                        (MenuNode::Item { .. }, _) => Some((root, None, false)),
-                        _ => None,
-                    }
-                });
-                match hit {
-                    // Enter on a submenu parent opens it, like →.
-                    Some((_, None, true)) => self.menu_key("right", window, cx),
-                    Some((root, sub, false)) => self.menu_invoke(root, sub, window, cx),
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-    }
+
 
     /// Re-read a pane's current directory contents (after a create/trash).
     fn refresh_pane(&mut self, pane: usize, cx: &mut Context<Self>) {
-        clear_column_cache();
+
         self.reload_pane(pane, cx);
     }
 
@@ -2156,7 +1936,6 @@ impl Shuffle {
             return;
         }
         let dir = self.tab(pane).current_dir.clone();
-        ensure_dynamic_sidebar_icons(); // pick up newly-mounted volumes/cloud
         self.tab_mut(pane).entries = read_entries_fast(&dir);
         self.next_load_gen += 1;
         let gen = self.next_load_gen;
@@ -2368,29 +2147,12 @@ impl Shuffle {
         if self.tab(pane).is_filtered() {
             self.recompute_find(pane);
         }
+        self.remember_folder_view(pane, cx);
         cx.notify();
     }
 
     /// Switch how a pane displays its items.
-    fn set_view(&mut self, pane: usize, mode: ViewMode, cx: &mut Context<Self>) {
-        self.active_pane = pane;
-        self.tab_mut(pane).view = mode;
-        // Gallery needs a focused item + its preview to show something at once.
-        if mode == ViewMode::Gallery {
-            let sel = self.tab(pane).anchor.clone().or_else(|| {
-                let dir = self.tab(pane).current_dir.clone();
-                self.tab(pane)
-                    .visible_entries()
-                    .find(|e| !e.is_dir)
-                    .map(|e| dir.join(&e.name))
-            });
-            if let Some(p) = sel {
-                self.tab_mut(pane).anchor = Some(p.clone());
-                self.ensure_preview(p, true, cx);
-            }
-        }
-        cx.notify();
-    }
+
 
     fn new_folder(&mut self, pane: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.tab(pane).remote.is_some() {
@@ -2613,7 +2375,7 @@ impl Shuffle {
 
     /// Re-read every pane's directory (after a move that may affect two panes).
     fn refresh_all_panes(&mut self, cx: &mut Context<Self>) {
-        clear_column_cache();
+
         for p in 0..self.panes.len() {
             self.reload_pane(p, cx);
         }
@@ -4123,8 +3885,7 @@ impl Shuffle {
         });
         self.refresh_pane(pane, cx);
         if self.tab(pane).anchor.as_deref() == Some(path.as_path()) {
-            let gallery = self.tab(pane).view == ViewMode::Gallery;
-            self.ensure_preview(path.clone(), gallery, cx);
+            self.ensure_preview(path.clone(), false, cx);
             self.ensure_info(path, cx);
         }
     }
@@ -4138,7 +3899,9 @@ impl Shuffle {
         let inspect = target.as_ref().and_then(|(path,is_dir)| is_dir.then_some(path.clone()))
             .or_else(|| on_background.then(|| self.tab(pane).current_dir.clone()));
         if let Some(folder) = inspect {
-            nodes.push(mi("Inspect…", move |this,window,cx| this.inspect_folder(pane,folder.clone(),window,cx)));
+            let view_folder = folder.clone();
+            nodes.push(mi("Apply view to folder + subfolders", move |this, _, cx| this.apply_view_to_tree(pane, view_folder.clone(), cx)));
+            nodes.push(mi("Speicherbelegung…", move |this,window,cx| this.inspect_folder(pane,folder.clone(),window,cx)));
             push_menu_sep(&mut nodes);
         }
         if let Some((path, is_dir)) = target {
@@ -4691,252 +4454,9 @@ impl Shuffle {
 
     /// One row of the context menu. `sub` is `None` for root-panel rows,
     /// `Some(j)` for the j-th row of the open flyout under root index `root`.
-    fn menu_row(&self, node: &MenuNode, selected: bool, root: usize, sub: Option<usize>, cx: &Context<Self>) -> AnyElement {
-        let t = theme();
-        // Unique per (root, sub) — flyouts never exceed 1023 rows.
-        let idx = root * 1024 + sub.map_or(0, |j| j + 1);
-        match node {
-            MenuNode::Sep => div()
-                .my_1()
-                .mx_2()
-                .h(px(1.0))
-                .bg(rgb(t.border_strong))
-                .into_any_element(),
-            MenuNode::Disabled(text) => div()
-                .h(px(MENU_ROW_H))
-                .mx_1()
-                .px_2()
-                .flex()
-                .items_center()
-                .text_color(rgb(t.text_dim))
-                .child(text.clone())
-                .into_any_element(),
-            MenuNode::Item { label, hint, dot, checked, danger, .. } => {
-                let mut row = div()
-                    .id(("cmrow", idx))
-                    .h(px(MENU_ROW_H))
-                    .mx_1()
-                    .px_2()
-                    .rounded_md()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .cursor_pointer()
-                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                        if *hovered {
-                            match sub {
-                                None => this.menu_hover_root(root, cx),
-                                Some(j) => this.menu_hover_sub(j, cx),
-                            }
-                        }
-                    }))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.menu_invoke(root, sub, window, cx);
-                    }));
-                if selected {
-                    row = row.bg(rgb(t.selected));
-                }
-                if let Some(c) = *dot {
-                    row = row.child(div().flex_none().w(px(9.0)).h(px(9.0)).rounded_full().bg(rgb(c)));
-                }
-                if *checked {
-                    row = row.child(div().flex_none().text_color(rgb(t.text_dim)).child("✓"));
-                }
-                row = row.child(
-                    div()
-                        .flex_1()
-                        .overflow_hidden()
-                        .when(*danger, |d| d.text_color(rgb(0xff5f57)))
-                        .child(label.clone()),
-                );
-                if let Some(h) = hint {
-                    row = row.child(div().flex_none().text_color(rgb(t.text_dim)).child(*h));
-                }
-                row.into_any_element()
-            }
-            MenuNode::Sub { label, .. } => div()
-                .id(("cmrow", idx))
-                .h(px(MENU_ROW_H))
-                .mx_1()
-                .px_2()
-                .rounded_md()
-                .flex()
-                .items_center()
-                .gap_2()
-                .cursor_pointer()
-                .when(selected, |d| d.bg(rgb(t.selected)))
-                .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                    if *hovered {
-                        this.menu_hover_root(root, cx);
-                    }
-                }))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.menu_hover_root(root, cx);
-                }))
-                .child(div().flex_1().child(label.clone()))
-                .child(div().flex_none().text_color(rgb(t.text_dim)).child("›"))
-                .into_any_element(),
-        }
-    }
-
-    fn render_context_menu(&self, cx: &Context<Self>) -> impl IntoElement {
-        let menu = self.context_menu.as_ref().expect("called only when open");
-        let ms = menu_style();
-        let panel = move |rows: Vec<AnyElement>| {
-            div()
-                .min_w(px(210.0))
-                .py_1()
-                .bg(ms.bg_rgba())
-                .text_color(rgb(ms.text))
-                .text_size(px(ms.font_px))
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(theme().border_strong))
-                .shadow_lg()
-                // Clicks inside the menu shouldn't close it via the backdrop.
-                .on_mouse_down(MouseButton::Left, |_, _, cx: &mut App| cx.stop_propagation())
-                .children(rows)
-        };
-        let root_rows: Vec<AnyElement> = menu
-            .nodes
-            .iter()
-            .enumerate()
-            .map(|(i, node)| {
-                // A submenu parent stays highlighted while its flyout is open.
-                let selected = (menu.sel_root == Some(i) && menu.sel_sub.is_none())
-                    || menu.open_sub == Some(i);
-                self.menu_row(node, selected, i, None, cx)
-            })
-            .collect();
-        // The open flyout: a second panel beside the root, its top aligned to
-        // the parent row (deterministic — every row height is fixed).
-        let flyout = menu.open_sub.and_then(|si| match menu.nodes.get(si) {
-            Some(MenuNode::Sub { items, .. }) => {
-                let off: f32 = menu.nodes[..si].iter().map(MenuNode::height).sum();
-                let rows: Vec<AnyElement> = items
-                    .iter()
-                    .enumerate()
-                    .map(|(j, node)| self.menu_row(node, menu.sel_sub == Some(j), si, Some(j), cx))
-                    .collect();
-                Some((off, rows))
-            }
-            _ => None,
-        });
-
-        // Full-window backdrop: any click/right-click outside closes the menu.
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .occlude()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.close_context_menu(cx)),
-            )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, _, _, cx| this.close_context_menu(cx)),
-            )
-            .child(
-                // Anchored so the menu repositions to stay fully visible near a
-                // window edge instead of being clipped.
-                anchored()
-                    .position(point(px(menu.x), px(menu.y)))
-                    .snap_to_window()
-                    .child(
-                        div()
-                            .flex()
-                            .items_start()
-                            .child(panel(root_rows))
-                            .when_some(flyout, |el, (off, rows)| {
-                                el.child(panel(rows).mt(px(off)))
-                            }),
-                    ),
-            )
-    }
 
     /// The "Sort By" dropdown (the Finder-style arrange list).
-    fn render_sort_menu(&self, pane: usize, x: f32, y: f32, cx: &Context<Self>) -> impl IntoElement {
-        let t = theme();
-        let cur = self.tab(pane).sort_key;
-        let asc = self.tab(pane).sort_asc;
-        const OPTS: &[SortKey] = &[
-            SortKey::None,
-            SortKey::Name,
-            SortKey::Kind,
-            SortKey::Modified,
-            SortKey::Created,
-            SortKey::Size,
-        ];
-        let mut items: Vec<AnyElement> = Vec::new();
-        for (i, k) in OPTS.iter().enumerate() {
-            let k = *k;
-            let active = k == cur;
-            let marker = if active {
-                if k == SortKey::None {
-                    "•".to_string()
-                } else if asc {
-                    "▲".to_string()
-                } else {
-                    "▼".to_string()
-                }
-            } else {
-                " ".to_string()
-            };
-            items.push(
-                div()
-                    .id(("sortopt", i))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .mx_1()
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .text_color(rgb(t.text))
-                    .hover(|s| s.bg(rgb(t.selected)))
-                    .child(div().flex_none().w(px(12.0)).text_color(rgb(t.accent)).child(marker))
-                    .child(k.label().to_string())
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.sort_menu = None;
-                        this.set_sort(pane, k, cx);
-                    }))
-                    .into_any_element(),
-            );
-        }
 
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .occlude()
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                this.sort_menu = None;
-                cx.notify();
-            }))
-            .child(
-                anchored()
-                    .position(point(px(x), px(y)))
-                    .snap_to_window()
-                    .child(
-                        div()
-                            .min_w(px(180.0))
-                            .py_1()
-                            .bg(rgb(t.surface))
-                            .rounded_md()
-                            .border_1()
-                            .border_color(rgb(t.border_strong))
-                            .shadow_lg()
-                            .on_mouse_down(MouseButton::Left, |_, _, cx: &mut App| cx.stop_propagation())
-                            .children(items),
-                    ),
-            )
-    }
 
     /// The "Move to Trash" confirmation modal.
     fn render_confirm_delete(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -5103,11 +4623,6 @@ impl Shuffle {
         let mut list = sftp_servers();
         // When editing, drop the original entry (its target may have changed).
         if let Some(old) = &form.editing {
-            if *old != server.display() {
-                if let Some(prev) = list.iter().find(|s| &s.display() == old).cloned() {
-                    keychain_delete_password(&prev);
-                }
-            }
             list.retain(|s| &s.display() != old);
         }
         if let Some(existing) = list.iter_mut().find(|s| s.display() == server.display()) {
@@ -5662,206 +5177,171 @@ impl Shuffle {
     }
 
     /// The sidebar right-click context menu (New Group / Remove / Delete Group).
-    fn render_sidebar_menu(&self, cx: &Context<Self>) -> impl IntoElement {
-        let (x, y, target) = self.sidebar_menu.clone().expect("only when open");
+    fn sidebar_menu_nodes(&self, target: SidebarTarget) -> Vec<MenuNode> {
         let groups_on = prefs().groups_enabled;
-        let mut items: Vec<AnyElement> = Vec::new();
+        let mut items: Vec<MenuNode> = Vec::new();
         let folder = match &target {
-            SidebarTarget::Folder(p) | SidebarTarget::Bookmark(p) | SidebarTarget::GroupMember(_,p) => Some(p.clone()),
+            SidebarTarget::Bookmark(p) | SidebarTarget::ProjectPath(_,p) | SidebarTarget::GroupMember(_,p) => Some(p.clone()),
             SidebarTarget::Empty => Some(self.active_tab().current_dir.clone()).filter(|_| self.active_tab().remote.is_none()),
             SidebarTarget::Tab(p,t) => self.panes.get(*p).and_then(|p|p.tabs.get(*t)).filter(|t|t.remote.is_none()).map(|t|t.current_dir.clone()),
             SidebarTarget::NavBar(p) => Some(self.tab(*p)).filter(|t|t.remote.is_none()).map(|t|t.current_dir.clone()),
             _ => None,
         };
         if let Some(folder) = folder.filter(|p|p.is_dir()) {
-            items.push(ctx_item("Inspect…",cx.listener(move|this,_:&ClickEvent,window,cx|{
+            let section = match &target { SidebarTarget::ProjectPath(section, _) => *section, _ => projects::Section::Locations };
+            items.push(self.project_visibility_menu(section, folder.clone()));
+            items.push(MenuNode::Sep);
+            let view_folder = folder.clone();
+            let view_pane = match &target { SidebarTarget::NavBar(p) | SidebarTarget::Tab(p, _) => *p, _ => self.active_pane };
+            items.push(mi("Apply view to folder + subfolders", move |this, _, cx| this.apply_view_to_tree(view_pane, view_folder.clone(), cx)));
+            items.push(mi("Speicherbelegung…", move|this,window,cx|{
                 this.inspect_folder(this.active_pane,folder.clone(),window,cx);
-            })).into_any_element());
-            if !matches!(&target, SidebarTarget::Folder(_)) { items.push(ctx_separator().into_any_element()); }
+            }));
+            items.push(MenuNode::Sep);
         }
         match target {
-            SidebarTarget::Folder(_) => {},
+            SidebarTarget::ProjectPath(section, path) => {
+                items.push(mi("Remove from this project", move |this, _, cx| this.set_project_path(section, path.clone(), false, cx)));
+            },
             SidebarTarget::Project(id) => {
-                items.push(ctx_item("Open project", cx.listener(move |this, _: &ClickEvent, window, cx| { window.focus(&this.focus); this.restore_project(id, cx); })).into_any_element());
-                items.push(ctx_separator().into_any_element());
-                items.push(ctx_item("Remove project", cx.listener(move |this, _: &ClickEvent, _, cx| this.remove_project(id, cx))).into_any_element());
+                items.push(mi("Open project", move |this, window, cx| { window.focus(&this.focus); this.restore_project(id, cx); }));
+                items.push(MenuNode::Sep);
+                items.push(mi("Remove project", move |this, _, cx| this.remove_project(id, cx)));
             }
             SidebarTarget::Empty => {
                 if groups_on {
                     items.push(
-                        ctx_item("New Group", cx.listener(|this, _: &ClickEvent, _, cx| {
+                        mi("New Group", |this, _, cx| {
                             this.close_sidebar_menu(cx);
                             this.open_group_dialog(cx);
-                        }))
-                        .into_any_element(),
+                        }),
                     );
                 }
             }
             SidebarTarget::Bookmark(p) => {
                 items.push(
-                    ctx_item("Remove from Favorites", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    mi("Remove from Favorites", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
                         this.remove_bookmark(&p, cx);
-                    }))
-                    .into_any_element(),
+                    }),
                 );
             }
             SidebarTarget::GroupHeader(idx) => {
                 if groups_on {
                     items.push(
-                        ctx_item("New Group", cx.listener(|this, _: &ClickEvent, _, cx| {
+                        mi("New Group", |this, _, cx| {
                             this.close_sidebar_menu(cx);
                             this.open_group_dialog(cx);
-                        }))
-                        .into_any_element(),
+                        }),
                     );
-                    items.push(ctx_separator().into_any_element());
+                    items.push(MenuNode::Sep);
                 }
                 items.push(
-                    ctx_item("Delete Group", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    mi("Delete Group", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
                         this.delete_group(idx, cx);
-                    }))
-                    .into_any_element(),
+                    }),
                 );
             }
             SidebarTarget::GroupMember(idx, p) => {
                 items.push(
-                    ctx_item("Remove from Group", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    mi("Remove from Group", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
                         this.remove_from_group(idx, &p, cx);
-                    }))
-                    .into_any_element(),
+                    }),
                 );
             }
             SidebarTarget::Sftp(server) => {
                 let s = server.clone();
                 items.push(
-                    ctx_item("Connect", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    mi("Connect", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
                         this.connect_sftp(s.clone(), cx);
-                    }))
-                    .into_any_element(),
+                    }),
                 );
                 let s = server.clone();
                 items.push(
-                    ctx_item("Edit\u{2026}", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    mi("Edit\u{2026}", move |this, _, cx| {
                         this.edit_server(&s, cx);
-                    }))
-                    .into_any_element(),
+                    }),
                 );
                 let s = server.clone();
                 items.push(
-                    ctx_item("Remove", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    mi("Remove", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
-                        if s.use_password {
-                            keychain_delete_password(&s);
-                        }
                         let list: Vec<SftpServer> = sftp_servers()
                             .into_iter()
                             .filter(|x| x.display() != s.display())
                             .collect();
                         apply_sftp_servers(list, cx);
-                    }))
-                    .into_any_element(),
+                    }),
                 );
             }
             SidebarTarget::Tab(pane, tab) => {
                 items.push(
-                    ctx_item("New Tab", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    mi("New Tab", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
                         this.new_tab_in(pane, cx);
-                    }))
-                    .into_any_element(),
+                    }),
                 );
                 items.push(
-                    ctx_item("Duplicate Tab", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    mi("Duplicate Tab", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
                         this.duplicate_tab(pane, tab, cx);
-                    }))
-                    .into_any_element(),
+                    }),
                 );
-                items.push(ctx_separator().into_any_element());
+                items.push(MenuNode::Sep);
                 items.push(
-                    ctx_item("Close Tab", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    mi("Close Tab", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
                         this.close_tab(pane, tab, cx);
-                    }))
-                    .into_any_element(),
+                    }),
                 );
                 // Only offer "Close Other Tabs" when there's more than one.
                 if self.pane(pane).tabs.len() > 1 {
                     items.push(
-                        ctx_item("Close Other Tabs", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        mi("Close Other Tabs", move |this, _, cx| {
                             this.close_sidebar_menu(cx);
                             this.close_other_tabs(pane, tab, cx);
-                        }))
-                        .into_any_element(),
+                        }),
                     );
                 }
             }
             SidebarTarget::NavBar(pane) => {
                 items.push(
-                    ctx_item("New Tab", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    mi("New Tab", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
                         this.new_tab_in(pane, cx);
-                    }))
-                    .into_any_element(),
+                    }),
                 );
                 let dir = self.tab(pane).current_dir.clone();
                 let is_remote = self.tab(pane).remote.is_some();
                 let dc = dir.clone();
                 items.push(
-                    ctx_item("Copy Path", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    mi("Copy Path", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
                         cx.write_to_clipboard(ClipboardItem::new_string(
                             dc.to_string_lossy().into_owned(),
                         ));
-                    }))
-                    .into_any_element(),
+                    }),
                 );
                 // Reveal-in-Finder / terminal only make sense for local folders.
                 if !is_remote {
                     let dr = dir.clone();
                     items.push(
-                        ctx_item("Reveal in Finder", cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        mi("Reveal in Finder", move |this, _, cx| {
                             this.close_sidebar_menu(cx);
                             let _ = Command::new("open").arg(&dr).spawn();
-                        }))
-                        .into_any_element(),
+                        }),
                     );
                 }
             }
         }
         if items.is_empty() {
-            items.push(ctx_disabled("No actions").into_any_element());
+            items.push(MenuNode::Disabled("No actions".into()));
         }
 
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .occlude()
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_sidebar_menu(cx)))
-            .on_mouse_down(MouseButton::Right, cx.listener(|this, _, _, cx| this.close_sidebar_menu(cx)))
-            .child(
-                anchored().position(point(px(x), px(y))).snap_to_window().child(
-                    div()
-                        .min_w(px(180.0))
-                        .py_1()
-                        .bg(menu_style().bg_rgba())
-                        .text_color(rgb(menu_style().text))
-                        .text_size(px(menu_style().font_px))
-                        .rounded_md()
-                        .border_1()
-                        .border_color(rgb(theme().border_strong))
-                        .shadow_lg()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx: &mut App| cx.stop_propagation())
-                        .children(items),
-                ),
-            )
+        items
     }
 
     /// Quietly ask GitHub for the latest published release and, if it's newer
@@ -6484,10 +5964,7 @@ impl Shuffle {
         // An open context menu is modal: arrows navigate, → / ← open and close
         // flyouts, Enter invokes, Esc closes — and every other key is swallowed
         // so keybindings can't fire underneath it.
-        if self.context_menu.is_some() {
-            self.menu_key(key, window, cx);
-            return;
-        }
+        if self.native_menu_pending { return; }
 
         // Search results are ordinary rows; clicking one leaves text-editing
         // focus and enables selection, previews, copying and Quick Look.
@@ -7142,61 +6619,13 @@ impl Shuffle {
         }
     }
 
-    /// Start a header drag. Widths start from what's on screen (the fitted
-    /// layout), so a squeezed column doesn't jump to its preference. Name's
-    /// edge moves the boundary with the next visible column instead.
-    fn begin_resize(&mut self, pane: usize, col: Column, x: f32) {
-        let f = self.fitted_widths(pane);
-        let order = [Column::Kind, Column::Date, Column::Size];
-        // The next column to the right of `col`.
-        let next = |after: Column| order.into_iter().skip_while(|c| *c != after).nth(1);
-        let resize = match col {
-            // Name has no width of its own (it fills): its edge shrinks/grows
-            // the next column instead.
-            Column::Name => Resize { col: Column::Kind, start_x: x, start_w: f.get(Column::Kind), sign: -1.0, partner: None },
-            c => Resize {
-                col: c,
-                start_x: x,
-                start_w: f.get(c),
-                sign: 1.0,
-                // The last column's edge is the pane edge: widen it leftward.
-                partner: next(c).map(|n| (n, f.get(n))),
-            },
-        };
-        let last = resize.col == Column::Size || (resize.partner.is_none() && col != Column::Name);
-        self.resize = Some(if last && col != Column::Name { Resize { sign: -1.0, ..resize } } else { resize });
-    }
-
-    fn update_resize(&mut self, x: f32, cx: &mut Context<Self>) {
-        if let Some(resize) = self.resize {
-            let dx = x - resize.start_x;
-            self.widths.set(resize.col, resize.start_w + resize.sign * dx);
-            if let Some((p, w)) = resize.partner {
-                self.widths.set(p, w - dx);
-            }
-            cx.notify();
-        }
-    }
-
-    /// The List-view column widths as laid out in this pane right now.
-    fn fitted_widths(&self, pane: usize) -> ColumnWidths {
-        let measured = browser_width(pane);
-        let vw = if measured > 0. { measured } else { f32::from(self.tab(pane).h_scroll.bounds().size.width) };
-        // Rows are padded px_3 on both sides.
-        self.widths.fit(vw - 24.0)
-    }
-
-    fn end_resize(&mut self) {
-        self.resize = None;
-    }
-
     /// Load `dir` as a pane's current directory: re-read contents, update the
     /// current folder, record it as most-recent, and persist. Does
     /// NOT touch back/forward history (callers manage that).
     fn load_dir_in(&mut self, pane: usize, dir: PathBuf, cx: &mut Context<Self>) {
         if self.search_in_pane(pane) { self.close_palette(cx); }
         self.rename = None;
-        clear_column_cache();
+
         {
             let tab = self.tab_mut(pane);
             tab.current_dir = dir.clone();
@@ -7207,19 +6636,16 @@ impl Shuffle {
             tab.content_for = None;
             tab.selection.clear();
             tab.anchor = None;
-            tab.col_chain.clear();
-            tab.col_active = 0;
+
         }
         // Recents / last-dir are for local browsing only — a remote path would
         // be treated as a (missing) local folder on next launch.
         if self.tab(pane).remote.is_none() {
             save_last_dir(&dir);
-            self.recents.retain(|p| p != &dir);
-            self.recents.insert(0, dir);
-            self.recents.truncate(RECENTS_CAP);
-            write_path_list("recents.txt", &self.recents);
+
         }
 
+        self.apply_folder_view(pane, false);
         // Fast first paint + background metadata fill.
         self.reload_pane(pane, cx);
         self.sync_terminal_directory(pane);
@@ -7833,6 +7259,7 @@ impl Shuffle {
         p.tabs.push(Tab::new(dir));
         p.active = p.tabs.len() - 1;
         self.active_pane = pane;
+        self.apply_folder_view(pane, false);
         // Fill the new tab's metadata in the background.
         self.reload_pane(pane, cx);
     }
@@ -7895,6 +7322,7 @@ impl Shuffle {
 
     /// Select a tab in a pane.
     fn select_tab(&mut self, pane: usize, tab: usize, cx: &mut Context<Self>) {
+        self.dismiss_space_map |= self.space_map.is_some();
         if self.palette_open && self.file_search.inline { self.close_palette(cx); }
         self.active_pane = pane;
         let p = self.pane_mut(pane);
@@ -7924,6 +7352,8 @@ impl Shuffle {
         new.entry_filter = self.panes[pane].tabs[tab].entry_filter;
         new.show_hidden = self.panes[pane].tabs[tab].show_hidden;
         new.view = self.panes[pane].tabs[tab].view;
+        new.list_layout = self.panes[pane].tabs[tab].list_layout.clone();
+        new.preview_width = self.panes[pane].tabs[tab].preview_width;
         new.sort_key = self.panes[pane].tabs[tab].sort_key;
         new.sort_asc = self.panes[pane].tabs[tab].sort_asc;
         let p = self.pane_mut(pane);
@@ -8065,15 +7495,6 @@ impl Shuffle {
             return self.palette_items.iter().map(|item| match &item.action { Action::Open(path,_)=>path.clone() }).collect();
         }
         let tab = self.tab(pane);
-        if tab.view == ViewMode::Columns {
-            let dir = if tab.col_active == 0 {
-                &tab.current_dir
-            } else {
-                tab.col_chain.get(tab.col_active - 1).unwrap_or(&tab.current_dir)
-            };
-            return self.visible_column_entries(pane, dir).iter()
-                .map(|entry| dir.join(&entry.name)).collect();
-        }
         tab.visible_entries().map(|entry| tab.current_dir.join(&entry.name)).collect()
     }
 
@@ -8082,7 +7503,7 @@ impl Shuffle {
         self.tab_mut(pane).anchor = Some(path.clone());
         self.preview_page = 0;
         self.cancel_unused_previews();
-        if self.space_map.is_some() && self.tab(pane).view != ViewMode::Gallery { cx.notify(); return; }
+        if self.space_map.is_some() { cx.notify(); return; }
         // Remote files aren't on the local disk, so QuickLook/PDF rendering
         // can't read them directly. Fetch a copy to a temp cache and preview
         // that (images & PDFs only, size-capped). Info (local stat) is skipped.
@@ -8100,8 +7521,7 @@ impl Shuffle {
             cx.notify();
             return;
         }
-        let gallery = self.tab(pane).view == ViewMode::Gallery;
-        self.ensure_preview(path.clone(), gallery, cx);
+        self.ensure_preview(path.clone(), false, cx);
         if prefs().preview && prefs().preview_pages {
             self.ensure_pdf_page(path.clone(), 0, cx);
         }
@@ -8165,49 +7585,6 @@ impl Shuffle {
         self.focus_entry(pane, path, cx);
     }
 
-    /// Shift-click range select within one Column-view column: select every item
-    /// between the anchor and `target` in that column's listing. Falls back to a
-    /// single selection when the anchor isn't in this column.
-    fn range_select_column(
-        &mut self,
-        pane: usize,
-        col_index: usize,
-        target: PathBuf,
-        cx: &mut Context<Self>,
-    ) {
-        // The directory this column lists: column 0 is the current dir, deeper
-        // columns come from the drill-in chain.
-        let dir = if col_index == 0 {
-            self.tab(pane).current_dir.clone()
-        } else {
-            match self.tab(pane).col_chain.get(col_index - 1) {
-                Some(d) => d.clone(),
-                None => return,
-            }
-        };
-        let paths: Vec<PathBuf> = self.visible_column_entries(pane, &dir)
-            .iter()
-            .map(|e| dir.join(&e.name))
-            .collect();
-        let to = paths.iter().position(|p| p == &target);
-        let from = self
-            .tab(pane)
-            .anchor
-            .as_ref()
-            .and_then(|a| paths.iter().position(|p| p == a));
-        let sel: HashSet<PathBuf> = match (from, to) {
-            (Some(a), Some(b)) => {
-                let (lo, hi) = (a.min(b), a.max(b));
-                paths[lo..=hi].iter().cloned().collect()
-            }
-            _ => std::iter::once(target.clone()).collect(),
-        };
-        // Don't extend the drill-in past this column while range-selecting.
-        self.tab_mut(pane).col_chain.truncate(col_index);
-        self.tab_mut(pane).selection = sel;
-        cx.notify();
-    }
-
     /// Whether a marquee drag is in flight with real displacement — used to
     /// swallow the row click that lands on the same mouse-up (row `on_click`
     /// bubbles before the root's `end_marquee`), so finishing a box-select over
@@ -8232,8 +7609,10 @@ impl Shuffle {
         path: PathBuf,
         is_dir: bool,
         ev: &ClickEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.space_map.is_some() { self.close_space_map(window, cx); }
         if self.marquee_click_suppressed() {
             return;
         }
@@ -8530,8 +7909,8 @@ impl Shuffle {
             // Inside the name cell horizontally? (Row padding is px_3 = 12,
             // shifted by any horizontal column scroll.)
             let hx = f64::from(tab.h_scroll.offset().x) as f32;
-            let name_x0 = x0 + hx + 12.0;
-            if x < name_x0 || x >= name_x0 + self.fitted_widths(pane).name {
+            let name_x0 = x0 + hx + 12.0 + tab.list_layout.offset(Column::Name);
+            if x < name_x0 || x >= name_x0 + tab.list_layout.width(Column::Name) {
                 return Some((pane, None));
             }
             // ".." row targets the parent; entries target real folders only.
@@ -8621,85 +8000,24 @@ impl Shuffle {
         )
     }
 
-    // ----- column (Miller) view -----
-
-    /// Handle a click in column `col_index` of the Column view.
-    fn column_click(
-        &mut self,
-        pane: usize,
-        col_index: usize,
-        target: PathBuf,
-        is_dir: bool,
-        ev: &ClickEvent,
-        cx: &mut Context<Self>,
-    ) {
-        self.active_pane = pane;
-        let mods = ev.modifiers();
-        // Cmd-click: toggle this item in a multi-selection without navigating or
-        // collapsing the columns to its right (Finder-style non-contiguous pick).
-        if mods.platform {
-            let tab = self.tab_mut(pane);
-            if !tab.selection.remove(&target) {
-                tab.selection.insert(target.clone());
-            }
-            tab.anchor = tab.selection.iter().next().cloned();
-            cx.notify();
-            return;
-        }
-        // Shift-click: select the inclusive range from the anchor to here within
-        // this column (everything in between), like Finder.
-        if mods.shift {
-            self.range_select_column(pane, col_index, target, cx);
-            return;
-        }
-        if is_dir && (self.tab(pane).remote.is_some() || !is_app_bundle(&target, is_dir)) {
-            if ev.click_count() >= 2 {
-                // Double-click drills in as the new root.
-                self.navigate_in(pane, target, cx);
-                return;
-            }
-            let tab = self.tab_mut(pane);
-            tab.col_chain.truncate(col_index);
-            tab.col_chain.push(target.clone());
-            tab.selection.clear();
-            tab.selection.insert(target.clone());
-            // Anchor this item so a following Shift-click can range from it.
-            tab.anchor = Some(target);
-            cx.notify();
-        } else {
-            {
-                let tab = self.tab_mut(pane);
-                tab.col_chain.truncate(col_index);
-                tab.selection.clear();
-                tab.selection.insert(target.clone());
-            }
-            if ev.click_count() >= 2 {
-                self.open_path(pane, target, is_dir, cx);
-            } else {
-                cx.notify();
-                self.focus_entry(pane, target, cx);
-            }
-        }
-    }
-
     // ----- keyboard arrow navigation -----
 
     /// Columns across the grid in Icons view (from the last measured width).
     fn icon_cols(&self, pane: usize) -> usize {
-        let width = self.pane_list_width(pane).max(240.0);
+        let width = browser_width(pane).max(240.0);
         ((width / 108.0).floor() as usize).max(1)
     }
 
     /// Move the selection with an arrow key. `dx`/`dy` are -1/0/1.
     fn arrow_move(&mut self, pane: usize, dx: i32, dy: i32, cx: &mut Context<Self>) {
+        self.dismiss_space_map |= self.space_map.is_some();
         self.active_pane = pane;
         match self.tab(pane).view {
-            ViewMode::Columns => self.arrow_columns(pane, dx, dy, cx),
             ViewMode::Icons => {
                 let cols = self.icon_cols(pane) as i32;
                 self.arrow_grid(pane, dx + dy * cols, cx);
             }
-            // List & Gallery are 1-D: only up/down move.
+            // Lists are 1-D: only up/down move.
             _ => {
                 if dy != 0 {
                     self.arrow_grid(pane, dy, cx);
@@ -8708,7 +8026,7 @@ impl Shuffle {
         }
     }
 
-    /// Move the anchor by `delta` positions in display order (List/Icons/Gallery).
+    /// Move the anchor by `delta` positions in display order.
     fn arrow_grid(&mut self, pane: usize, delta: i32, cx: &mut Context<Self>) {
         let paths = self.display_paths(pane);
         if paths.is_empty() {
@@ -8746,72 +8064,6 @@ impl Shuffle {
         self.focus_entry(pane, target, cx);
     }
 
-    /// Arrow navigation within the Column (Miller) view.
-    fn arrow_columns(&mut self, pane: usize, dx: i32, dy: i32, cx: &mut Context<Self>) {
-        let base = self.tab(pane).current_dir.clone();
-        let mut dirs: Vec<PathBuf> = vec![base];
-        dirs.extend(self.tab(pane).col_chain.iter().cloned());
-        let mut k = self.tab(pane).col_active.min(dirs.len() - 1);
-
-        if dx < 0 {
-            // Move focus to the parent column.
-            if k > 0 {
-                self.tab_mut(pane).col_active = k - 1;
-                cx.notify();
-            }
-            return;
-        }
-        if dx > 0 {
-            // Move into the selected folder's column, if any.
-            if k + 1 < dirs.len() {
-                self.tab_mut(pane).col_active = k + 1;
-                k += 1;
-                // Select the first entry of the new column.
-                self.column_set(pane, k, &dirs, 0, cx);
-            }
-            return;
-        }
-
-        // Up / down within column k.
-        let dir = dirs[k].clone();
-        let entries = self.visible_column_entries(pane, &dir);
-        if entries.is_empty() {
-            return;
-        }
-        let sel_k = if k < self.tab(pane).col_chain.len() {
-            Some(self.tab(pane).col_chain[k].clone())
-        } else {
-            self.tab(pane).anchor.clone()
-        };
-        let cur = sel_k.and_then(|p| entries.iter().position(|e| dir.join(&e.name) == p));
-        let ni = match cur {
-            Some(i) => (i as i32 + dy).clamp(0, entries.len() as i32 - 1) as usize,
-            None => 0,
-        };
-        self.column_set(pane, k, &dirs, ni, cx);
-    }
-
-    /// Select entry `idx` in column `k` of the Column view (keyboard-driven).
-    fn column_set(&mut self, pane: usize, k: usize, dirs: &[PathBuf], idx: usize, cx: &mut Context<Self>) {
-        let dir = dirs[k].clone();
-        let entries = self.visible_column_entries(pane, &dir);
-        let Some(e) = entries.get(idx) else { return };
-        let target = dir.join(&e.name);
-        let is_dir = e.is_dir;
-        {
-            let tab = self.tab_mut(pane);
-            tab.col_chain.truncate(k);
-            if is_browsable_folder(&target, is_dir) {
-                tab.col_chain.push(target.clone());
-            }
-            tab.col_active = k;
-            tab.selection.clear();
-            tab.selection.insert(target.clone());
-        }
-        col_scroll(pane,k).scroll_to_item(idx,ScrollStrategy::Center);
-        cx.notify();
-        self.focus_entry(pane, target, cx);
-    }
 
     /// The floating "why this name won't work" pill shown over `pane` while an
     /// in-progress rename there has an invalid name.
@@ -8854,15 +8106,16 @@ impl Shuffle {
     /// file. `None` when neither feature is on or nothing is selected.
     fn render_inspector(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let p = prefs();
-        // In Gallery view the big preview already shows, so don't duplicate it
-        // in the side inspector even when the Preview toggle is on.
-        let show_preview = p.preview && self.active_tab().view != ViewMode::Gallery;
+        let show_preview = p.preview;
         if !show_preview && !p.info {
             return None;
         }
         let tab = self.active_tab();
         if tab.selection.len() != 1 { return None; }
         let sel = tab.selection.iter().next()?.clone();
+        if show_preview && tab.remote.is_none() && video_preview::is_video(&sel) {
+            return self.render_video_preview(cx);
+        }
         let text = TEXT_PREVIEW_CACHE.with(|c| c.borrow().get(&sel).cloned().flatten());
         let visual = lookup_preview(&sel).flatten().is_some()
             || lookup_pdf_page(&sel, self.preview_page).flatten().is_some();
@@ -8897,7 +8150,7 @@ impl Shuffle {
             .flex()
             .flex_col()
             .gap_3()
-            .p_4()
+            .when(!video_preview::is_picture(&sel), |d| d.p_4())
             .bg(rgb(t.sidebar))
             .border_l_1()
             .border_color(rgb(t.border))
@@ -8925,11 +8178,11 @@ impl Shuffle {
             };
             let handle = page_img.or_else(|| lookup_preview(&sel).flatten());
             let body: AnyElement = match handle {
-                Some(handle) => img(ImageSource::Render(handle))
-                    .max_w_full()
-                    .max_h(px(600.0))
-                    .object_fit(ObjectFit::Contain)
-                    .into_any_element(),
+                Some(handle) => {
+                    let image = img(ImageSource::Render(handle)).object_fit(ObjectFit::Contain);
+                    if video_preview::is_picture(&sel) { image.w_full().into_any_element() }
+                    else { image.max_w_full().max_h(px(600.)).into_any_element() }
+                },
                 // Not ready yet or unavailable → show the file's icon.
                 None => icon_element_sized(&sel, false, 96.0),
             };
@@ -8943,9 +8196,8 @@ impl Shuffle {
                 .min_h(px(120.0))
                 // Clip so a tall preview can't paint over the title above or the
                 // "Information" section below.
-                .max_h(px(620.0))
+                .when(!video_preview::is_picture(&sel), |d| d.max_h(px(620.)).p_2())
                 .overflow_hidden()
-                .p_2()
                 .rounded_md()
                 // White "page" so document/text previews (black text, often
                 // transparent background) stay readable on dark themes.
@@ -9666,25 +8918,8 @@ impl Shuffle {
 
         self.push_project_sidebar(&mut items, collapsed, cx);
 
-        // --- Favorites (Applications, Documents, …) ---
-        if self.begin_section(&mut items, "LOCATIONS", collapsed, cx) {
-            for (label, slug) in SIDEBAR_FAVORITES {
-                let path = fav_path(slug);
-                if !cached_is_dir(&path) {
-                    continue;
-                }
-                push_nav(
-                    &mut items,
-                    cx,
-                    &mut key,
-                    label.to_string(),
-                    fav_key(slug),
-                    path,
-                    current,
-                    collapsed,
-                );
-            }
-        }
+        self.project_folder_section(&mut items, &mut key, "LOCATIONS", projects::Section::Locations, collapsed, cx);
+        self.project_tagged_section(&mut items, &mut key, collapsed, cx);
 
         // --- Bookmarks (with a "+" to pin the current folder) ---
         let show_bookmarks = if collapsed {
@@ -9806,46 +9041,12 @@ impl Shuffle {
             }
         }
 
-        // --- Recents (count is user-configurable; 0 hides the section) ---
-        let recent_limit = prefs().recent_limit;
-        if recent_limit > 0 && self.begin_section(&mut items, "RECENTS", collapsed, cx) {
-            if self.recents.is_empty() {
-                if !collapsed {
-                    items.push(empty_hint("No recent folders").into_any_element());
-                }
-            } else {
-                for p in self.recents.iter().take(recent_limit) {
-                    push_nav(
-                        &mut items,
-                        cx,
-                        &mut key,
-                        path_label(p),
-                        FOLDER_KEY.to_string(),
-                        p.clone(),
-                        current,
-                        collapsed,
-                    );
-                }
-            }
-        }
+        self.project_folder_section(&mut items, &mut key, "CLOUD", projects::Section::Cloud, collapsed, cx);
 
-        // --- Cloud (Dropbox, Google Drive, iCloud, …) ---
-        let (cloud, volumes) = sidebar_locations();
-        if !cloud.is_empty() && self.begin_section(&mut items, "CLOUD", collapsed, cx) {
-            for (label, path) in cloud {
-                let icon_key = path.to_string_lossy().into_owned();
-                push_nav(&mut items, cx, &mut key, label, icon_key, path, current, collapsed);
-            }
-        }
-
-        // --- Servers (the Mac, mounted volumes/shares, Connect to Server) ---
+        // Saved connections and explicit network-folder shortcuts belong to this project.
         if self.begin_section(&mut items, "SERVERS", collapsed, cx) {
-            // Servers holds real servers/shares: mounted (browseable) volumes,
-            // saved SFTP servers, and Connect to Server. The boot disk and home
-            // live in Favorites, so they aren't duplicated here.
-            for (label, path) in volumes {
-                let icon_key = path.to_string_lossy().into_owned();
-                push_nav(&mut items, cx, &mut key, label, icon_key, path, current, collapsed);
+            for path in &self.projects.sidebar().server_folders {
+                self.project_path_row(&mut items, &mut key, path, projects::Section::ServerFolders, collapsed, cx);
             }
             // Saved SFTP servers — click to connect and browse remotely.
             for server in sftp_servers() {
@@ -9890,6 +9091,10 @@ impl Shuffle {
                         )
                         .into_any_element(),
                 );
+            }
+            if !collapsed {
+                items.push(div().id("add-server-folder").mx_2().px_2().py_1().cursor_pointer().text_color(rgb(theme().text_muted))
+                    .child("+ Add network folder…").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.choose_project_folder(projects::Section::ServerFolders, cx))).into_any_element());
             }
             // "Connect to Server…" action row.
             let base = div()
@@ -9991,13 +9196,13 @@ impl Shuffle {
             )
             .child(nav_arrow(
                 ("nav-back", pane),
-                "‹",
+                Icon::Left,
                 can_back,
                 cx.listener(move |this, _, _, cx| this.go_back(pane, cx)),
             ))
             .child(nav_arrow(
                 ("nav-fwd", pane),
-                "›",
+                Icon::Right,
                 can_fwd,
                 cx.listener(move |this, _, _, cx| this.go_forward(pane, cx)),
             ))
@@ -10005,244 +9210,49 @@ impl Shuffle {
             .child(self.render_view_toolbar(pane, cx))
     }
 
-    /// View-mode switcher (list / icons / gallery) + the Sort-By button.
+    /// Compact vector controls for the two supported views and folder options.
     fn render_view_toolbar(&self, pane: usize, cx: &Context<Self>) -> impl IntoElement {
-        let t = theme();
+        use toolbar_icons::toolbar_button as button;
         let view = self.tab(pane).view;
-        let btn = |id: &'static str, glyph: &'static str, name: &'static str, mode: ViewMode, cx: &Context<Self>| {
-            let on = view == mode;
-            div()
-                .id((id, pane)) // ids must be unique per pane, or only one pane works
-                .flex_none()
-                .w(px(24.0))
-                .h(px(22.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_md()
-                .cursor_pointer()
-                .text_color(if on { rgb(t.text) } else { rgb(t.text_dim) })
-                .when(on, |s| s.bg(rgb(t.surface)))
-                .hover(|s| s.bg(rgb(t.hover)))
-                .child(glyph)
-                .tooltip(tip(name))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.set_view(pane, mode, cx);
-                }))
-        };
-        // Magnifier that opens the command palette (Cmd+P) — a mouse-reachable
-        // entry point sitting alongside the view-mode icons.
-        let search_btn = div()
-            .id(("palette-search", pane))
-            .flex_none()
-            .w(px(24.0))
-            .h(px(22.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .cursor_pointer()
-            .text_color(rgb(t.text_dim))
-            .hover(|s| s.bg(rgb(t.hover)).text_color(rgb(t.text)))
-            .child("🔍")
-            .tooltip(tip("Search (⌘P)"))
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.active_pane = pane;
-                if !this.palette_open {
-                    this.toggle_palette(window, cx);
-                }
-            }));
-        // New Folder — creates a folder in this pane and drops into rename.
-        // Remote tabs can't create folders locally, so hide it there.
-        let is_remote = self.tab(pane).remote.is_some();
-        let new_folder_btn = div()
-            .id(("tb-new-folder", pane))
-            .flex_none()
-            .w(px(24.0))
-            .h(px(22.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .cursor_pointer()
-            .text_color(rgb(t.text_dim))
-            .hover(|s| s.bg(rgb(t.hover)).text_color(rgb(t.text)))
-            .child("🗀")
-            .tooltip(tip("New Folder (⇧⌘N)"))
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.active_pane = pane;
-                this.new_folder(pane, window, cx);
-            }));
-        // Delete — Trash the selection; greyed out when nothing is selected.
-        let has_sel =
-            !self.tab(pane).selection.is_empty() || self.tab(pane).anchor.is_some();
-        let delete_btn = div()
-            .id(("tb-delete", pane))
-            .flex_none()
-            .w(px(24.0))
-            .h(px(22.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .when(has_sel, |d| d.text_color(rgb(t.text_dim)))
-            .when(!has_sel, |d| d.text_color(Theme::alpha(t.text_dim, 0x66)))
-            .child("🗑")
-            .tooltip(tip(if has_sel { "Move to Trash (⌫)" } else { "Move to Trash (select an item first)" }))
-            .when(has_sel, |d| {
-                d.cursor_pointer()
-                    .hover(|s| s.bg(rgb(t.hover)).text_color(rgb(t.text)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.active_pane = pane;
-                        this.request_delete(pane, cx);
-                    }))
-            });
-        // Sort has no effect in Column view (columns are always folders-first,
-        // by name), so grey it out and make it inert there rather than misleading.
-        let sort_enabled = view != ViewMode::Columns;
-        let sort_btn = div()
-            .id(("sort-by", pane))
-            .flex_none()
-            .px_2()
-            .h(px(22.0))
-            .flex()
-            .items_center()
-            .rounded_md()
-            .when(sort_enabled, |d| d.text_color(rgb(t.text_dim)))
-            .when(!sort_enabled, |d| d.text_color(Theme::alpha(t.text_dim, 0x66)))
-            .child("⇅")
-            .tooltip(tip(if sort_enabled { "Sort By" } else { "Sort By (not available in Column view)" }))
-            .when(sort_enabled, |d| {
-                d.cursor_pointer()
-                    .hover(|s| s.bg(rgb(t.hover)).text_color(rgb(t.text)))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                            let (x, y) = (
-                                f64::from(ev.position.x) as f32,
-                                f64::from(ev.position.y) as f32,
-                            );
-                            this.sort_menu = Some((pane, x, y));
-                            cx.stop_propagation();
-                            cx.notify();
-                        }),
-                    )
-            });
-        // Share the selection (the native share popover, at the button).
-        let share_btn = div()
-            .id(("tb-share", pane))
-            .flex_none()
-            .w(px(24.0))
-            .h(px(22.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .when(has_sel, |d| d.text_color(rgb(t.text_dim)))
-            .when(!has_sel, |d| d.text_color(Theme::alpha(t.text_dim, 0x66)))
-            .child("⇪")
-            .tooltip(tip(if has_sel { "Share… (⇧⌘S)" } else { "Share (select an item first)" }))
-            .when(has_sel, |d| {
-                d.cursor_pointer()
-                    .hover(|s| s.bg(rgb(t.hover)).text_color(rgb(t.text)))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                            this.active_pane = pane;
-                            let targets = this.action_targets(pane);
-                            if let Some(view) = ns_view_ptr(window) {
-                                let at = (f32::from(ev.position.x), f32::from(ev.position.y));
-                                show_share_picker(view, at, &targets);
-                            }
-                            cx.stop_propagation();
-                        }),
-                    )
-            });
-        // A narrow pane (split view) can't fit every button beside a useful
-        // breadcrumb: the four view buttons fold into one that opens a view
-        // menu, and in a very narrow pane the extras step aside too.
-        let w = pane_width(pane);
-        let compact = w > 0.0 && w < 640.0;
-        let tiny = w > 0.0 && w < 470.0;
-        let (cur_glyph, cur_name) = match view {
-            ViewMode::List => ("☰", "List"),
-            ViewMode::Icons => ("▦", "Icons"),
-            ViewMode::Columns => ("▥", "Columns"),
-            ViewMode::Gallery => ("▭", "Gallery"),
-        };
-        let view_menu_btn = div()
-            .id(("view-menu", pane))
-            .flex_none()
-            .px_1p5()
-            .h(px(22.0))
-            .flex()
-            .items_center()
-            .gap_0p5()
-            .rounded_md()
-            .cursor_pointer()
-            .text_color(rgb(t.text))
-            .bg(rgb(t.surface))
-            .hover(|s| s.bg(rgb(t.hover)))
-            .child(cur_glyph)
-            .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_dim)).child("▾"))
-            .tooltip(tip(format!("View: {cur_name}")))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                    let (x, y) = (f32::from(ev.position.x), f32::from(ev.position.y));
-                    this.open_view_menu(pane, x, y, cx);
+        let local = self.tab(pane).remote.is_none();
+        let has_selection = !self.tab(pane).selection.is_empty();
+        let tiny = pane_width(pane) > 0. && pane_width(pane) < 470.;
+        let mut row = div().flex_none().flex().items_center().gap_1().pl_2();
+        if local && !tiny {
+            row = row.child(button("tb-new-folder", pane, Icon::FolderPlus, false, true, "New folder · ⇧⌘N")
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| { this.active_pane = pane; this.new_folder(pane, window, cx); })));
+            row = row.child(button("tb-share", pane, Icon::Share, false, has_selection, "Share selection · ⇧⌘S")
+                .when(has_selection, |d| d.on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                    this.active_pane = pane;
+                    if let Some(view) = ns_view_ptr(window) { show_share_picker(view, (f32::from(ev.position.x), f32::from(ev.position.y)), &this.action_targets(pane)); }
                     cx.stop_propagation();
-                }),
-            );
-        div()
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap_1()
-            .pl_2()
-            // File actions (hidden on remote tabs, which can't create locally).
-            .when(!is_remote && !tiny, |d| d.child(new_folder_btn))
-            .when(!is_remote, |d| d.child(share_btn).child(delete_btn))
-            .child(self.render_hidden_button(pane, cx))
-            .when(!tiny, |d| d.child(search_btn))
-            .when(compact, |d| d.child(view_menu_btn))
-            .when(!compact, |d| {
-                d.child(btn("view-list", "☰", "List view", ViewMode::List, cx))
-                    .child(btn("view-icons", "▦", "Icon view", ViewMode::Icons, cx))
-                    .child(btn("view-columns", "▥", "Column view", ViewMode::Columns, cx))
-                    .child(btn("view-gallery", "▭", "Gallery view", ViewMode::Gallery, cx))
-            })
-            .child(sort_btn)
-    }
-
-    /// The compact toolbar's view picker, as a small menu at (x, y).
-    fn open_view_menu(&mut self, pane: usize, x: f32, y: f32, cx: &mut Context<Self>) {
-        self.active_pane = pane;
-        let cur = self.tab(pane).view;
-        let nodes = [
-            (ViewMode::List, "as List"),
-            (ViewMode::Icons, "as Icons"),
-            (ViewMode::Columns, "as Columns"),
-            (ViewMode::Gallery, "as Gallery"),
-        ]
-        .into_iter()
-        .map(|(mode, label)| {
-            mi_check(label, cur == mode, move |this, _, cx| {
-                this.close_context_menu(cx);
-                this.set_view(pane, mode, cx);
-            })
-        })
-        .collect();
-        self.context_menu = Some(ContextMenu {
-            x,
-            y,
-            target: None,
-            nodes,
-            open_sub: None,
-            sel_root: None,
-            sel_sub: None,
-        });
-        cx.notify();
+                }))));
+        }
+        if local {
+            let tagged = has_selection && self.tab(pane).selection.iter().all(|p| self.projects.sidebar().tagged.contains(p));
+            row = row.child(button("tb-project-tag", pane, Icon::Tag, tagged, has_selection, "Tag selection in current project")
+                .when(has_selection, |d| d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_project_tags(pane, cx)))));
+            row = row.child(button("tb-delete", pane, Icon::Trash, false, has_selection, "Move selection to Trash · ⌘⌫")
+                .when(has_selection, |d| d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| { this.active_pane = pane; this.request_delete(pane, cx); }))));
+        }
+        row = row.child(self.render_hidden_button(pane, cx));
+        if !tiny {
+            row = row.child(button("palette-search", pane, Icon::Search, false, true, "Search files · ⌘P")
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| { this.active_pane = pane; this.focus_file_search(false, window, cx); })));
+        }
+        row.child(div().flex_none().w(px(1.)).h(px(18.)).mx_1().bg(rgb(theme().border)))
+            .child(div().flex().items_center().gap(px(1.)).p(px(2.)).rounded_lg().border_1().border_color(rgb(theme().border)).bg(rgb(theme().sidebar))
+                .children([(ViewMode::List, Icon::List, "view-list", "List view"), (ViewMode::Icons, Icon::Grid, "view-icons", "Icon view")]
+                    .into_iter().map(|(mode, icon, id, label)| button(id, pane, icon, view == mode, true, label)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_view(pane, mode, cx))))))
+            .child(button("view-options", pane, Icon::Columns, false, true, "View options · columns and saved folder views")
+                .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                    this.open_view_menu(pane, f32::from(ev.position.x), f32::from(ev.position.y), cx); cx.stop_propagation();
+                })))
+            .child(button("sort-by", pane, Icon::Sort, false, true, "Sort by")
+                .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                    this.sort_menu = Some((pane, f32::from(ev.position.x), f32::from(ev.position.y))); cx.stop_propagation(); cx.notify();
+                })))
     }
 
     /// Clickable path ending at the current folder. The inner row keeps its
@@ -10508,12 +9518,6 @@ impl Shuffle {
             )
     }
 
-    /// Width of a pane's list viewport (≈ pane width), from its scroll state.
-    fn pane_list_width(&self, pane: usize) -> f32 {
-        let st = self.tab(pane).scroll_handle.0.borrow();
-        f64::from(st.base_handle.bounds().size.width) as f32
-    }
-
     /// Update the split ratio while dragging the divider. `x` is window-relative.
     /// Delta-based: new ratio = ratio-at-grab + (cursor moved) / content width.
     fn update_divider(&mut self, x: f32, cx: &mut Context<Self>) {
@@ -10603,7 +9607,7 @@ impl Shuffle {
                             .rounded_sm()
                             .text_color(rgb(t.text_dim))
                             .hover(|s| s.text_color(rgb(t.text)).bg(rgb(t.selected)))
-                            .child("×")
+                            .child(ui_icon(Icon::Close, 11., rgb(t.text_muted)))
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.close_tab(pane, i, cx);
                                 cx.stop_propagation();
@@ -10645,7 +9649,7 @@ impl Shuffle {
                     .text_color(rgb(t.text_muted))
                     .hover(|s| s.bg(rgb(t.hover)).text_color(rgb(t.text)))
                     .active(|s| s.bg(rgb(t.selected)))
-                    .child("+")
+                    .child(ui_icon(Icon::Plus, 14., rgb(t.text_muted)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.new_tab_in(pane, cx);
                     })),
@@ -10664,8 +9668,6 @@ impl Shuffle {
         let body: AnyElement = if searching { self.render_file_results(cx) } else { match view {
             ViewMode::List => self.render_list_body(pane, cx),
             ViewMode::Icons => self.render_icons_body(pane, cx),
-            ViewMode::Columns => self.render_columns_body(pane, cx),
-            ViewMode::Gallery => self.render_gallery_body(pane, cx),
         }};
 
         let browser_owner = cx.entity().downgrade();
@@ -10714,8 +9716,10 @@ impl Shuffle {
         let mut body_row = div().flex().flex_1().min_h_0().min_w_0().child(browser);
         // Keep the shared selection preview on the far right, below every
         // navigation/filter row. Inspect retains its separate full-height map.
-        if pane + 1 == self.panes.len() && self.space_map.is_none() {
-            if let Some(inspector) = self.render_inspector(cx) {
+        if pane + 1 == self.panes.len() {
+            if let Some(map) = self.render_space_map(cx) {
+                body_row = body_row.child(map);
+            } else if let Some(inspector) = self.render_inspector(cx) {
                 body_row = body_row.child(self.render_preview_panel(inspector, pane, cx));
             }
         }
@@ -10793,8 +9797,9 @@ impl Shuffle {
         let scroll = tab.scroll_handle.clone();
         let h_scroll = tab.h_scroll.clone();
         let pane_dir = tab.current_dir.clone();
-        let fw = self.fitted_widths(pane);
-        let total_w = fw.name + fw.kind + fw.date + fw.size + 24.0;
+        let fw = &self.tab(pane).list_layout;
+        let total_w = fw.total_width();
+        let fw = fw.clone();
         // Only engage horizontal scrolling when the columns genuinely overflow
         // the pane — otherwise the small x component of a trackpad flick
         // jiggles the listing sideways while scrolling vertically.
@@ -10862,6 +9867,7 @@ impl Shuffle {
                                     .flex()
                                     .flex_col()
                                     .h_full()
+                                    .when(h_overflows, |d| d.pb(px(12.)))
                                     .w_full()
                                     .min_w(px(total_w))
                                     .child(self.column_header(pane, cx))
@@ -10915,7 +9921,7 @@ impl Shuffle {
                     ("file-list", pane),
                     item_count,
                     cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                        let widths = fw;
+                        let widths = &fw;
                         let tab = this.tab(pane);
                         let find_active = tab.is_filtered();
                         let has_parent = !find_active && prefs().show_parent && tab.current_dir.parent().is_some();
@@ -10930,11 +9936,8 @@ impl Shuffle {
                                 let icon = icon_element(&parent, true);
                                 items.push(
                                     file_row(
-                                        "..",
-                                        true,
-                                        0,
-                                        None,
-                                        true,        // ".." has no metadata to load
+                                        &Entry { name: "..".into(), is_dir: true, size: 0, modified: None, created: None, mode: None, loaded: true, hidden_flag: false },
+                                        &base_dir,
                                         row_key,
                                         false,
                                         false,       // ".." is never the menu target
@@ -10992,9 +9995,6 @@ impl Shuffle {
                             let entry = &tab.entries[entry_ix];
                             let name = entry.name.clone();
                             let is_dir = entry.is_dir;
-                            let entry_size = entry.size;
-                            let modified = entry.modified;
-                            let entry_loaded = entry.loaded;
                             let target = base_dir.join(&name);
                             let cloud = this.cloud_state(&target, is_dir);
                             let ctx_target = target.clone();
@@ -11017,11 +10017,8 @@ impl Shuffle {
 
                             items.push(
                                 file_row(
-                                    &name,
-                                    is_dir,
-                                    entry_size,
-                                    modified,
-                                    entry_loaded,
+                                    entry,
+                                    &base_dir,
                                     row_key,
                                     is_selected,
                                     ctx_active,
@@ -11030,10 +10027,10 @@ impl Shuffle {
                                     entry.is_folder(), // ordinary folders accept drops
                                     this.drop_hover == Some((pane, Some(ix))),
                                     rename_text,       // editable name when renaming
-                                    cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                                    cx.listener(move |this, ev: &ClickEvent, window, cx| {
                                         // Cmd/Shift extend the selection; otherwise
                                         // folders open and files select / double-open.
-                                        this.click_entry(pane, target.clone(), is_dir, ev, cx);
+                                        this.click_entry(pane, target.clone(), is_dir, ev, window, cx);
                                     }),
                                     cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                                         let (x, y) = (
@@ -11114,7 +10111,7 @@ impl Shuffle {
         let tab = self.tab(pane);
         let scroll = tab.scroll_handle.clone();
         let pane_dir = tab.current_dir.clone();
-        let width = self.pane_list_width(pane).max(240.0);
+        let width = browser_width(pane).max(240.0);
         let cell_w = 108.0_f32;
         let cols = ((width / cell_w).floor() as usize).max(1);
         let n = if tab.is_filtered() {
@@ -11185,139 +10182,6 @@ impl Shuffle {
             .into_any_element()
     }
 
-    /// Virtualized Miller columns share listing data and filter masks.
-    fn render_columns_body(&self,pane:usize,cx:&Context<Self>)->AnyElement {
-        let t=theme();let tab=self.tab(pane);
-        let mut dirs=vec![tab.current_dir.clone()];dirs.extend(tab.col_chain.iter().cloned());
-        let mut cols=Vec::new();
-        for (column,dir) in dirs.iter().enumerate(){
-            let count=self.visible_column_entries(pane,dir).len();let path=dir.clone();let next=dirs.get(column+1).cloned();
-            let scroll=col_scroll(pane,column);let base=scroll.0.borrow().base_handle.clone();
-            cols.push(div().id(("col",pane*100+column)).relative().flex_none().w(px(220.)).h_full()
-                .border_r_1().border_color(rgb(t.border))
-                .child(uniform_list(("column-rows",pane*100+column),count,cx.processor(move|this,range:std::ops::Range<usize>,_,cx|{
-                    let entries=this.visible_column_entries(pane,&path);let tab=this.tab(pane);
-                    range.filter_map(|row|{
-                        let entry=entries.get(row)?;let target=path.join(&entry.name);
-                        let selected=next.as_deref()==Some(target.as_path()) || tab.anchor.as_deref()==Some(target.as_path()) || tab.selection.contains(&target);
-                        Some(column_row(pane,column,&entry.name,target.clone(),entry.is_dir,selected,this.is_ctx_target(&target),cx))
-                    }).collect()
-                })).size_full().track_scroll(scroll)
-                    .on_scroll_wheel(cx.listener(|_,_:&ScrollWheelEvent,_,cx|cx.notify())))
-                .children(static_scrollbar_thumb(&base)).into_any_element());
-        }
-        div().id(("columns-body",pane)).flex_1().min_h_0().overflow_x_scroll().flex().children(cols).into_any_element()
-    }
-
-    /// The Gallery view body: a large preview on top + a filmstrip below.
-    fn render_gallery_body(&self, pane: usize, cx: &Context<Self>) -> AnyElement {
-        let t = theme();
-        let tab = self.tab(pane);
-        let pane_dir = tab.current_dir.clone();
-        let sel = tab.anchor.clone();
-
-        // Top preview area (white page so documents stay readable).
-        let preview: AnyElement = match &sel {
-            Some(p) => match lookup_preview(p) {
-                Some(Some(handle)) => img(ImageSource::Render(handle))
-                    .max_w(px(560.0))
-                    .max_h(px(560.0))
-                    .object_fit(ObjectFit::Contain)
-                    .into_any_element(),
-                // Not ready yet or unavailable → show the file's large icon.
-                _ => icon_element_sized(p, false, 128.0),
-            },
-            None => div()
-                .text_color(rgb(t.text_dim))
-                .child("Select an item")
-                .into_any_element(),
-        };
-
-        // Filmstrip (capped for very large directories).
-        let mut strip: Vec<AnyElement> = Vec::new();
-        for entry in tab.visible_entries().take(400) {
-            let name = entry.name.clone();
-            let is_dir = entry.is_dir;
-            let target = pane_dir.join(&name);
-            let cloud = self.cloud_state(&target, is_dir);
-            let selected = tab.selection.contains(&target);
-            let nav_t = target.clone();
-            strip.push(
-                div()
-                    .id(SharedString::from(format!("film:{}", target.to_string_lossy())))
-                    .flex_none()
-                    .w(px(80.0))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap_1()
-                    .p_1()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .when(selected, |s| s.bg(rgb(t.selected)))
-                    .hover(|s| s.bg(rgb(t.hover)))
-                    .child(cloud_badged_icon(icon_element_sized(&target, is_dir, 44.0), cloud, 16.0))
-                    .child(div().w_full().truncate().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(name))
-                    .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
-                        let mods = ev.modifiers();
-                        if mods.platform {
-                            this.toggle_entry(pane, nav_t.clone(), cx);
-                        } else if mods.shift {
-                            this.range_select(pane, nav_t.clone(), cx);
-                        } else if ev.click_count() >= 2 {
-                            this.open_path(pane, nav_t.clone(), is_dir, cx);
-                        } else {
-                            this.select_entry(pane, nav_t.clone(), cx);
-                        }
-                    }))
-                    .into_any_element(),
-            );
-        }
-
-        div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .p_4()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .max_w(px(600.0))
-                            .max_h(px(600.0))
-                            .p_2()
-                            .rounded_md()
-                            .bg(rgb(0xffffff))
-                            .child(preview),
-                    ),
-            )
-            .child(
-                div()
-                    .id(("filmstrip", pane))
-                    .flex_none()
-                    .h(px(108.0))
-                    .overflow_x_scroll()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .px_2()
-                    .border_t_1()
-                    .border_color(rgb(t.border))
-                    .bg(rgb(t.sidebar))
-                    .children(strip),
-            )
-            .into_any_element()
-    }
-
     /// Read-only horizontal scroll indicator for a pane's columns. Returns
     /// `None` when the columns fit (no horizontal overflow).
     /// Geometry of a pane's horizontal scrollbar: (viewport, max scroll,
@@ -11348,6 +10212,8 @@ impl Shuffle {
                 .right_0()
                 .bottom_0()
                 .h(px(12.0))
+                .bg(rgb(theme().sidebar))
+                .border_t_1().border_color(rgb(theme().border))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
@@ -11397,8 +10263,8 @@ impl Shuffle {
         if pane >= self.panes.len() {
             return;
         }
-        let fw = self.fitted_widths(pane);
-        let total_w = fw.name + fw.kind + fw.date + fw.size + 24.0;
+        let fw = &self.tab(pane).list_layout;
+        let total_w = fw.total_width();
         let Some((viewport, max, thumb_w, _)) = self.hbar_geometry(pane, total_w) else { return };
         let travel = (viewport - thumb_w).max(1.0);
         let scrolled = (start_scrolled + (x - start_x) * (max / travel)).clamp(0.0, max);
@@ -11408,116 +10274,29 @@ impl Shuffle {
         cx.notify();
     }
 
-    /// The non-scrolling header row with labels and drag-to-resize handles.
-    fn column_header(&self, pane: usize, cx: &Context<Self>) -> impl IntoElement {
-        let w = self.fitted_widths(pane);
-        let key = self.tab(pane).sort_key;
-        let asc = self.tab(pane).sort_asc;
-        div()
-            .flex()
-            .items_center()
-            .flex_none()
-            .px_3()
-            .py_1()
-            .text_size(px(UI_SMALL_FONT_SIZE))
-            .text_color(rgb(theme().text_dim))
-            .border_b_1()
-            .border_color(rgb(theme().border))
-            .child(header_cell(pane, "Name", w.name, Column::Name, SortKey::Name, ICON_W + 8.0, false, key, asc, cx))
-            .child(header_cell(pane, "Kind", w.kind, Column::Kind, SortKey::Kind, 0.0, false, key, asc, cx))
-            .child(header_cell(pane, "Date Modified", w.date, Column::Date, SortKey::Modified, 0.0, false, key, asc, cx))
-            .child(header_cell(pane, "Size", w.size, Column::Size, SortKey::Size, 0.0, true, key, asc, cx))
-            // Slack space after the last column.
-            .child(div().flex_1())
-    }
+
 }
 
-/// A header cell: a clickable sort label plus a drag handle on its right edge
-/// that resizes the column. `left_pad` aligns the Name label past the row icon;
-/// `align_right` right-justifies (for Size).
 #[allow(clippy::too_many_arguments)]
-fn header_cell(
-    pane: usize,
-    label: &str,
-    width: f32,
-    col: Column,
-    sort: SortKey,
-    left_pad: f32,
-    align_right: bool,
-    cur_key: SortKey,
-    cur_asc: bool,
-    cx: &Context<Shuffle>,
-) -> impl IntoElement {
-    let active = cur_key == sort;
-    let arrow = if active {
-        if cur_asc { " ▲" } else { " ▼" }
-    } else {
-        ""
-    };
-    let mut label_box = div()
-        .id(("hdr", pane * 10 + col.key()))
-        .flex_1()
-        .min_w_0()
-        .truncate()
-        .cursor_pointer()
-        .when(active, |s| s.text_color(rgb(theme().text)))
-        .hover(|s| s.text_color(rgb(theme().text)))
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            this.set_sort(pane, sort, cx);
-        }));
-    if left_pad > 0.0 {
-        label_box = label_box.pl(px(left_pad));
-    }
-    if align_right {
-        label_box = label_box.flex().justify_end().pr_2();
-    }
 
-    div()
-        .flex_none()
-        .w(px(width))
-        .h_full()
-        .flex()
-        .items_center()
-        .child(label_box.child(format!("{label}{arrow}")))
-        // Drag handle: a wide grab zone centered on a visible 1px divider line.
-        .child(
-            div()
-                .id(("resize", col.key()))
-                .flex_none()
-                .w(px(11.0))
-                .h_full()
-                .flex()
-                .justify_center()
-                .cursor(CursorStyle::ResizeLeftRight)
-                .child(div().w(px(1.0)).h_full().bg(rgb(theme().border_strong)))
-                .hover(|s| s.bg(rgb(theme().selected)))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                        this.begin_resize(pane, col, f64::from(ev.position.x) as f32);
-                        cx.notify();
-                    }),
-                ),
-        )
-}
 
 impl Render for Shuffle {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.dismiss_space_map) { self.close_space_map(window, cx); }
+        self.sync_video_preview(cx);
         let owner=cx.entity().downgrade();
         window.on_next_frame(move|_,cx|{let _=owner.update(cx,|this,cx|this.prewarm_icons(cx));});
         let t = theme();
         self.cancel_unused_previews();
-        self.ensure_column_metadata(cx);
         // Kick off any pending waterfall folder reads before rendering the tree.
         self.ensure_waterfall_loaded(cx);
         // Main row: sidebar | content (including preview) | optional size map.
-        let mut main_row = div()
+        let main_row = div()
             .flex()
             .flex_1()
             .min_h_0()
             .child(self.render_sidebar(cx))
             .child(self.render_content(cx));
-        if let Some(map) = self.render_space_map(cx) { main_row = main_row.child(map); }
 
         let mut root = div()
             .relative()
@@ -11530,6 +10309,9 @@ impl Render for Shuffle {
             // Focusable so it receives key events (Cmd+P, palette typing).
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                if this.space_map.is_some() { this.close_space_map(window, cx); }
+            }))
             // Native menu-bar actions (File / View / Go menus).
             .on_action(cx.listener(|this, _: &NewProject, window, cx| this.open_project_dialog(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleStudioSplit, _, cx| this.toggle_studio_split(cx)))
@@ -11558,14 +10340,6 @@ impl Render for Shuffle {
             .on_action(cx.listener(|this, _: &ViewIcons, _, cx| {
                 let p = this.active_pane;
                 this.set_view(p, ViewMode::Icons, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ViewColumns, _, cx| {
-                let p = this.active_pane;
-                this.set_view(p, ViewMode::Columns, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ViewGallery, _, cx| {
-                let p = this.active_pane;
-                this.set_view(p, ViewMode::Gallery, cx);
             }))
             .on_action(cx.listener(|_, _: &ToggleSidebar, _, cx| {
                 let mut np = prefs();
@@ -11621,7 +10395,7 @@ impl Render for Shuffle {
                     this.finish_preview_resize(cx);
                     this.drag_candidate = None;
                     this.terminal_resize = None;
-                    this.end_resize();
+                    this.end_resize(cx);
                     this.end_scroll_drag(cx);
                     this.hbar_drag = None;
                     this.divider_drag = None;
@@ -11699,12 +10473,7 @@ impl Render for Shuffle {
         if self.palette_open && !self.file_search.inline {
             root = root.child(self.render_palette(cx));
         }
-        if self.context_menu.is_some() {
-            root = root.child(self.render_context_menu(cx));
-        }
-        if let Some((p, x, y)) = self.sort_menu {
-            root = root.child(self.render_sort_menu(p, x, y, cx));
-        }
+        self.schedule_native_menu(window, cx);
         if self.confirm_delete.is_some() {
             root = root.child(self.render_confirm_delete(cx));
         }
@@ -11720,9 +10489,6 @@ impl Render for Shuffle {
         if self.server_dialog.is_some() {
             root = root.child(self.render_server_dialog(cx));
         }
-        if self.sidebar_menu.is_some() {
-            root = root.child(self.render_sidebar_menu(cx));
-        }
         if self.group_dialog.is_some() {
             root = root.child(self.render_group_dialog(cx));
         }
@@ -11737,49 +10503,7 @@ impl Render for Shuffle {
     }
 }
 
-/// Build a sidebar nav item that navigates to `target`, and push it onto `items`.
-#[allow(clippy::too_many_arguments)]
-fn push_nav(
-    items: &mut Vec<AnyElement>,
-    cx: &Context<Shuffle>,
-    key: &mut usize,
-    label: String,
-    icon_key: String,
-    target: PathBuf,
-    current: &Path,
-    collapsed: bool,
-) {
-    *key += 1;
-    let active = target.as_path() == current;
-    let nav_target = target.clone();
-    let right_target = target.clone();
-    // Tooltip: the friendly path (`~/Documents/Projects`). When expanded the
-    // label is already visible, so lead with it for clarity.
-    let path_str = display_path(&target);
-    let tooltip = if collapsed || path_str == label {
-        format!("{label}\n{path_str}")
-    } else {
-        path_str
-    };
-    let item = nav_item(
-        label,
-        tooltip,
-        sidebar_icon(&icon_key, 16.0),
-        *key,
-        active,
-        collapsed,
-        cx.listener(move |this, _: &ClickEvent, _, cx| {
-            this.navigate_to(nav_target.clone(), cx);
-        }),
-        cx.listener(move |this,ev:&MouseDownEvent,_,cx| {
-            this.open_sidebar_menu(f32::from(ev.position.x),f32::from(ev.position.y),SidebarTarget::Folder(right_target.clone()),cx);
-            cx.stop_propagation();
-        }),
-    );
-    items.push(item.into_any_element());
-}
-
-/// Like [`push_nav`] but for a bookmark, which may be a file or a folder:
+/// A bookmark, which may be a file or a folder:
 /// folders navigate, files open in their default app, and the icon reflects the
 /// file type.
 fn push_bookmark_nav(
@@ -11904,7 +10628,7 @@ fn display_path(p: &Path) -> String {
 /// A back/forward navigation arrow. Dimmed and inert when `enabled` is false.
 fn nav_arrow(
     id: impl Into<ElementId>,
-    glyph: &'static str,
+    icon: Icon,
     enabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
@@ -11919,7 +10643,7 @@ fn nav_arrow(
         .justify_center()
         .rounded_md()
         .text_color(if enabled { rgb(t.text) } else { rgb(t.text_dim) })
-        .child(glyph);
+        .child(ui_icon(icon, 16., if enabled { rgb(t.text_muted) } else { Theme::alpha(t.text_dim, 0x66) }));
     if enabled {
         base.cursor_pointer()
             .hover(|s| s.bg(rgb(t.hover)))
@@ -11996,37 +10720,6 @@ fn push_menu_sep(nodes: &mut Vec<MenuNode>) {
     if !matches!(nodes.last(), None | Some(MenuNode::Sep)) {
         nodes.push(MenuNode::Sep);
     }
-}
-
-/// Move a menu highlight by `delta`, wrapping and skipping rows that can't be
-/// selected (separators, disabled). `None` starts from the appropriate end.
-fn step_menu_sel(nodes: &[MenuNode], cur: Option<usize>, delta: isize) -> Option<usize> {
-    let n = nodes.len() as isize;
-    if n == 0 {
-        return None;
-    }
-    let mut i = match cur {
-        Some(c) => c as isize,
-        None => {
-            if delta > 0 {
-                -1
-            } else {
-                n
-            }
-        }
-    };
-    for _ in 0..n {
-        i += delta;
-        if i < 0 {
-            i = n - 1;
-        } else if i >= n {
-            i = 0;
-        }
-        if nodes[i as usize].selectable() {
-            return Some(i as usize);
-        }
-    }
-    cur
 }
 
 /// Preview files with Quick Look (the same viewer as pressing Space).
@@ -12121,42 +10814,8 @@ fn file_url_to_path(url: &str) -> Option<PathBuf> {
     }
 }
 
-fn ctx_item(
-    label: &'static str,
-    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(label)
-        .flex()
-        .items_center()
-        .mx_1()
-        .px_3()
-        .py_1()
-        .rounded_md()
-        .cursor_pointer()
-        .text_color(rgb(menu_style().text))
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .child(label)
-        .on_click(on_click)
-}
-
-
-fn ctx_separator() -> impl IntoElement {
-    div().my_1().mx_2().h(px(1.0)).bg(rgb(theme().border_strong))
-}
-
-
-
-
 /// A non-interactive, dimmed context-menu row.
-fn ctx_disabled(label: &'static str) -> impl IntoElement {
-    div()
-        .mx_1()
-        .px_3()
-        .py_1()
-        .text_color(rgb(theme().text_dim))
-        .child(label)
-}
+
 
 /// Whether `path` looks like a raster image we can act on.
 fn is_image(path: &Path) -> bool {
@@ -13010,17 +11669,14 @@ fn empty_hint(text: &str) -> impl IntoElement {
 /// One clickable listing row in the main pane: icon · name · kind · date · size.
 #[allow(clippy::too_many_arguments)]
 fn file_row(
-    name: &str,
-    is_dir: bool,
-    size: u64,
-    modified: Option<SystemTime>,
-    loaded: bool,
+    entry: &Entry,
+    location: &Path,
     key: usize,
     selected: bool,
     // True while this row is the open right-click menu's target — keep it looking
     // hovered even though the cursor is over the menu backdrop.
     ctx_active: bool,
-    widths: ColumnWidths,
+    widths: &ListLayout,
     icon: AnyElement,
     // Drag-and-drop: `accept_drop` true => it's a drop target (a folder or the
     // ".." row) that runs `on_drop_file` when files are dropped on it.
@@ -13041,8 +11697,7 @@ fn file_row(
     on_hover_row: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let t = theme();
-    let kind = kind_label(name, is_dir);
-    let meta_color = rgb(t.text_muted);
+    let name = &entry.name;
     // The name element: an editable field while renaming, else the label.
     let name_el: AnyElement = match &rename_text {
         Some((txt, cursor, anchor, invalid)) => {
@@ -13096,86 +11751,26 @@ fn file_row(
             .into_any_element(),
     };
 
-    div()
-        .id(("row", key))
-        .flex()
-        .items_center()
-        .px_3()
-        .h(px(ROW_H))
-        .cursor_pointer()
+    let name_cell = div()
+        .flex_none().w(px(widths.width(Column::Name))).flex().items_center().gap_2().pr_2()
+        .on_mouse_down(MouseButton::Left, on_press)
+        .when(accept_drop, |c| c.rounded_sm().on_drop(on_drop_file))
+        .when(drop_hilite, |c| c.bg(rgb(theme().selected)))
+        .child(div().flex_none().w(px(ICON_W)).flex().justify_center().child(icon))
+        .child(name_el).into_any_element();
+    let mut name_cell = Some(name_cell);
+    let cells: Vec<AnyElement> = widths.columns.iter().map(|spec| {
+        if spec.column == Column::Name { return name_cell.take().unwrap(); }
+        div().flex_none().w(px(spec.width)).pr_3().min_w_0().truncate()
+            .text_color(rgb(t.text_muted))
+            .when(spec.column == Column::Size, |d| d.text_right())
+            .child(list_ui::column_text(entry, spec.column, location)).into_any_element()
+    }).collect();
+    div().id(("row", key)).flex().items_center().px_3().h(px(ROW_H)).cursor_pointer()
         .when(selected, |s| s.bg(rgb(t.selected)))
         .when(ctx_active && !selected, |s| s.bg(rgb(t.hover)))
-        .hover(|s| s.bg(rgb(t.hover)))
-        // Instant press feedback (the click action lands on mouse-up).
-        .active(|s| s.bg(rgb(t.selected)))
-        .on_hover(on_hover_row)
-        // Name (icon + label). Long names truncate with an ellipsis. Only this
-        // cell is the "drop into this folder" target — dropping further along
-        // the row (Kind/Date/Size) falls through to the pane and lands in the
-        // current directory instead, like Finder. It's also the only cell whose
-        // press starts a FILE drag (candidate promoted to a native OS drag on
-        // move); presses on Kind/Date/Size fall through to the list behind, so
-        // a rubber-band marquee can start from a row's non-name area even in a
-        // folder whose rows fill the whole viewport — like Finder.
-        .child(
-            div()
-                .flex_none()
-                .w(px(widths.name))
-                .flex()
-                .items_center()
-                .gap_2()
-                .pr_2()
-                .on_mouse_down(MouseButton::Left, on_press)
-                .when(accept_drop, |c| c.rounded_sm().on_drop(on_drop_file))
-                .when(drop_hilite, |c| c.bg(rgb(theme().selected)))
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(ICON_W))
-                        .flex()
-                        .justify_center()
-                        .child(icon),
-                )
-                .child(name_el),
-        )
-        // Kind.
-        .child(
-            div()
-                .flex_none()
-                .w(px(widths.kind))
-                .pr_3()
-                .truncate()
-                .text_color(meta_color)
-                .child(kind),
-        )
-        // Date modified ("--" until the background metadata pass fills it in).
-        .child(
-            div()
-                .flex_none()
-                .w(px(widths.date))
-                .pr_3()
-                .truncate()
-                .text_color(meta_color)
-                .child(if loaded { format_date(modified) } else { "--".to_string() }),
-        )
-        // Size (right-aligned).
-        .child(
-            div()
-                .flex_none()
-                .w(px(widths.size))
-                .flex()
-                .justify_end()
-                .text_color(meta_color)
-                .child(if !loaded {
-                    "--".to_string()
-                } else if is_dir {
-                    "--".to_string()
-                } else {
-                    format_size(is_dir, size)
-                }),
-        )
-        // Slack space after the last column (keeps row hover full-width).
-        .child(div().flex_1())
+        .hover(|s| s.bg(rgb(t.hover))).active(|s| s.bg(rgb(t.selected)))
+        .on_hover(on_hover_row).children(cells).child(div().flex_1())
         .on_click(on_click)
         .on_mouse_down(MouseButton::Right, on_right)
 }
@@ -13255,8 +11850,8 @@ fn icon_cell(
                 .text_color(rgb(t.text))
                 .child(name),
         )
-        .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
-            this.click_entry(pane, click_t.clone(), is_dir, ev, cx);
+        .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+            this.click_entry(pane, click_t.clone(), is_dir, ev, window, cx);
         }))
         .on_mouse_down(
             MouseButton::Right,
@@ -13277,62 +11872,6 @@ fn icon_cell(
             }));
     }
     cell.into_any_element()
-}
-
-/// One row in a Column-view column: icon · name · (chevron for folders).
-fn column_row(
-    pane: usize,
-    col_index: usize,
-    name: &str,
-    target: PathBuf,
-    is_dir: bool,
-    selected: bool,
-    ctx_active: bool,
-    cx: &Context<Shuffle>,
-) -> AnyElement {
-    let t = theme();
-    let is_folder = is_browsable_folder(&target, is_dir);
-    let icon = icon_element(&target, is_dir);
-    let click_t = target.clone();
-    let ctx_t = target.clone();
-    div()
-        .id(SharedString::from(format!("colrow:{col_index}:{}", target.to_string_lossy())))
-        .flex()
-        .items_center()
-        .gap_2()
-        .px_2()
-        .h(px(ROW_H))
-        .cursor_pointer()
-        .when(selected, |s| s.bg(rgb(t.selected)))
-        .when(ctx_active && !selected, |s| s.bg(rgb(t.hover)))
-        .hover(|s| s.bg(rgb(t.hover)))
-        .child(div().flex_none().w(px(ICON_W)).flex().justify_center().child(icon))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_color(rgb(t.text))
-                .child(name.to_string()),
-        )
-        .when(is_folder, |r| {
-            r.child(div().flex_none().text_color(rgb(t.text_dim)).child("›"))
-        })
-        .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
-            this.column_click(pane, col_index, click_t.clone(), is_dir, ev, cx);
-        }))
-        .on_mouse_down(
-            MouseButton::Right,
-            cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                let (x, y) = (
-                    f64::from(ev.position.x) as f32,
-                    f64::from(ev.position.y) as f32,
-                );
-                this.open_context_menu(pane, x, y, Some((ctx_t.clone(), is_dir)), cx);
-                cx.stop_propagation();
-            }),
-        )
-        .into_any_element()
 }
 
 /// A human-readable kind label for a file (e.g. "Microsoft Excel", "DWG File").
@@ -13543,63 +12082,6 @@ fn ensure_base_icons() {
     }
 }
 
-/// The favorite/location shortcuts shown at the top of the sidebar. Each is
-/// `(label, slug)`; the slug both names the cache key (`fav:<slug>`) and the
-/// pack override file (`<slug>.png`). The real path is resolved by [`fav_path`].
-const SIDEBAR_FAVORITES: &[(&str, &str)] = &[
-    ("Applications", "applications"),
-    ("Desktop", "desktop"),
-    ("Documents", "documents"),
-    ("Downloads", "downloads"),
-    ("Pictures", "pictures"),
-    ("Music", "music"),
-    ("Movies", "movies"),
-];
-
-/// The path a favorite/location slug points at (used for navigation and to fetch
-/// the real macOS special-folder icon when no pack overrides it).
-fn fav_path(slug: &str) -> PathBuf {
-    let home = home_dir();
-    match slug {
-        "applications" => PathBuf::from("/Applications"),
-        "computer" => PathBuf::from("/"),
-        "home" => home,
-        "desktop" => home.join("Desktop"),
-        "documents" => home.join("Documents"),
-        "downloads" => home.join("Downloads"),
-        "pictures" => home.join("Pictures"),
-        "music" => home.join("Music"),
-        "movies" => home.join("Movies"),
-        other => home.join(other),
-    }
-}
-
-fn fav_key(slug: &str) -> String {
-    format!("fav:{slug}")
-}
-
-/// Build the special sidebar icons (Applications, Documents, the Mac, home, …)
-/// synchronously. There are only a handful and each is a few ms, so this is fine
-/// at startup and on icon-pack changes. A pack override (`<slug>.png`) wins;
-/// otherwise we use the real macOS special-folder icon for that path.
-fn ensure_sidebar_icons() {
-    let mut slugs: Vec<&str> = SIDEBAR_FAVORITES.iter().map(|(_, s)| *s).collect();
-    slugs.push("home");
-    slugs.push("computer");
-    for slug in slugs {
-        let key = fav_key(slug);
-        if ICON_CACHE.with(|c| c.borrow().contains_key(&key)) {
-            continue;
-        }
-        let icon = pack_icon_path(&key)
-            .and_then(|p| decode_image_file(&p))
-            .or_else(|| build_macos_icon(&fav_path(slug)));
-        ICON_CACHE.with(|c| {
-            c.borrow_mut().insert(key, icon);
-        });
-    }
-}
-
 thread_local! {
     /// Render timestamps from the last second, for the FPS meter.
     static FRAME_TIMES: RefCell<std::collections::VecDeque<Instant>> =
@@ -13648,31 +12130,6 @@ fn fps_overlay() -> AnyElement {
             |el, _| el,
         )
         .into_any_element()
-}
-
-/// Snapshot of the sidebar's cloud + volume scans, refreshed off-thread.
-static SIDEBAR_SCAN: OnceLock<Mutex<Option<SidebarScan>>> = OnceLock::new();
-static SIDEBAR_SCANNING: AtomicBool = AtomicBool::new(false);
-static SIDEBAR_DIRTY: AtomicBool = AtomicBool::new(false);
-type SidebarScan = (Instant, Vec<(String, PathBuf)>, Vec<(String, PathBuf)>);
-
-/// The sidebar's cloud providers + mounted volumes, from a short-lived cache.
-/// `render` calls this every frame; the actual `read_dir`/`stat` walk (which
-/// can block for seconds on a stale network mount) runs off-thread, including
-/// the first scan. A dirty flag makes additions and removals repaint once ready.
-fn sidebar_locations() -> (Vec<(String, PathBuf)>, Vec<(String, PathBuf)>) {
-    const TTL: Duration = Duration::from_secs(10);
-    let cell = SIDEBAR_SCAN.get_or_init(|| Mutex::new(None));
-    let cached = cell.lock().unwrap().clone();
-    if cached.as_ref().is_none_or(|(at,_,_)| at.elapsed()>TTL) && !SIDEBAR_SCANNING.swap(true,Ordering::SeqCst) {
-        std::thread::spawn(|| {
-            let fresh=(Instant::now(),cloud_locations(),mounted_volumes());
-            *SIDEBAR_SCAN.get().unwrap().lock().unwrap()=Some(fresh);
-            SIDEBAR_DIRTY.store(true,Ordering::Release);
-            SIDEBAR_SCANNING.store(false,Ordering::SeqCst);
-        });
-    }
-    cached.map(|(_,cloud,volumes)|(cloud,volumes)).unwrap_or_default()
 }
 
 /// List a folder's visible subdirectories (sorted case-insensitively) plus its
@@ -13748,42 +12205,6 @@ fn cached_is_dir(path: &Path) -> bool {
     }
 }
 
-/// Cloud-storage locations macOS syncs to disk: iCloud Drive plus every
-/// provider under `~/Library/CloudStorage` (Dropbox, Google Drive, OneDrive,
-/// Box, …), and a legacy `~/Dropbox` if present. Returns `(label, path)`.
-fn cloud_locations() -> Vec<(String, PathBuf)> {
-    let home = home_dir();
-    let mut out: Vec<(String, PathBuf)> = Vec::new();
-
-    let icloud = home.join("Library/Mobile Documents/com~apple~CloudDocs");
-    if icloud.is_dir() {
-        out.push(("iCloud Drive".to_string(), icloud));
-    }
-
-    let cs = home.join("Library/CloudStorage");
-    if let Ok(rd) = fs::read_dir(&cs) {
-        let mut providers: Vec<(String, PathBuf)> = rd
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_dir())
-            .map(|p| {
-                let raw = p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                (pretty_cloud_name(&raw), p)
-            })
-            .collect();
-        providers.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
-        out.extend(providers);
-    }
-
-    // Legacy Dropbox install (pre-CloudStorage) at ~/Dropbox.
-    let legacy_dropbox = home.join("Dropbox");
-    if legacy_dropbox.is_dir() && !out.iter().any(|(l, _)| l == "Dropbox") {
-        out.push(("Dropbox".to_string(), legacy_dropbox));
-    }
-
-    out
-}
-
 /// Turn a raw CloudStorage folder name ("GoogleDrive-me@x.com", "OneDrive-Personal")
 /// into a friendly label ("Google Drive", "OneDrive").
 fn pretty_cloud_name(raw: &str) -> String {
@@ -13795,87 +12216,13 @@ fn pretty_cloud_name(raw: &str) -> String {
     }
 }
 
-/// Mounted volumes under `/Volumes` (external drives + network shares),
-/// excluding the boot volume. Returns `(label, path)`.
-fn mounted_volumes() -> Vec<(String, PathBuf)> {
-    let mut out: Vec<(String, PathBuf)> = Vec::new();
-    // Mount points flagged `nobrowse` (installer DMGs, simulator runtimes, …)
-    // are hidden from Finder's sidebar; hide them here too.
-    let hidden = nobrowse_mounts();
-    if let Ok(rd) = fs::read_dir("/Volumes") {
-        for e in rd.flatten() {
-            let p = e.path();
-            if !p.is_dir() {
-                continue;
-            }
-            // Skip the boot volume (a /Volumes entry that resolves to "/").
-            if fs::canonicalize(&p).map(|t| t == Path::new("/")).unwrap_or(false) {
-                continue;
-            }
-            // Skip nobrowse mounts (and their resolved targets).
-            let resolved = fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
-            if hidden.contains(&p) || hidden.contains(&resolved) {
-                continue;
-            }
-            let name = e.file_name().to_string_lossy().into_owned();
-            out.push((name, p));
-        }
-    }
-    out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
-    out
-}
-
-/// The set of currently-mounted paths flagged `nobrowse` (per `mount`), which
-/// macOS hides from Finder — mounted installer disk images, OS simulator
-/// runtimes, cryptex mounts, and the like.
-fn nobrowse_mounts() -> HashSet<PathBuf> {
-    let mut set = HashSet::new();
-    if let Ok(out) = Command::new("/sbin/mount").output() {
-        if out.status.success() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            for line in text.lines() {
-                // Format: "<dev> on <mount point> (<fstype>, <flags…>)".
-                let Some(on) = line.find(" on ") else { continue };
-                let rest = &line[on + 4..];
-                let Some(paren) = rest.rfind(" (") else { continue };
-                let mount_point = &rest[..paren];
-                let flags = &rest[paren + 2..];
-                if flags.contains("nobrowse") {
-                    set.insert(PathBuf::from(mount_point));
-                }
-            }
-        }
-    }
-    set
-}
-
-/// Paths whose real macOS icon should be cached for the sidebar (cloud
-/// providers + mounted volumes). These are dynamic, so their icons are keyed by
-/// the path string and (re)built by [`ensure_dynamic_sidebar_icons`].
-fn dynamic_sidebar_paths() -> Vec<PathBuf> {
-    let (cloud,volumes) = sidebar_locations();
-    let mut v: Vec<PathBuf> = cloud.into_iter().map(|(_,p)|p).collect();
-    v.extend(volumes.into_iter().map(|(_,p)|p));
-    v
-}
-
-/// Queue icons for mounted volumes and cloud folders using the cached snapshot.
-fn ensure_dynamic_sidebar_icons() {
-    for path in dynamic_sidebar_paths() {
-        let key=path.to_string_lossy().into_owned();
-        if ICON_CACHE.with(|c|c.borrow().contains_key(&key)) || ICON_PENDING.with(|p|p.borrow().contains_key(&key)){continue;}
-        let epoch=ICON_EPOCH.with(|e|e.get());
-        ICON_PENDING.with(|p|{p.borrow_mut().insert(key.clone(),epoch);});
-        ICON_REQUESTS.with(|q|{q.borrow_mut().insert(key,(path,epoch));});
-    }
-}
-
 // ----- SFTP servers (browse remote hosts over SSH) ---------------------------
 
 /// A saved SFTP server. Auth is delegated to the system `ssh`/`sftp`, so a
 /// server is mostly a host reference; `key` is only used in "configure in-app"
 /// mode (otherwise the user's `~/.ssh` config/keys/agent handle auth).
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 struct SftpServer {
     /// Display label in the sidebar.
     name: String,
@@ -14048,14 +12395,6 @@ fn keychain_set_password(s: &SftpServer, pw: &str) {
 }
 
 /// Remove a server's stored password.
-fn keychain_delete_password(s: &SftpServer) {
-    let _ = Command::new("security")
-        .args(["delete-generic-password", "-s", "shuffle-studio-sftp", "-a"])
-        .arg(keychain_account(s))
-        .output();
-}
-
-/// Read a server's stored password back from the Keychain (empty = none).
 fn keychain_get_password(s: &SftpServer) -> Option<String> {
     let out = Command::new("security")
         .args(["find-generic-password", "-w", "-s", "shuffle-studio-sftp", "-a"])
@@ -14204,7 +12543,6 @@ fn set_active_sftp_servers(list: Vec<SftpServer>) {
 /// Persist + broadcast a new server list to every window.
 fn apply_sftp_servers(list: Vec<SftpServer>, cx: &mut App) {
     set_active_sftp_servers(list.clone());
-    save_sftp_servers(&list);
     cx.set_global(SftpServersGlobal(list));
     cx.refresh_windows();
 }
@@ -14434,37 +12772,13 @@ fn parse_sftp_ls(out: &str) -> Vec<Entry> {
             size,
             modified: None,
             created: None,
+                mode: None,
             loaded: true,
             hidden_flag: false,
         });
     }
     sort_default(&mut entries);
     entries
-}
-
-/// Persist saved servers, one per line (tab-separated fields).
-fn save_sftp_servers(list: &[SftpServer]) {
-    if let Some(file) = config_file("sftp_servers.txt") {
-        if let Some(parent) = file.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let body: String = list
-            .iter()
-            .map(|s| {
-                format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-                    s.name.replace('\t', " "),
-                    s.host.replace('\t', " "),
-                    s.user.replace('\t', " "),
-                    s.port,
-                    s.key.replace('\t', " "),
-                    s.use_password,
-                    s.auto_reopen
-                )
-            })
-            .collect();
-        let _ = fs::write(&file, body);
-    }
 }
 
 /// Load saved servers.
@@ -14652,27 +12966,9 @@ fn start_os_file_drag(view_ptr: *mut std::ffi::c_void, paths: &[PathBuf]) {
     let _ = view.beginDraggingSessionWithItems_event_source(&array, &event, source_proto);
 }
 
-thread_local! {
-    /// Persistent vertical scroll handles for Column view, keyed by (pane,
-    /// column index) so each column keeps its scroll position across frames and
-    /// we can read its offset to draw a scrollbar thumb.
-    static COL_SCROLLS: RefCell<HashMap<(usize, usize), UniformListScrollHandle>> =
-        RefCell::new(HashMap::new());
-}
-
-/// The persistent scroll handle for one Column-view column.
-fn col_scroll(pane: usize, col: usize) -> UniformListScrollHandle {
-    COL_SCROLLS.with(|m| {
-        m.borrow_mut()
-            .entry((pane, col))
-            .or_insert_with(UniformListScrollHandle::new)
-            .clone()
-    })
-}
-
 /// A minimal, non-interactive vertical scrollbar thumb for any tracked
 /// `ScrollHandle`. Returns `None` when the content fits (nothing to scroll).
-/// Used by the palette, Settings, and column view (the main list has its own
+/// Used by the palette and Settings (the main list has its own
 /// richer draggable/fading bar).
 fn static_scrollbar_thumb(base: &gpui::ScrollHandle) -> Option<AnyElement> {
     let viewport = f64::from(base.bounds().size.height) as f32;
@@ -14705,17 +13001,6 @@ fn tip(text: impl Into<String>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyVi
 
 /// A sidebar icon element by cache key, falling back to the generic folder icon
 /// so a row is never blank.
-fn sidebar_icon(key: &str, size: f32) -> AnyElement {
-    let handle = lookup_cached(key).or_else(|| lookup_cached(FOLDER_KEY));
-    if let Some(handle) = handle {
-        return img(ImageSource::Render(handle))
-            .w(px(size))
-            .h(px(size))
-            .into_any_element();
-    }
-    div().child("📁").into_any_element()
-}
-
 /// Ask NSWorkspace for `path`'s icon, decode it, and convert to a GPUI image.
 /// This is the expensive part (AppKit + TIFF decode + resize), so it runs only
 /// off the render path, in the background pre-warm task.
@@ -14766,10 +13051,14 @@ fn icon_tiff(path: &Path) -> Option<Vec<u8>> {
 /// Decode TIFF icon bytes and convert to a 128px GPUI image. Pure CPU (the
 /// expensive part — the large TIFF decode), safe to run off the main thread.
 fn decode_icon(tiff: &[u8]) -> Option<Arc<RenderImage>> {
-    let decoded = image::load_from_memory(tiff).ok()?;
-    // 128px stays crisp in the Icons/Gallery views; the GPU downscales cleanly
+    decode_image(tiff, 128)
+}
+
+fn decode_image(bytes: &[u8], edge: u32) -> Option<Arc<RenderImage>> {
+    let decoded = image::load_from_memory(bytes).ok()?;
+    // 128px stays crisp in the Icons view; the GPU downscales cleanly
     // to 16px in list view. One cached icon per file type.
-    let decoded = decoded.resize_exact(128, 128, image::imageops::FilterType::Lanczos3);
+    let decoded = decoded.resize_exact(edge, edge, image::imageops::FilterType::Lanczos3);
     let rgba = decoded.to_rgba8();
     let (w, h) = rgba.dimensions();
     let mut raw = rgba.into_raw();
@@ -14791,13 +13080,7 @@ fn build_macos_icon(path: &Path) -> Option<Arc<RenderImage>> {
 
 /// Format a modification time as a local date/time, or "--" if unknown.
 fn format_date(modified: Option<SystemTime>) -> String {
-    match modified {
-        Some(time) => {
-            let dt: DateTime<Local> = time.into();
-            dt.format("%b %e, %Y %l:%M %p").to_string()
-        }
-        None => "--".to_string(),
-    }
+    system_dates::format(modified)
 }
 
 /// Human-readable size; directories show "--".
@@ -14839,6 +13122,7 @@ fn read_entries(dir: &Path) -> Vec<Entry> {
                 size,
                 modified,
                 created,
+                mode: md.as_ref().map(|m| { use std::os::unix::fs::PermissionsExt; m.permissions().mode() }),
                 loaded: true,
                 hidden_flag: md.as_ref().is_some_and(|m| {
                     use std::os::macos::fs::MetadataExt;
@@ -14871,6 +13155,7 @@ fn read_entries_fast(dir: &Path) -> Vec<Entry> {
                 size: 0,
                 modified: None,
                 created: None,
+                mode: None,
                 loaded: false,
                 hidden_flag: false,
             });
@@ -14904,6 +13189,8 @@ fn sort_entries(entries: &mut [Entry], key: SortKey, asc: bool) {
         SortKey::Modified => entries.sort_by_key(|e| e.modified),
         SortKey::Created => entries.sort_by_key(|e| e.created),
         SortKey::Size => entries.sort_by_key(|e| e.size),
+        SortKey::Extension => entries.sort_by_cached_key(|e| Path::new(&e.name).extension().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default()),
+        SortKey::Permissions => entries.sort_by_key(|e| e.mode.map(|m| m & 0o7777)),
     }
     if !asc {
         entries.reverse();
@@ -15746,16 +14033,6 @@ fn save_groups(groups: &[Group]) {
     }
 }
 
-fn write_path_list(name: &str, paths: &[PathBuf]) {
-    if let Some(file) = config_file(name) {
-        if let Some(parent) = file.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let body: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-        let _ = fs::write(&file, body.join("\n"));
-    }
-}
-
 /// Persist the active theme (all eleven colors as hex, one per line).
 fn save_theme(t: &Theme) {
     if let Some(file) = config_file("theme.txt") {
@@ -15860,8 +14137,8 @@ fn save_prefs(p: &Prefs) {
             let _ = fs::create_dir_all(parent);
         }
         let mut body = format!(
-            "preview={}\npreview_pages={}\ninfo={}\nshow_parent={}\nsidebar_collapsed={}\nrecent_limit={}\npalette_history={}\ngroups_enabled={}\nshow_filter_button={}\nshow_fps={}\nscript_actions={}\nssh_use_system={}\nssh_configured={}\nwaterfall={}\npalette_opacity={}\n",
-            p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.recent_limit, p.palette_history, p.groups_enabled, p.show_filter_button, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured, p.waterfall, p.palette_opacity
+            "preview={}\npreview_pages={}\ninfo={}\nshow_parent={}\nsidebar_collapsed={}\npalette_history={}\ngroups_enabled={}\nshow_filter_button={}\nshow_fps={}\nscript_actions={}\nssh_use_system={}\nssh_configured={}\nwaterfall={}\npalette_opacity={}\n",
+            p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.palette_history, p.groups_enabled, p.show_filter_button, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured, p.waterfall, p.palette_opacity
         );
         body.push_str(&format!("preview_width={}\n",p.preview_width));
         let _ = fs::write(&file, body);
@@ -15990,11 +14267,7 @@ fn load_prefs() -> Prefs {
                     "info" => p.info = on,
                     "show_parent" => p.show_parent = on,
                     "sidebar_collapsed" => p.sidebar_collapsed = on,
-                    "recent_limit" => {
-                        if let Ok(n) = v.trim().parse::<usize>() {
-                            p.recent_limit = n.min(RECENTS_CAP);
-                        }
-                    }
+
                     "palette_history" => p.palette_history = on,
                     "groups_enabled" => p.groups_enabled = on,
                     "show_filter_button" => p.show_filter_button = on,
@@ -16018,6 +14291,13 @@ fn load_prefs() -> Prefs {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 3 && args[1] == "--video-preview-test" {
+        match video_preview::smoke_test(PathBuf::from(&args[2])) {
+            Ok(message) => println!("{message}; system date: {}", format_date(Some(SystemTime::now()))),
+            Err(message) => { eprintln!("{message}"); std::process::exit(1); }
+        }
+        return;
+    }
     // Hidden check: `shuffle --pdf-bench <file> [page]` renders one PDF page
     // through the inspector-pager pipeline and prints the result, then exits.
     if args.len() >= 3 && args[1] == "--pdf-bench" {
@@ -16349,6 +14629,8 @@ fn main() {
             Menu {
                 name: "Schnauz".into(),
                 items: vec![
+                    MenuItem::action("About Schnauz", OpenAbout),
+                    MenuItem::separator(),
                     MenuItem::action("Settings…", OpenSettings),
                     MenuItem::separator(),
                     MenuItem::action("Quit Schnauz", Quit),
@@ -16370,8 +14652,6 @@ fn main() {
                 items: vec![
                     MenuItem::action("as List", ViewList),
                     MenuItem::action("as Icons", ViewIcons),
-                    MenuItem::action("as Columns", ViewColumns),
-                    MenuItem::action("as Gallery", ViewGallery),
                     MenuItem::separator(),
                     MenuItem::action("Hide/Show Sidebar", ToggleSidebar),
                     MenuItem::action("Search…", FocusSearch),
@@ -16393,6 +14673,7 @@ fn main() {
         ]);
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
         cx.on_action(|_: &OpenSettings, cx: &mut App| open_settings_window(cx));
+        cx.on_action(|_: &OpenAbout, cx: &mut App| about::open_about(cx));
 
         open_main_window(cx);
         cx.activate(true);
@@ -16423,6 +14704,8 @@ fn open_main_window(cx: &mut App) {
                 // Reopen last run's tabs + split (else the last folder), then
                 // fill each pane's metadata in the background.
                 finder.restore_session();
+                finder.activate_project_sidebar(cx);
+                finder.apply_all_folder_views();
                 for pane in 0..finder.panes.len() {
                     finder.reload_pane(pane, cx);
                 }
@@ -16498,10 +14781,9 @@ mod tests {
 
         tab.selection.insert(dir.join("report.txt"));
         tab.anchor = Some(dir.join("report.txt"));
-        tab.col_chain.push(dir.join("Reports"));
         tab.set_entry_filter(EntryFilter::Folders);
         assert_eq!(names(&tab), ["Assets", "Report link", "Reports"]);
-        assert!(tab.selection.is_empty() && tab.anchor.is_none() && tab.col_chain.is_empty());
+        assert!(tab.selection.is_empty() && tab.anchor.is_none());
 
         tab.find_query = Some("report".into());
         tab.recompute_results();
@@ -16570,34 +14852,35 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn visibility_changes_keep_selected_files_that_remain_visible() {
+        let dir = scratch("selection-visibility");
+        fs::write(dir.join("keep.txt"), "visible").unwrap();
+        fs::write(dir.join(".hidden.txt"), "hidden").unwrap();
+        let mut tab = Tab::new(dir.clone());
+        tab.show_hidden = true;
+        tab.recompute_results();
+        tab.selection.extend([dir.join("keep.txt"), dir.join(".hidden.txt")]);
+        tab.anchor = Some(dir.join(".hidden.txt"));
+        tab.show_hidden = false;
+        tab.recompute_results();
+        tab.retain_visible_selection();
+        assert_eq!(tab.selection, HashSet::from([dir.join("keep.txt")]));
+        assert_eq!(tab.anchor, Some(dir.join("keep.txt")));
+        tab.view = ViewMode::Icons;
+        tab.recompute_results();
+        tab.retain_visible_selection();
+        assert_eq!(tab.selection, HashSet::from([dir.join("keep.txt")]));
+        assert_eq!(view_mode_from_key("columns"), Some(ViewMode::List));
+        assert_eq!(view_mode_from_key("gallery"), Some(ViewMode::List));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     pub(super) fn scratch(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("shuffle-test-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
-    }
-
-    #[test]
-    fn fit_fills_wide_panes_with_name() {
-        let w = ColumnWidths::default().fit(1200.0);
-        assert_eq!((w.kind, w.date, w.size), (165.0, 185.0, 90.0));
-        assert_eq!(w.name, 1200.0 - 440.0);
-    }
-
-    #[test]
-    fn fit_shrinks_then_scrolls_never_hides() {
-        // Squeezed but everything still fits above minimums.
-        let w = ColumnWidths::default().fit(560.0);
-        assert!(w.kind > 0.0 && w.date > 0.0 && w.size > 0.0);
-        assert!((w.name + w.kind + w.date + w.size - 560.0).abs() < 0.01);
-        assert!(w.name >= 180.0 - 0.01);
-        // Narrower than the minimums: every column stays, at its minimum,
-        // and the total overflows the pane (horizontal scroll).
-        let w = ColumnWidths::default().fit(260.0);
-        assert_eq!((w.name, w.kind, w.date, w.size), (180.0, 70.0, 110.0, 60.0));
-        assert!(w.name + w.kind + w.date + w.size > 260.0);
-        // Unmeasured pane: preferences untouched.
-        assert_eq!(ColumnWidths::default().fit(0.0).name, 320.0);
     }
 
     #[test]
@@ -16687,10 +14970,10 @@ mod tests {
 
     #[test]
     fn session_keys_roundtrip() {
-        for v in [ViewMode::List, ViewMode::Icons, ViewMode::Columns, ViewMode::Gallery] {
+        for v in [ViewMode::List, ViewMode::Icons] {
             assert!(view_mode_from_key(view_mode_key(v)) == Some(v));
         }
-        for k in [SortKey::None, SortKey::Name, SortKey::Kind, SortKey::Modified, SortKey::Created, SortKey::Size] {
+        for k in [SortKey::None, SortKey::Name, SortKey::Kind, SortKey::Modified, SortKey::Created, SortKey::Size, SortKey::Extension, SortKey::Permissions] {
             assert!(sort_key_from_name(sort_key_name(k)) == Some(k));
         }
     }

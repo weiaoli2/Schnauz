@@ -1,7 +1,8 @@
 Schnauz
 
+Developer: Oliver Weber
 Design and product direction: Oliver Weber
-Implementation of Schnauz adaptations: Codex
+Implementation assistance for Schnauz adaptations: Codex
 
 Original codebase: Shuffle
 Original author: Jaime Guzman (WizenPainter)

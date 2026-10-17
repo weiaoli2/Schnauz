@@ -139,13 +139,16 @@ impl Shuffle {
         })
         .detach();
     }
-    fn close_space_map(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_space_map(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(state) = self.space_map.take() {
             if let Some((old, expanded)) = state.expanded_from {
                 if (f32::from(window.viewport_size().width) - expanded).abs() < 8. {
                     window.resize(size(px(old), window.viewport_size().height));
                 }
             }
+        }
+        if self.active_tab().selection.len() == 1 {
+            if let Some(path) = self.active_tab().selection.iter().next().cloned() { self.focus_entry(self.active_pane, path, cx); }
         }
         cx.notify();
     }
@@ -209,7 +212,7 @@ impl Shuffle {
             .unwrap_or(&state.root);
         let root_label = path_label(current);
         let mut panel = div()
-            .w(px(420.))
+            .w(px((pane_width(self.panes.len()-1) - 220.).clamp(0., 420.)))
             .flex_none()
             .min_h_0()
             .flex()
@@ -217,6 +220,8 @@ impl Shuffle {
             .border_l_1()
             .border_color(rgb(t.border))
             .bg(rgb(t.surface))
+            .overflow_hidden()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
                     .px_3()
@@ -228,7 +233,7 @@ impl Shuffle {
                         div()
                             .flex_1()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Inspect"),
+                            .child("Speicherbelegung"),
                     )
                     .child(
                         map_button("inspect-refresh", "Refresh").on_click(cx.listener(

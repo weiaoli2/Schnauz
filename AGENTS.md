@@ -8,10 +8,13 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - `src/theme.rs`: themes; `src/studio.rs`: custom chrome and project UI;
   `src/projects.rs`: typed persistence; `src/main.rs`: existing file manager.
 - Retain the original MIT LICENSE and attribution.
-- Schnauz credits: design and product direction by Oliver Weber, implementation
-  of Schnauz adaptations by Codex; original Shuffle code by Jaime Guzman.
+- Schnauz credits: developer, design and product direction Oliver Weber;
+  implementation assistance Codex; original Shuffle code Jaime Guzman.
   Keep `CREDITS.txt`, the source header and README consistent, and ship the
   credits alongside the unchanged upstream and third-party license notices.
+- About Schnauz (app menu) credits Oliver and offers optional “Coffee for Cookie”
+  support for his schnauzer: US$2.50 via PayPal to o@freedom-net.de. Open PayPal
+  only on the user's click; keep the original Shuffle and third-party credits.
 - App identity: Schnauz, `local.schnauz.app`. Never enable the
   original Shuffle self-updater or publish to its GitHub repository.
 - A possible €5 paid edition was discussed; the MIT base does not require opening
@@ -42,6 +45,19 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Main text is 12 logical px/pt, small labels 11, file rows 26 px. Keep it compact.
 - Tabs have visible outlines and rounded top corners. Folder names use the same
   primary text color as files; their icons distinguish them.
+- Only List and Icons are supported. Migrate legacy Gallery/Columns tabs to List.
+  Lists have configurable, reorderable, independently resizable columns and a
+  horizontal scrollbar when needed. Keep header, row and folder-drop coordinates
+  aligned even when Name is moved. Use native vector toolbar icons, not emoji.
+- Folder views (mode, columns, order, widths, preview width and sorting) autosave centrally in
+  `folder-views.json`. Load once, resolve ancestor rules in memory, and write
+  atomically in the background after changes, never per resize frame. Applying a
+  view to a folder tree replaces child overrides without scanning subfolders or
+  creating files in them; subsequent individual-folder overrides remain possible.
+- Hidden toggles and view changes preserve selected files that remain visible,
+  including refreshed search results. Keep selection visible when changing views.
+- Context, sort and sidebar menus use AppKit so they can extend beyond the app
+  window and scroll at display edges. Never hold a GPUI borrow during menu tracking.
 - All/Folders/Files visibility is independent for each tab and persists in sessions
   and projects. Keep every view, selection and keyboard navigation consistent
   with the visible results; tint the top bar while a type filter is active.
@@ -61,15 +77,22 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   with the shell owning the PTY and no child jobs. Keep the panel open and file
   browser focused. Never restart automatically after a foreground app exits.
 
-- Projects replace the old workspace UI. Each owns its favorites and autosaved
-  local layout; Personal has separate favorites/layout. Migrate legacy workspaces
+- Projects replace the old workspace UI. Each owns its favorites, tagged items,
+  Locations, Cloud, saved servers/network folders and autosaved local layout.
+  New project sidebars start empty; Personal has its own profile. Recents and
+  automatic cloud/volume discovery are removed. The Tag icon adds/removes local
+  selection from Tagged Items; clicking a tagged file reveals it. Sidebar folders
+  offer View in… with All projects first, then checkable individual projects;
+  update destinations without switching. All affects existing projects only.
+  Central projects.json stores profiles; migrate legacy servers once to Personal,
+  preserve original legacy files and shared Keychain credentials. Migrate legacy workspaces
   and bookmarks without modifying their original files. Keep live PTYs when switching.
 - Hidden items (dot names and macOS UF_HIDDEN) are hidden by default; the per-tab eye
   toggle applies in every view and combines with type/text filters.
 - Hide the inspector without an actual previewable single selection. Show text as
   readable native text in a scrollable panel, with bounded reads for large files.
 - The preview's left edge resizes both text and visual previews. Remember width
-  after the drag, retain room for browsing, and double-click to reset to 420 pt.
+  after the drag as part of the folder view, retain room for browsing, and double-click to reset to 420 pt.
   Start the preview below the tab, path/icon and type-filter rows so those headers
   retain their full width. Measure file viewports separately from header widths.
 - New Text File asks for a name before creating anything, appends .txt, and uses
@@ -90,3 +113,14 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   sidebar menus. Keep automatic browsing calculations off. Preserve the right-hand
   map while navigating from its file tiles or folder headings; never open a file
   merely by clicking its tile. Cancel replaced/closed scans and flag partial maps.
+  It is labeled “Speicherbelegung…” and also has a button in the filter row.
+  Like the preview, its panel starts below the path and filter bars. Selecting
+  outside it closes the map; navigation from within its graphic keeps it open.
+
+- Use Apple's actual square.and.arrow.up SF Symbol for Share. Cache rasterized
+  symbols per color and preserve their aspect ratio.
+- Photos and videos fill the preview width. Native AVKit clips start paused and
+  muted, offer playback/seek/unmute, and stop when their preview closes. Clip native
+  views below GPUI headers and inside the scroll viewport; hide during app modals.
+- Dates use NSDateFormatter and current macOS locale, time zone and hour cycle.
+  Never hard-code English or AM/PM; reuse a cached formatter rather than per-row I/O.

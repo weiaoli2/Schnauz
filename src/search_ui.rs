@@ -16,6 +16,7 @@ pub(super) struct State {
     pub progress: file_search::Progress,
     pub error: Option<String>,
     cancel: Arc<AtomicBool>,
+    restore_selection: Option<(HashSet<PathBuf>, Option<PathBuf>)>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -33,6 +34,7 @@ impl Default for State {
             progress: Default::default(),
             error: None,
             cancel: Arc::new(AtomicBool::new(false)),
+            restore_selection: None,
         }
     }
 }
@@ -95,7 +97,35 @@ impl Shuffle {
         }
     }
 
+    pub(super) fn refresh_file_search_preserving_selection(&mut self, cx: &mut Context<Self>) {
+        let kept = (self.active_tab().selection.clone(), self.active_tab().anchor.clone());
+        self.refresh_file_search(cx);
+        self.file_search.restore_selection = Some(kept);
+    }
+    fn restore_search_selection(&mut self, done: bool, cx: &mut Context<Self>) {
+        let Some((wanted, anchor)) = &self.file_search.restore_selection else { return };
+        let kept: HashSet<PathBuf> = self.palette_items.iter().filter_map(|item| {
+            let Action::Open(path, _) = &item.action;
+            wanted.contains(path).then(|| path.clone())
+        }).collect();
+        let anchor = anchor.as_ref().filter(|p| kept.contains(*p)).cloned().or_else(|| kept.iter().next().cloned());
+        let pane = self.file_search.pane;
+        let changed = self.tab(pane).anchor != anchor;
+        self.tab_mut(pane).selection = kept;
+        self.tab_mut(pane).anchor = anchor.clone();
+        if changed {
+            if let Some(path) = anchor {
+                if let Some(row) = self.palette_items.iter().position(|i| matches!(&i.action, Action::Open(p, _) if p == &path)) {
+                    self.selected = row;
+                    self.file_search.scroll.scroll_to_item(row, ScrollStrategy::Center);
+                }
+                self.focus_entry(pane, path, cx);
+            }
+        }
+        if done { self.file_search.restore_selection = None; }
+    }
     pub(super) fn refresh_file_search(&mut self, cx: &mut Context<Self>) {
+        self.file_search.restore_selection = None;
         self.file_search.cancel();
         self.file_search.inline = true;
         self.file_search.pane = self.active_pane;
@@ -201,6 +231,7 @@ impl Shuffle {
                                     is_dir: hit.is_dir,
                                 }));
                         }
+                        this.restore_search_selection(done, cx);
                         this.file_search.busy = !done;
                         if disconnected && !complete {
                             this.file_search.error =
@@ -325,7 +356,7 @@ impl Shuffle {
                     .bg(rgb(t.bg))
                     .cursor(CursorStyle::IBeam)
                     .text_size(px(UI_SMALL_FONT_SIZE))
-                    .child(div().text_color(rgb(t.text_dim)).child("⌕"))
+                    .child(ui_icon(Icon::Search, 16., rgb(t.text_muted)))
                     .child(input)
                     .child(
                         div()
@@ -343,6 +374,7 @@ impl Shuffle {
     }
 
     pub(super) fn select_search_result(&mut self, row: usize, cx: &mut Context<Self>) {
+        self.file_search.restore_selection = None;
         let Some(item) = self.palette_items.get(row) else {
             return;
         };
@@ -408,9 +440,9 @@ impl Shuffle {
             y,
             target: Some((path, is_dir)),
             nodes,
-            open_sub: None,
-            sel_root: None,
-            sel_sub: None,
+
+
+
         });
         cx.notify();
     }
@@ -549,7 +581,7 @@ impl Shuffle {
                             .on_click(cx.listener(move|this,ev:&ClickEvent,window,cx| {
                                 window.focus(&this.focus);
                                 let item = this.palette_items.get(i).map(|item| match &item.action {Action::Open(path,_)=>path.clone()});
-                                this.selected = i; this.file_search.editing = false;
+                                this.selected = i; this.file_search.editing = false; this.file_search.restore_selection = None;
                                 if ev.click_count() >= 2 { this.open_search_result(cx); }
                                 else if let Some(path) = item {
                                     if ev.modifiers().platform { this.toggle_entry(pane,path,cx); }

@@ -7,8 +7,6 @@ enum ColorTarget {
     Bg,
     Text,
     Hover,
-    MenuBg,
-    MenuText,
 }
 
 /// The Settings window: a tabbed customization surface.
@@ -40,7 +38,7 @@ pub(super) fn tab_sections(tab: usize) -> &'static [&'static str] {
             "Software Update",
             "Developer",
         ],
-        2 => &["Theme", "Colors", "Menu", "App Icon", "Icon Pack"],
+        2 => &["Theme", "Colors", "App Icon", "Icon Pack"],
         _ => &[],
     }
 }
@@ -128,18 +126,7 @@ impl Settings {
                                 nt.hover = c;
                                 apply_theme(nt, cx);
                             }
-                            ColorTarget::MenuBg => {
-                                let mut nm = menu_style();
-                                nm.bg = c;
-                                nm.custom = true;
-                                apply_menu_style(nm, cx);
-                            }
-                            ColorTarget::MenuText => {
-                                let mut nm = menu_style();
-                                nm.text = c;
-                                nm.custom = true;
-                                apply_menu_style(nm, cx);
-                            }
+
                         }
                     }
                 }
@@ -426,7 +413,7 @@ impl Settings {
                     .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(t.text_dim))
                     .child(
-                        "No saved servers yet. Add one from the sidebar: Connect to \
+                        "No saved servers in this project. Add one from the sidebar: Connect to \
                          Server\u{2026} then enter sftp://user@host (or an ~/.ssh alias).",
                     )
                     .into_any_element(),
@@ -471,9 +458,6 @@ impl Settings {
                                 .border_color(rgb(t.border))
                                 .child("Remove")
                                 .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                                    if srv.use_password {
-                                        keychain_delete_password(&srv);
-                                    }
                                     let list: Vec<SftpServer> = sftp_servers()
                                         .into_iter()
                                         .filter(|x| x.display() != srv.display())
@@ -619,34 +603,12 @@ impl Settings {
                         }),
                     )
                     .into_any_element(),
-                    stepper_row(
-                        "st-recents",
-                        "Recent folders",
-                        "How many recently-visited folders to show in the sidebar (0 hides the Recents section).",
-                        if p.recent_limit == 0 {
-                            "Off".to_string()
-                        } else {
-                            p.recent_limit.to_string()
-                        },
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.recent_limit = np.recent_limit.saturating_sub(1);
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.recent_limit = (np.recent_limit + 1).min(RECENTS_CAP);
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
+
                 ],
             ),
             settings_section(
                 "Connections",
-                Some("SFTP servers — browse remote hosts over SSH from the sidebar."),
+                Some("Saved SFTP servers belong to the current project."),
                 connection_rows,
             ),
             settings_section(
@@ -988,20 +950,6 @@ impl Settings {
                 .into_any_element()
         };
 
-        // Menu preview + caption.
-        let menu_preview_row = div()
-            .flex()
-            .items_center()
-            .gap_4()
-            .child(self.menu_preview())
-            .child(
-                div()
-                    .text_size(px(UI_SMALL_FONT_SIZE))
-                    .text_color(rgb(t.text_muted))
-                    .child("Live preview of the right-click menu."),
-            )
-            .into_any_element();
-
         // App-icon preview + upload/reset controls.
         let app_icon_row = div()
             .flex()
@@ -1190,71 +1138,6 @@ impl Settings {
                 ],
             ),
             settings_section(
-                "Menu",
-                Some("The right-click / dropdown menu appearance."),
-                vec![
-                    menu_preview_row,
-                    color_block(
-                        "Menu color",
-                        "The menu background.",
-                        ColorTarget::MenuBg,
-                        menu_style().bg,
-                        self.menu_color_row("menubg", menu_style().bg, |m, c| m.bg = c, cx)
-                            .into_any_element(),
-                        self.hex_field(ColorTarget::MenuBg, menu_style().bg, cx)
-                            .into_any_element(),
-                    ),
-                    color_block(
-                        "Letter color",
-                        "The menu text.",
-                        ColorTarget::MenuText,
-                        menu_style().text,
-                        self.menu_color_row("menutext", menu_style().text, |m, c| m.text = c, cx)
-                            .into_any_element(),
-                        self.hex_field(ColorTarget::MenuText, menu_style().text, cx)
-                            .into_any_element(),
-                    ),
-                    stepper_row(
-                        "st-menu-opacity",
-                        "Opacity",
-                        "Menu background opacity (lower is more see-through).",
-                        format!("{}%", menu_style().opacity),
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut m = menu_style();
-                            m.opacity = m.opacity.saturating_sub(10);
-                            apply_menu_style(m, cx);
-                            cx.notify();
-                        }),
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut m = menu_style();
-                            m.opacity = (m.opacity + 10).min(100);
-                            apply_menu_style(m, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                    stepper_row(
-                        "st-menu-size",
-                        "Text size",
-                        "Menu font size in pixels.",
-                        format!("{}px", menu_style().font_px as i32),
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut m = menu_style();
-                            m.font_px = (m.font_px - 1.0).max(9.0);
-                            apply_menu_style(m, cx);
-                            cx.notify();
-                        }),
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut m = menu_style();
-                            m.font_px = (m.font_px + 1.0).min(24.0);
-                            apply_menu_style(m, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                ],
-            ),
-            settings_section(
                 "App Icon",
                 Some("The Dock and Finder icon."),
                 vec![app_icon_row, self.icon_color_row(cx).into_any_element()],
@@ -1321,74 +1204,9 @@ impl Settings {
         div().flex().flex_wrap().gap_1().children(swatches)
     }
 
-    /// Like [`color_row`] but sets a field on the menu style.
-    fn menu_color_row(
-        &self,
-        tag: &'static str,
-        current: u32,
-        set: fn(&mut MenuStyle, u32),
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let t = theme();
-        let mut swatches: Vec<AnyElement> = Vec::new();
-        for c in palette_colors() {
-            let selected = c == current;
-            swatches.push(
-                div()
-                    .id((tag, c as usize))
-                    .w(px(22.0))
-                    .h(px(22.0))
-                    .rounded_md()
-                    .cursor_pointer()
-                    .bg(rgb(c))
-                    .border_2()
-                    .border_color(if selected {
-                        rgb(t.accent)
-                    } else {
-                        rgb(t.border)
-                    })
-                    .hover(|s| s.border_color(rgb(t.accent)))
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                        let mut nm = menu_style();
-                        set(&mut nm, c);
-                        nm.custom = true;
-                        apply_menu_style(nm, cx);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-        }
-        div().flex().flex_wrap().gap_1().children(swatches)
-    }
 
-    /// A live sample pop-up menu showing the current menu style.
-    fn menu_preview(&self) -> impl IntoElement {
-        let m = menu_style();
-        let t = theme();
-        let row = |label: &str| {
-            div()
-                .mx_1()
-                .px_3()
-                .py_1()
-                .rounded_md()
-                .child(label.to_string())
-        };
-        div()
-            .min_w(px(200.0))
-            .py_1()
-            .bg(m.bg_rgba())
-            .text_color(rgb(m.text))
-            .text_size(px(m.font_px))
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(t.border_strong))
-            .shadow_lg()
-            .child(row("Open"))
-            .child(row("Rename"))
-            .child(row("Add to Bookmarks"))
-            .child(div().my_1().mx_2().h(px(1.0)).bg(rgb(t.border_strong)))
-            .child(row("Move to Trash"))
-    }
+
+
 
     /// A live preview of the app icon (the recolored base — matches the Dock).
     fn app_icon_preview(&self) -> impl IntoElement {
@@ -1700,72 +1518,7 @@ pub(super) fn toggle_row(
         .child(switch)
 }
 
-/// A settings row with a −/+ stepper and a value label (used for numeric prefs).
-pub(super) fn stepper_row(
-    id: &'static str,
-    title: &str,
-    desc: &str,
-    value_label: String,
-    on_dec: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    on_inc: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let t = theme();
-    let button = |bid: SharedString, glyph: &str| {
-        div()
-            .id(bid)
-            .flex_none()
-            .w(px(24.0))
-            .h(px(24.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .cursor_pointer()
-            .bg(rgb(t.surface))
-            .text_color(rgb(t.text))
-            .hover(|s| s.bg(rgb(t.hover)))
-            .child(glyph.to_string())
-    };
 
-    div()
-        .w_full()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_4()
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_color(rgb(t.text)).child(title.to_string()))
-                .child(
-                    div()
-                        .text_size(px(UI_SMALL_FONT_SIZE))
-                        .text_color(rgb(t.text_muted))
-                        .child(desc.to_string()),
-                ),
-        )
-        .child(
-            div()
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(button(SharedString::from(format!("{id}-dec")), "−").on_click(on_dec))
-                .child(
-                    div()
-                        .w(px(40.0))
-                        .flex()
-                        .justify_center()
-                        .text_color(rgb(t.text))
-                        .child(value_label),
-                )
-                .child(button(SharedString::from(format!("{id}-inc")), "+").on_click(on_inc)),
-        )
-}
 
 /// Open the Settings window (shared by the menu action and the palette).
 pub(super) fn open_settings_window(cx: &mut App) {

@@ -3,9 +3,18 @@
 A personal Mac file manager based on [Shuffle](https://github.com/WizenPainter/shuffle).
 This is an independent local version, with its own application identity and settings.
 
-Design and product direction: **Oliver Weber**. Implementation of the Schnauz
-adaptations: **Codex**. Original codebase: **Shuffle by Jaime Guzman (MIT)**.
+Developer, design and product direction: **Oliver Weber**. Implementation
+assistance: **Codex**. Original codebase: **Shuffle by Jaime Guzman (MIT)**.
 See [CREDITS.txt](CREDITS.txt) for the full attribution.
+
+## About and Cookie
+
+**Schnauz → About Schnauz** shows the developer credit, original code attribution,
+credits and bundled licenses. Optional **Coffee for Cookie · US$2.50** support opens
+PayPal for **o@freedom-net.de**; the address can also be copied. This is voluntary
+support for Oliver and his schnauzer Cookie. The button uses PayPal's documented
+[Payments Standard variables](https://developer.paypal.com/api/nvp-soap/paypal-payments-standard/integration-guide/Appx-websitestandard-htmlvariables/)
+with a suggested USD 2.50 amount; the user completes any payment on PayPal.
 
 ## First version
 
@@ -17,6 +26,16 @@ See [CREDITS.txt](CREDITS.txt) for the full attribution.
 - **All · Folders · Files** controls for every tab. Active filters tint the top bar,
   show the visible item count, and are remembered in sessions and projects.
 - Search, split/join panes, preview and project controls in the toolbar.
+- **List** and **Icons** with matching vector toolbar controls. Right-click a list
+  header or use **View options → List columns** to choose columns. Drag headers to
+  reorder and their edges to resize. Wide lists scroll horizontally.
+- View, columns, order, widths, preview width and sorting are remembered for each local folder.
+  **Apply view to all subfolders** sets one inherited rule; later folder-specific
+  changes override it. The folder context menu applies the current view to that
+  folder and its descendants. One central `folder-views.json` is loaded once, with
+  in-memory ancestor lookups and background atomic writes. No directory scan or
+  per-folder settings files. **Use inherited / default view** removes that folder's
+  rule. Applying a tree rule replaces existing child overrides.
 - Projects with separate favorites, tabs, view modes, sorting and split layouts. Changes are remembered automatically.
 - A preview panel and footer with item counts, current path and appearance control.
 - The clickable path ends at the current folder. Long paths clip from the left,
@@ -49,7 +68,8 @@ Click the running Schnauz to stop and keep results. The status bar then shows
 Escape or **Done ×** closes search and
 restores Current Folder + File. No home-folder index is built at launch.
 
-Right-click a folder, empty folder area or sidebar folder and choose **Inspect…**
+Click **Speicherbelegung** in the filter row, or right-click a folder, empty folder
+area or sidebar folder and choose **Speicherbelegung…**
 for an on-demand size map on the right. The window widens when the display has room.
 Rectangle area represents file sizes, with colors grouped by file type. Click a
 folder heading to open it on the left and zoom; click a file tile to reveal and
@@ -57,13 +77,27 @@ select it on the left. Use ↑ to zoom out or Refresh to scan again. The map inc
 hidden items and uses metadata without reading file contents. Directory symlinks
 and other volumes are not traversed. Permission failures or the 500,000-item memory
 limit show an explicit partial-map notice. Closing the panel cancels the scan.
+The map starts below the path and filter bars. Selecting outside it closes it;
+navigation from inside its graphic keeps it open.
 
 Click **New project** or press **⌘⇧S** to create a project from the current tabs.
-Click a project in the sidebar to switch to its own favorites and last layout.
+Click a project in the sidebar to switch to its own favorites, tagged items, locations, cloud folders, servers and last layout.
 Use **+** beside **Project favorites** to pin the current folder; right-click a
 favorite to remove it. **Personal** keeps a separate set of general browsing tabs
-and favorites. Standard **Locations** remain shared. Existing saved workspaces
-are imported automatically; their original settings file is preserved.
+and favorites. New projects start with empty **Locations**, **Cloud**, **Servers**
+and **Tagged Items**. Add folders with **+**; servers can also include explicit
+network-folder shortcuts. **Recents** has been removed, including history tracking.
+The little **Tag** toolbar button adds/removes selected local files and folders
+from the current project's **Tagged Items**. Click a tagged file to reveal it in
+its folder. Right-click a sidebar folder and choose **View in… → All projects** or
+an individual project; checkmarks indicate membership, and clicking again removes
+it there. This changes shortcuts only; source files stay in place. All projects
+means the projects that currently exist (including Personal); future projects
+still start empty. Tags are project membership, stored centrally rather than in
+Finder tags or file metadata. Existing saved workspaces are imported automatically;
+their original settings file is preserved. Legacy saved servers migrate once to
+**Personal**; passwords remain in the macOS Keychain. Removing a project connection
+keeps shared host credentials available for other projects.
 
 Project changes save automatically. Live terminal sessions survive project
 switches while the app stays open; terminals start fresh after quitting the app.
@@ -71,13 +105,23 @@ Projects persist local tabs; remote tabs remain available during the running
 session. Unavailable local folders are skipped when restoring.
 
 The preview pane appears only for a single selected file with an available
-preview. Drag its left edge to change its width; the setting is remembered.
-Double-click the edge to reset to 420 pt. Text files use readable 14 pt text.
+preview. It starts below the full-width path and filter bars. Drag its left edge
+to change its width; the setting is part of that folder's saved view and inherited
+folder-tree rules. Double-click the edge to reset to 420 pt. Photos and videos scale
+to the full preview width, including smaller originals; tall media scrolls.
+Local clips use native AVKit playback with seeking, Play/Pause and Unmute/Mute.
+Each new clip starts paused and muted, and leaving its preview stops playback.
+Supported codecs follow macOS; unsupported videos show an explanation.
+Text files use readable 14 pt text.
 Large text previews are bounded, and show a notice when shortened.
 
-Lists, search results and columns render visible rows and request their icons
-as needed. Column listings share entries and cache visibility masks. Icon,
-preview and listing caches have limits; obsolete local preview jobs are debounced
+File timestamps follow the macOS locale, time zone and 12/24-hour setting using
+the native date formatter. The Share control uses Apple's `square.and.arrow.up`
+SF Symbol. The About panel includes a painted portrait of the real Cookie.
+
+
+Lists and search results render visible rows and request their icons
+as needed. Icon and preview caches have limits; obsolete local preview jobs are debounced
 and cancelled. Visible local folders use macOS change notifications, with an
 adaptive fallback when notifications are unavailable. Ordinary file selections
 do not launch code-signature checks. The old home index and its direct scanning
@@ -87,6 +131,8 @@ Right-click the file area and choose **New Text File…**. Enter a name; `.txt` 
 added automatically. Cancel creates nothing, and existing files are never replaced.
 The eye beside the trash icon toggles hidden files and folders for that tab;
 hidden items are hidden by default. The setting is included in project layouts.
+Visibility/view changes retain selections that remain visible. Native macOS context,
+sort and sidebar menus can extend beyond the app window.
 **Copy** or **⌘C** shows the copied item’s name at the bottom of its pane.
 
 The terminal supports interactive tools, ANSI colors, scrollback, text selection,
@@ -143,8 +189,12 @@ disposable test folders.
 - `src/preview_panel.rs`: preview divider dragging, limits and remembered width
 - `src/cache.rs`: weighted LRU storage for icons, previews and shared listings
 - `src/folder_watch.rs`: macOS filesystem notifications and adaptive fallback
-- `src/columns.rs`: shared column entries and cached visibility masks
+- `src/folder_views.rs`: central folder rules, inheritance and column layouts
+- `src/list_ui.rs`: configurable list headers and folder view controls
+- `src/toolbar_icons.rs`: native vector icons
+- `src/native_menus.rs`: screen-level AppKit menus
 - `src/settings.rs`: settings window and controls
+- `src/about.rs`: developer credits, licenses and optional Cookie support
 - `src/mascot.rs`: native sitting/running Schnauz animation and stop control
 - `src/file_search.rs`, `src/search_ui.rs`: scoped name/content search and its toolbar
 - `src/space_map.rs`, `src/space_ui.rs`: explicit folder scans and interactive size map

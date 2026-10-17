@@ -29,39 +29,8 @@ impl Shuffle {
             } else {
                 "Show hidden files and folders"
             }))
-            .child(
-                gpui::canvas(
-                    |bounds, _, _| bounds,
-                    move |_, bounds, window, _| {
-                        let p = |x, y| bounds.origin + point(px(x), px(y));
-                        let mut eye = gpui::PathBuilder::stroke(px(1.25));
-                        eye.move_to(p(1.0, 8.0));
-                        eye.cubic_bezier_to(p(15.0, 8.0), p(5.0, 1.0), p(11.0, 1.0));
-                        eye.cubic_bezier_to(p(1.0, 8.0), p(11.0, 15.0), p(5.0, 15.0));
-                        eye.move_to(p(10.0, 8.0));
-                        eye.arc_to(point(px(2.0), px(2.0)), px(0.0), true, true, p(6.0, 8.0));
-                        eye.arc_to(point(px(2.0), px(2.0)), px(0.0), true, true, p(10.0, 8.0));
-                        if !shown {
-                            eye.move_to(p(2.0, 2.0));
-                            eye.line_to(p(14.0, 14.0));
-                        }
-                        if let Ok(path) = eye.build() {
-                            window.paint_path(path, rgb(if shown { t.accent } else { t.text_dim }));
-                        }
-                    },
-                )
-                .size(px(16.0)),
-            )
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                let tab = this.tab_mut(pane);
-                tab.show_hidden = !tab.show_hidden;
-                let filter = tab.entry_filter;
-                tab.set_entry_filter(filter);
-                if this.search_in_pane(pane) { this.refresh_file_search(cx); }
-                this.save_session();
-                this.prewarm_icons(cx);
-                cx.notify();
-            }))
+            .child(ui_icon(if shown { Icon::Eye } else { Icon::EyeOff }, 17., rgb(if shown { t.accent } else { t.text_muted })))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_hidden_preserving_selection(pane, cx)))
             .into_any_element()
     }
 
@@ -193,15 +162,6 @@ impl Shuffle {
         }
         if let Some(file) = selected_file {
             self.reveal_in_pane(pane, file.clone(), cx);
-            if self.tab(pane).view == ViewMode::Columns {
-                if let Some(index) = self
-                    .display_paths(pane)
-                    .iter()
-                    .position(|path| path == &file)
-                {
-                    col_scroll(pane, 0).scroll_to_item(index, ScrollStrategy::Center);
-                }
-            }
         } else {
             self.tab(pane)
                 .scroll_handle
@@ -294,6 +254,15 @@ impl Shuffle {
                     .children(buttons),
             )
             .child(div().flex_1())
+            .when(tab.remote.is_none(), |d| d.child(
+                div().id(("inspect-storage", pane)).h(px(26.)).px_2().flex().items_center().gap_2().rounded_md().cursor_pointer()
+                    .hover(|s| s.bg(rgb(t.hover))).tooltip(tip("Speicherbelegung… · GrandPerspective view"))
+                    .child(ui_icon(Icon::Storage, 16., rgb(t.text_muted)))
+                    .when(pane_width(pane) > 700., |d| d.child("Speicherbelegung"))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.inspect_folder(pane, this.tab(pane).current_dir.clone(), window, cx);
+                    }))
+            ))
             .child(div().truncate().child(if self.search_in_pane(pane) {
                 format!("{count} result{}",if count == 1 {""} else {"s"})
             } else if tab.is_filtered() {
@@ -383,6 +352,7 @@ impl Shuffle {
         self.hbar_drag = None;
         self.preview_page = 0;
         self.cloud_sync_gen += 1;
+        self.apply_all_folder_views();
         true
     }
 
@@ -464,6 +434,9 @@ impl Shuffle {
         self.space_map = None;
         // Persist the outgoing layout and destination together before switching.
         self.persist_library(library)?;
+        self.activate_project_sidebar(cx);
+        self.server_dialog = None;
+        self.ssh_ask = false;
         let current = ProjectSession {
             panes: std::mem::take(&mut self.panes),
             active_pane: self.active_pane,
@@ -731,7 +704,7 @@ impl Shuffle {
                     .border_color(rgb(t.border))
                     .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(t.text_muted))
-                    .child("Create a project for its own favorites and tabs.")
+                    .child("Create a project for its own folders, tags, servers and tabs.")
                     .into_any_element(),
             );
         }
@@ -1009,6 +982,7 @@ impl Shuffle {
                     .id("studio-settings")
                     .cursor_pointer()
                     .hover(|s| s.text_color(rgb(t.accent)))
+                    .child(ui_icon(Icon::Settings, 14., rgb(t.text_muted)))
                     .child("Settings  ⌘,")
                     .on_click(|_: &ClickEvent, _, cx: &mut App| open_settings_window(cx)),
             )
@@ -1037,6 +1011,7 @@ pub(super) fn studio_button(
         .rounded_lg()
         .flex()
         .items_center()
+        .gap_2()
         .justify_center()
         .text_size(px(UI_SMALL_FONT_SIZE))
         .font_weight(FontWeight::MEDIUM)
@@ -1050,6 +1025,10 @@ pub(super) fn studio_button(
                 rgb(t.hover)
             })
         })
+        .children(match id {
+            "studio-split" => Some(Icon::Split), "studio-terminal" => Some(Icon::Terminal),
+            "studio-preview" => Some(Icon::Preview), "studio-save" => Some(Icon::Project), _ => None,
+        }.map(|icon| ui_icon(icon, 15., rgb(if accented { 0xffffff } else { t.text_muted }))))
         .child(label)
 }
 
