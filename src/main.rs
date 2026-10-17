@@ -38,7 +38,6 @@ use objc2_app_kit::{
     NSPDFImageRep, NSWorkspace,
 };
 use objc2_foundation::{NSData, NSFileManager, NSObject, NSString, NSURL};
-use rayon::prelude::*;
 
 const RECENTS_CAP: usize = 12;
 const UI_FONT_SIZE: f32 = 12.0;
@@ -87,6 +86,17 @@ mod file_search;
 mod search_ui;
 mod space_map;
 mod space_ui;
+mod cache;
+mod folder_watch;
+mod columns;
+mod previews;
+mod preview_panel;
+mod mascot;
+mod settings;
+use settings::*;
+use previews::*;
+use columns::{clear_column_cache,forget_column_listing};
+use cache::Cache;
 
 // ----- feature preferences (the General tab toggles) -------------------------
 
@@ -97,6 +107,8 @@ struct Prefs {
     preview: bool,
     /// Show ‹ › page arrows on multi-page PDF previews in the inspector.
     preview_pages: bool,
+    /// Preferred inspector width in logical pixels, retained across launches.
+    preview_width: u16,
     /// Show file information in the inspector when a file is selected.
     info: bool,
     /// Show the leading ".." row that goes up one level.
@@ -133,6 +145,7 @@ impl Default for Prefs {
         Prefs {
             preview: true,
             preview_pages: true,
+            preview_width: 420,
             info: true,
             show_parent: false,
             sidebar_collapsed: false,
@@ -158,6 +171,7 @@ thread_local! {
     static ACTIVE_PREFS: RefCell<Prefs> = const { RefCell::new(Prefs {
         preview: true,
         preview_pages: true,
+        preview_width: 420,
         info: true,
         show_parent: false,
         sidebar_collapsed: false,
@@ -479,6 +493,9 @@ fn decode_image_file(path: &Path) -> Option<Arc<RenderImage>> {
 }
 
 fn clear_icon_cache() {
+    ICON_EPOCH.with(|e|e.set(e.get().wrapping_add(1)));
+    ICON_PENDING.with(|p|p.borrow_mut().clear());
+    ICON_REQUESTS.with(|q|q.borrow_mut().clear());
     ICON_CACHE.with(|c| c.borrow_mut().clear());
 }
 
@@ -821,2015 +838,6 @@ fn sort_key_from_name(s: &str) -> Option<SortKey> {
         "size" => SortKey::Size,
         _ => return None,
     })
-}
-
-/// Which theme color a hex field edits.
-#[derive(Clone, Copy, PartialEq)]
-enum ColorTarget {
-    Bg,
-    Text,
-    Hover,
-    MenuBg,
-    MenuText,
-}
-
-/// The Settings window: a tabbed customization surface.
-struct Settings {
-    tab: usize,
-    /// The section within the active tab the rail last jumped to (highlighted
-    /// in the nested sidebar list).
-    section: usize,
-    /// Scrolls the content pane so a rail sub-item can jump to its section.
-    content_scroll: ScrollHandle,
-    focus: FocusHandle,
-    /// The action whose keystroke is currently being recorded, if any.
-    recording: Option<KeyAction>,
-    /// In-progress hex color entry: (which color, typed hex digits).
-    color_edit: Option<(ColorTarget, String)>,
-    /// In-progress typed entry for the search-window opacity (the digits shown
-    /// while the value field is focused). `None` when not editing.
-    opacity_edit: Option<String>,
-}
-
-/// Section names shown as nested rail items for a settings tab (and the order
-/// they appear in the content pane, after the page header at child index 0).
-fn tab_sections(tab: usize) -> &'static [&'static str] {
-    match tab {
-        0 => &[
-            "Explorer",
-            "Inspector",
-            "Command Palette",
-            "Sidebar",
-            "Connections",
-            "Script Actions",
-            "Software Update",
-            "Developer",
-        ],
-        2 => &["Theme", "Colors", "Menu", "App Icon", "Icon Pack"],
-        _ => &[],
-    }
-}
-
-impl Settings {
-    fn new(cx: &mut Context<Self>) -> Self {
-        // Repaint when the shared update-check state changes (the check runs
-        // async; the main window may also drive it).
-        cx.observe_global::<UpdateCheckGlobal>(|_, cx| cx.notify()).detach();
-        Settings {
-            tab: 0,
-            section: 0,
-            content_scroll: ScrollHandle::new(),
-            focus: cx.focus_handle(),
-            recording: None,
-            color_edit: None,
-            opacity_edit: None,
-        }
-    }
-
-    /// Kick off a GitHub check from the Settings "Updates" row.
-    fn start_update_check(&self, cx: &mut Context<Self>) {
-        if !upstream_updates_enabled() { return; }
-        cx.set_global(UpdateCheckGlobal(UpdateCheck::Checking));
-        cx.spawn(async move |_, cx| {
-            let tag = cx.background_spawn(async move { fetch_latest_tag() }).await;
-            let next = match tag {
-                None => UpdateCheck::Failed,
-                Some(tag) => {
-                    if parse_version(&tag) > parse_version(env!("CARGO_PKG_VERSION")) {
-                        UpdateCheck::Available(tag)
-                    } else {
-                        UpdateCheck::UpToDate
-                    }
-                }
-            };
-            let _ = cx.update(|cx| cx.set_global(UpdateCheckGlobal(next)));
-        })
-        .detach();
-    }
-
-    /// Route key events: opacity/hex entry first, then keybind recording.
-    fn handle_settings_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
-        if self.opacity_edit.is_some() {
-            self.handle_opacity_key(ev, cx);
-        } else if self.color_edit.is_some() {
-            self.handle_hex_key(ev, cx);
-        } else if self.recording.is_some() {
-            self.handle_keybind_key(ev, cx);
-        }
-    }
-
-    /// Capture typed digits for the search-window opacity field; each edit
-    /// applies live (clamped 40–100), Enter/Esc finish. Typing "30" sets 30%.
-    fn handle_opacity_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
-        let apply = |s: &str, cx: &mut Context<Self>| {
-            if let Ok(n) = s.parse::<u8>() {
-                let mut np = prefs();
-                np.palette_opacity = n.clamp(20, 100);
-                apply_prefs(np, cx);
-            }
-        };
-        match ev.keystroke.key.as_str() {
-            "escape" | "enter" | "tab" => {
-                // Commit whatever's typed (clamped), then leave edit mode.
-                if let Some(s) = self.opacity_edit.take() {
-                    if !s.is_empty() {
-                        apply(&s, cx);
-                    }
-                }
-                cx.notify();
-            }
-            "backspace" => {
-                if let Some(s) = self.opacity_edit.as_mut() {
-                    s.pop();
-                }
-                if let Some(s) = self.opacity_edit.clone() {
-                    if !s.is_empty() {
-                        apply(&s, cx);
-                    }
-                }
-                cx.notify();
-            }
-            _ => {
-                if let Some(ch) = ev.keystroke.key_char.as_ref() {
-                    if let Some(s) = self.opacity_edit.as_mut() {
-                        for c in ch.chars() {
-                            // Up to 3 digits ("100"); ignore anything else.
-                            if c.is_ascii_digit() && s.len() < 3 {
-                                s.push(c);
-                            }
-                        }
-                    }
-                    // Apply live as they type so the preview updates.
-                    if let Some(s) = self.opacity_edit.clone() {
-                        if !s.is_empty() {
-                            apply(&s, cx);
-                        }
-                    }
-                    cx.notify();
-                }
-            }
-        }
-    }
-
-    /// Capture typed hex digits for a color field; Enter applies, Esc cancels.
-    fn handle_hex_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
-        let Some((target, _)) = self.color_edit.clone() else {
-            return;
-        };
-        match ev.keystroke.key.as_str() {
-            "escape" => {
-                self.color_edit = None;
-                cx.notify();
-            }
-            "backspace" => {
-                if let Some((_, s)) = self.color_edit.as_mut() {
-                    s.pop();
-                }
-                cx.notify();
-            }
-            "enter" => {
-                if let Some((_, s)) = &self.color_edit {
-                    if let Ok(c) = u32::from_str_radix(s, 16) {
-                        match target {
-                            ColorTarget::Bg => {
-                                let mut nt = theme();
-                                nt.bg = c;
-                                apply_theme(nt, cx);
-                            }
-                            ColorTarget::Text => {
-                                let mut nt = theme();
-                                nt.text = c;
-                                apply_theme(nt, cx);
-                            }
-                            ColorTarget::Hover => {
-                                let mut nt = theme();
-                                nt.hover = c;
-                                apply_theme(nt, cx);
-                            }
-                            ColorTarget::MenuBg => {
-                                let mut nm = menu_style();
-                                nm.bg = c;
-                                nm.custom = true;
-                                apply_menu_style(nm, cx);
-                            }
-                            ColorTarget::MenuText => {
-                                let mut nm = menu_style();
-                                nm.text = c;
-                                nm.custom = true;
-                                apply_menu_style(nm, cx);
-                            }
-                        }
-                    }
-                }
-                self.color_edit = None;
-                cx.notify();
-            }
-            _ => {
-                if let Some(ch) = ev.keystroke.key_char.as_ref() {
-                    // Accept up to 6 hex digits.
-                    if let Some((_, s)) = self.color_edit.as_mut() {
-                        for c in ch.chars() {
-                            if c.is_ascii_hexdigit() && s.len() < 6 {
-                                s.push(c.to_ascii_lowercase());
-                            }
-                        }
-                    }
-                    cx.notify();
-                }
-            }
-        }
-    }
-
-    /// Capture the next keystroke for the action being rebound.
-    fn handle_keybind_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
-        let Some(action) = self.recording else {
-            return;
-        };
-        let ks = &ev.keystroke;
-        let key = ks.key.as_str();
-        match key {
-            "escape" => {}
-            "backspace" | "delete" => {
-                let mut km = keymap();
-                km.set(action, None);
-                apply_keymap(km, cx);
-            }
-            // Ignore lone modifier presses; wait for a real key.
-            "cmd" | "ctrl" | "alt" | "shift" | "function" => return,
-            _ => {
-                let mut km = keymap();
-                km.set(action, Some(canon_keystroke(ks)));
-                apply_keymap(km, cx);
-            }
-        }
-        self.recording = None;
-        cx.notify();
-    }
-}
-
-impl Render for Settings {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = theme();
-        let tabs = [("General", "\u{2699}"), ("Keybinds", "\u{2318}"), ("Customization", "\u{25d0}")];
-
-        // Left tab rail.
-        let mut tab_items: Vec<AnyElement> = Vec::new();
-        for (i, (name, glyph)) in tabs.iter().enumerate() {
-            let active = i == self.tab;
-            tab_items.push(
-                div()
-                    .id(("tab", i))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .mx_2()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
-                    .when(active, |s| s.bg(rgb(t.surface)))
-                    .when(!active, |s| s.hover(|s| s.bg(rgb(t.hover))))
-                    .child(
-                        div()
-                            .w(px(16.0))
-                            .flex()
-                            .justify_center()
-                            .text_color(if active { rgb(t.accent) } else { rgb(t.text_dim) })
-                            .child(glyph.to_string()),
-                    )
-                    .child(name.to_string())
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.tab = i;
-                        this.section = 0;
-                        this.content_scroll.set_offset(point(px(0.0), px(0.0)));
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-
-            // Nested section links under the active tab — click to jump.
-            if i == self.tab {
-                for (si, sname) in tab_sections(i).iter().enumerate() {
-                    let active_sec = si == self.section;
-                    tab_items.push(
-                        div()
-                            .id(("sec", i * 100 + si))
-                            .flex()
-                            .items_center()
-                            .py_1()
-                            .mx_2()
-                            .pl(px(34.0))
-                            .pr_2()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .text_size(px(UI_SMALL_FONT_SIZE))
-                            .text_color(if active_sec { rgb(t.text) } else { rgb(t.text_muted) })
-                            .when(active_sec, |s| s.bg(rgb(t.hover)))
-                            .when(!active_sec, |s| s.hover(|s| s.bg(rgb(t.hover))))
-                            .child(sname.to_string())
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.section = si;
-                                this.content_scroll.scroll_to_top_of_item(si + 1);
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    );
-                }
-            }
-        }
-
-        let rail = div()
-            .flex_none()
-            .w(px(184.0))
-            .h_full()
-            .pt_3()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .bg(rgb(t.sidebar))
-            .border_r_1()
-            .border_color(rgb(t.border))
-            .child(
-                div()
-                    .px_4()
-                    .pb_2()
-                    .text_base()
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(rgb(t.text))
-                    .child("Settings"),
-            )
-            .children(tab_items);
-
-        let children = match self.tab {
-            0 => self.render_general(cx),
-            1 => self.render_keybinds(cx),
-            _ => self.render_customization(cx),
-        };
-
-        div()
-            .flex()
-            .size_full()
-            .bg(rgb(t.bg))
-            .text_size(px(UI_FONT_SIZE))
-            .text_color(rgb(t.text))
-            .track_focus(&self.focus)
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
-                this.handle_settings_key(ev, cx);
-            }))
-            .child(rail)
-            .child(
-                // Relative wrapper so the scrollbar thumb can overlay the
-                // scrolling content at the right edge.
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .child(
-                        // The section blocks are direct children so a rail link
-                        // can scroll_to_top_of_item(section_index + 1) to jump.
-                        div()
-                            .id("settings-content")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.content_scroll)
-                            .flex()
-                            .flex_col()
-                            .gap_4()
-                            .p_5()
-                            .children(children),
-                    )
-                    .children(static_scrollbar_thumb(&self.content_scroll)),
-            )
-    }
-}
-
-impl Settings {
-    /// The search-window-opacity row: title/description on the left, and on the
-    /// right a −/+ stepper around a **typable** value. Click the number to edit
-    /// it and just type (e.g. "30" → 30%); Enter/Esc/click-away commit.
-    fn render_opacity_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let t = theme();
-        let pct = prefs().palette_opacity;
-        let editing = self.opacity_edit.clone();
-
-        let step_btn = |bid: &'static str, glyph: &'static str, delta: i16| {
-            div()
-                .id(bid)
-                .flex_none()
-                .w(px(24.0))
-                .h(px(24.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_md()
-                .cursor_pointer()
-                .bg(rgb(t.surface))
-                .text_color(rgb(t.text))
-                .hover(|s| s.bg(rgb(t.hover)))
-                .child(glyph)
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    // Stepping also leaves the typing field, committing nothing extra.
-                    this.opacity_edit = None;
-                    let mut np = prefs();
-                    let next = (np.palette_opacity as i16 + delta).clamp(20, 100);
-                    np.palette_opacity = next as u8;
-                    apply_prefs(np, cx);
-                    cx.notify();
-                }))
-        };
-
-        // The value: an editable field when focused, else a clickable label.
-        let value: AnyElement = match &editing {
-            Some(s) => div()
-                .id("opacity-value")
-                .flex_none()
-                .min_w(px(52.0))
-                .px_2()
-                .h(px(24.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_md()
-                .bg(rgb(t.bg))
-                .border_1()
-                .border_color(rgb(t.accent))
-                .text_color(rgb(t.text))
-                .child(s.clone())
-                // A caret so it reads as an active text field.
-                .child(div().w(px(1.5)).h(px(13.0)).ml(px(1.0)).bg(rgb(t.text)))
-                .child("%")
-                .into_any_element(),
-            None => div()
-                .id("opacity-value")
-                .flex_none()
-                .min_w(px(52.0))
-                .px_2()
-                .h(px(24.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_md()
-                .cursor_text()
-                .text_color(rgb(t.text))
-                .hover(|s| s.bg(rgb(t.hover)))
-                .child(format!("{pct}%"))
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    // Start empty so the user can just type the number they want.
-                    this.opacity_edit = Some(String::new());
-                    window.focus(&this.focus);
-                    cx.notify();
-                }))
-                .into_any_element(),
-        };
-
-        div()
-            .w_full()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(div().text_color(rgb(t.text)).child("Search window opacity"))
-                    .child(
-                        div()
-                            .text_size(px(UI_SMALL_FONT_SIZE))
-                            .text_color(rgb(t.text_muted))
-                            .child("How opaque the Cmd+P search window is. Click the number to type a value (20–100). Lower lets the explorer show through."),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(step_btn("opacity-dec", "\u{2212}", -1))
-                    .child(value)
-                    .child(step_btn("opacity-inc", "+", 1)),
-            )
-            .into_any_element()
-    }
-
-    /// The General tab as an ordered list of blocks: page header, then one card
-    /// per section (matching `tab_sections(0)`), then the reset button. Returned
-    /// as separate children so the rail can scroll to any section.
-    fn render_general(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let p = prefs();
-        let t = theme();
-        let script_count = discover_script_actions().len();
-
-        let scripts_folder_row = div()
-            .w_full()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(div().text_color(rgb(t.text)).child("Scripts folder"))
-                    .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(format!(
-                        "{} script{} loaded — the README there explains the format.",
-                        script_count,
-                        if script_count == 1 { "" } else { "s" }
-                    ))),
-            )
-            .child(
-                div()
-                    .id("open-scripts")
-                    .flex_none()
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .bg(rgb(t.surface))
-                    .text_color(rgb(t.text))
-                    .hover(|s| s.bg(rgb(t.hover)))
-                    .active(|s| s.bg(rgb(t.selected)))
-                    .child("Open Scripts Folder")
-                    .on_click(cx.listener(|_, _: &ClickEvent, _, _| {
-                        if let Some(dir) = ensure_scripts_dir() {
-                            let _ = Command::new("open").arg(&dir).spawn();
-                        }
-                    })),
-            )
-            .into_any_element();
-
-        // Connections (SFTP) section rows: the auth-mode choice, then the saved
-        // servers with a Remove button each, then how to add more.
-        let mut connection_rows: Vec<AnyElement> = Vec::new();
-        connection_rows.push(
-            toggle_row(
-                "tg-ssh-system",
-                "Use my ~/.ssh configuration",
-                "On: connect using your existing SSH keys, ~/.ssh/config aliases, and \
-                 known_hosts — nothing is stored in the app. Off: use the private-key \
-                 path you set per server.",
-                p.ssh_use_system,
-                cx.listener(|_, _: &ClickEvent, _, cx| {
-                    let mut np = prefs();
-                    np.ssh_use_system = !np.ssh_use_system;
-                    np.ssh_configured = true;
-                    apply_prefs(np, cx);
-                    cx.notify();
-                }),
-            )
-            .into_any_element(),
-        );
-        let servers = sftp_servers();
-        if servers.is_empty() {
-            connection_rows.push(
-                div()
-                    .text_size(px(UI_SMALL_FONT_SIZE))
-                    .text_color(rgb(t.text_dim))
-                    .child(
-                        "No saved servers yet. Add one from the sidebar: Connect to \
-                         Server\u{2026} then enter sftp://user@host (or an ~/.ssh alias).",
-                    )
-                    .into_any_element(),
-            );
-        } else {
-            for (i, s) in servers.iter().enumerate() {
-                let srv = s.clone();
-                connection_rows.push(
-                    div()
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap_1()
-                                .child(div().text_color(rgb(t.text)).child(s.name.clone()))
-                                .child(
-                                    div()
-                                        .text_size(px(UI_SMALL_FONT_SIZE))
-                                        .text_color(rgb(t.text_muted))
-                                        .child(format!("sftp://{}", s.display())),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id(("sftp-remove", i))
-                                .flex_none()
-                                .px_3()
-                                .py_1()
-                                .rounded_md()
-                                .cursor_pointer()
-                                .bg(rgb(t.hover))
-                                .text_color(rgb(t.text))
-                                .hover(|s| s.border_color(rgb(0xd9544f)).text_color(rgb(0xd9544f)))
-                                .border_1()
-                                .border_color(rgb(t.border))
-                                .child("Remove")
-                                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                                    if srv.use_password {
-                                        keychain_delete_password(&srv);
-                                    }
-                                    let list: Vec<SftpServer> = sftp_servers()
-                                        .into_iter()
-                                        .filter(|x| x.display() != srv.display())
-                                        .collect();
-                                    apply_sftp_servers(list, cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .into_any_element(),
-                );
-            }
-        }
-
-        vec![
-            settings_header(
-                "General",
-                "How the explorer behaves and what the side panels show.",
-            )
-            .into_any_element(),
-            settings_section(
-                "Explorer",
-                Some("Navigation and the file list."),
-                vec![
-                    toggle_row(
-                        "tg-show-parent",
-                        "Show \u{201c}..\u{201d} (up one level)",
-                        "Show the leading \u{201c}..\u{201d} entry in list view that navigates to the parent folder.",
-                        p.show_parent,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.show_parent = !np.show_parent;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                    toggle_row(
-                        "tg-filter-button",
-                        "Filter button",
-                        "Show the always-on \u{201c}Filter\u{201d} button in the bottom-right corner. Pressing / still opens the filter either way.",
-                        p.show_filter_button,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.show_filter_button = !np.show_filter_button;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                ],
-            ),
-            settings_section(
-                "Inspector",
-                Some("The side panel shown when you click a file."),
-                vec![
-                    toggle_row(
-                        "tg-preview",
-                        "Preview",
-                        "Click a file once to preview it (images, PDFs, documents, \u{2026}) in the inspector panel.",
-                        p.preview,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.preview = !np.preview;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                    toggle_row(
-                        "tg-preview-pages",
-                        "Preview page controls",
-                        "Show \u{2039} \u{203a} arrows under multi-page PDF previews to flip through the pages without opening the file.",
-                        p.preview_pages,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.preview_pages = !np.preview_pages;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                    toggle_row(
-                        "tg-info",
-                        "Information",
-                        "Click a file once to see its details (kind, size, dates, dimensions, color space, and more) in the inspector panel.",
-                        p.info,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.info = !np.info;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                ],
-            ),
-            settings_section(
-                "Command Palette",
-                Some("The Cmd+P search and actions."),
-                vec![
-                    toggle_row(
-                        "tg-palette-history",
-                        "Search history",
-                        "Remember submitted file searches. Use the configured history shortcuts to revisit them.",
-                        p.palette_history,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.palette_history = !np.palette_history;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                    self.render_opacity_row(cx),
-                    // Live sample so the opacity change is visible immediately.
-                    palette_opacity_preview(),
-                ],
-            ),
-            settings_section(
-                "Sidebar",
-                None,
-                vec![
-                    toggle_row(
-                        "tg-groups",
-                        "Sidebar groups",
-                        "Create custom groups of files/folders in the sidebar. Right-click the sidebar to make a group, then right-click any item to add it.",
-                        p.groups_enabled,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.groups_enabled = !np.groups_enabled;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                    toggle_row(
-                        "tg-waterfall",
-                        "Waterfall folder tree",
-                        "Show an expandable tree of the current folder's subfolders at the bottom of the sidebar. Click a triangle to drill in, click a name to open it in the pane.",
-                        p.waterfall,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.waterfall = !np.waterfall;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                    stepper_row(
-                        "st-recents",
-                        "Recent folders",
-                        "How many recently-visited folders to show in the sidebar (0 hides the Recents section).",
-                        if p.recent_limit == 0 {
-                            "Off".to_string()
-                        } else {
-                            p.recent_limit.to_string()
-                        },
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.recent_limit = np.recent_limit.saturating_sub(1);
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.recent_limit = (np.recent_limit + 1).min(RECENTS_CAP);
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                ],
-            ),
-            settings_section(
-                "Connections",
-                Some("SFTP servers — browse remote hosts over SSH from the sidebar."),
-                connection_rows,
-            ),
-            settings_section(
-                "Script Actions",
-                Some("Run your own shell scripts from the right-click menu."),
-                vec![
-                    toggle_row(
-                        "tg-script-actions",
-                        "Run script actions",
-                        "Show your own shell scripts (from the Scripts folder) in the right-click menu for matching files, and run them with the selected paths. Only scripts you put there run \u{2014} treat it like your ~/bin.",
-                        p.script_actions,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.script_actions = !np.script_actions;
-                            if np.script_actions {
-                                ensure_scripts_dir();
-                            }
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                    scripts_folder_row,
-                ],
-            ),
-            settings_section(
-                "Software Update",
-                None,
-                vec![self.render_update_row(cx)],
-            ),
-            settings_section(
-                "Developer",
-                Some("Diagnostics for checking performance."),
-                vec![toggle_row(
-                    "tg-show-fps",
-                    "Frame rate meter",
-                    "Show a live FPS readout in the top-right of the explorer window. Forces continuous redraws to measure them, so it uses some CPU while on \u{2014} meant for checking smoothness, not everyday use.",
-                    p.show_fps,
-                    cx.listener(|_, _: &ClickEvent, _, cx| {
-                        let mut np = prefs();
-                        np.show_fps = !np.show_fps;
-                        apply_prefs(np, cx);
-                        cx.notify();
-                    }),
-                )
-                .into_any_element()],
-            ),
-            div()
-                .pt_1()
-                .child(reset_button(
-                    "reset-general",
-                    "Reset General to Default",
-                    cx.listener(|_, _: &ClickEvent, _, cx| {
-                        apply_prefs(Prefs::default(), cx);
-                        cx.notify();
-                    }),
-                ))
-                .into_any_element(),
-        ]
-    }
-
-    /// The Software-Update row: current version plus a Check / Install &
-    /// Relaunch button, driven by the shared UpdateCheck state.
-    fn render_update_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        if !upstream_updates_enabled() {
-            return div().flex().flex_col().gap_1()
-                .child(format!("Schnauz {}", env!("CARGO_PKG_VERSION")))
-                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(theme().text_muted))
-                    .child("Personal build · updates are installed from this project's builds."))
-                .into_any_element();
-        }
-        let t = theme();
-        let state = cx.global::<UpdateCheckGlobal>().0.clone();
-        let status: Option<String> = match &state {
-            UpdateCheck::Idle => None,
-            UpdateCheck::Checking => Some("Checking\u{2026}".into()),
-            UpdateCheck::UpToDate => Some("You\u{2019}re up to date.".into()),
-            UpdateCheck::Available(v) => Some(format!("{v} is available.")),
-            UpdateCheck::Failed => Some("Couldn\u{2019}t reach GitHub \u{2014} try again.".into()),
-            UpdateCheck::Install(v) => Some(format!("Installing {v}\u{2026} the app will relaunch.")),
-        };
-        let button: Option<&'static str> = match &state {
-            UpdateCheck::Idle => Some("Check for Updates"),
-            UpdateCheck::UpToDate => Some("Check Again"),
-            UpdateCheck::Failed => Some("Try Again"),
-            UpdateCheck::Available(_) => Some("Install & Relaunch"),
-            UpdateCheck::Checking | UpdateCheck::Install(_) => None,
-        };
-        let avail = matches!(state, UpdateCheck::Available(_));
-        let avail_tag = match &state {
-            UpdateCheck::Available(v) => Some(v.clone()),
-            _ => None,
-        };
-        let mut right = div().flex_none().flex().items_center().gap_2();
-        if let Some(s) = status {
-            right = right.child(
-                div()
-                    .text_size(px(UI_SMALL_FONT_SIZE))
-                    .text_color(rgb(if avail { t.accent } else { t.text_muted }))
-                    .child(s),
-            );
-        }
-        if let Some(label) = button {
-            right = right.child(
-                div()
-                    .id("update-check-btn")
-                    .flex_none()
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .bg(if avail { rgb(t.accent) } else { rgb(t.surface) })
-                    .text_color(if avail { rgb(0xffffff) } else { rgb(t.text) })
-                    .hover(|s| s.bg(rgb(t.hover)))
-                    .active(|s| s.bg(rgb(t.selected)))
-                    .child(label)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if let Some(v) = avail_tag.clone() {
-                            cx.set_global(UpdateCheckGlobal(UpdateCheck::Install(v)));
-                        } else {
-                            this.start_update_check(cx);
-                        }
-                        cx.notify();
-                    })),
-            );
-        }
-        div()
-            .w_full()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_color(rgb(t.text))
-                            .child(format!(
-                                "Version {} ({})",
-                                env!("CARGO_PKG_VERSION"),
-                                // Build stamp (git short SHA) baked in at compile
-                                // time so "which build am I actually running?"
-                                // is answerable from Settings. "dev" when built
-                                // without the stamp.
-                                option_env!("SHUFFLE_BUILD_SHA").unwrap_or("dev")
-                            )),
-                    )
-                    .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
-                        "Check GitHub for a newer release and install it in place \u{2014} the app swaps itself and relaunches.",
-                    )),
-            )
-            .child(right)
-            .into_any_element()
-    }
-
-    fn render_keybinds(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let t = theme();
-        let km = keymap();
-        let mut rows: Vec<AnyElement> = Vec::new();
-        for action in KeyAction::ALL.iter().copied() {
-            let recording = self.recording == Some(action);
-            let binding = km.get(action);
-            // The binding chip: shows the keystroke, "Unbound", or a recording hint.
-            let (chip_text, chip_dim) = if recording {
-                ("Press keys… (⌫ clear, esc cancel)".to_string(), false)
-            } else {
-                match binding {
-                    Some(b) => (pretty_keystroke(b), false),
-                    None => ("Unbound".to_string(), true),
-                }
-            };
-            rows.push(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_4()
-                    .py_1()
-                    .child(div().text_color(rgb(t.text)).child(action.label()))
-                    .child(
-                        div()
-                            .id(("kb", action.id()))
-                            .flex_none()
-                            .min_w(px(150.0))
-                            .px_2()
-                            .py(px(2.0))
-                            .rounded_md()
-                            .cursor_pointer()
-                            .text_size(px(UI_SMALL_FONT_SIZE))
-                            .bg(rgb(t.surface))
-                            .border_1()
-                            .border_color(if recording { rgb(t.accent) } else { rgb(t.border) })
-                            .text_color(if chip_dim { rgb(t.text_dim) } else { rgb(t.text) })
-                            .hover(|s| s.border_color(rgb(t.accent)))
-                            .child(chip_text)
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                this.recording = Some(action);
-                                window.focus(&this.focus);
-                                cx.notify();
-                            })),
-                    )
-                    .into_any_element(),
-            );
-        }
-        vec![
-            settings_header(
-                "Keybinds",
-                "Click a shortcut, then press the keys. \u{232b} clears it; Esc cancels.",
-            )
-            .into_any_element(),
-            settings_section("Shortcuts", None, rows),
-            div()
-                .pt_1()
-                .child(reset_button(
-                    "reset-keybinds",
-                    "Reset Shortcuts to Default",
-                    cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.recording = None;
-                        apply_keymap(Keymap::defaults(), cx);
-                        cx.notify();
-                    }),
-                ))
-                .into_any_element(),
-        ]
-    }
-
-    fn render_customization(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let t = theme();
-
-        // Preset palette cards.
-        let mut presets: Vec<AnyElement> = Vec::new();
-        for (i, (name, preset)) in PRESETS.iter().enumerate() {
-            let preset = *preset;
-            let selected = preset == t;
-            presets.push(
-                div()
-                    .id(("preset", i))
-                    .w(px(150.0))
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p_3()
-                    .rounded_lg()
-                    .cursor_pointer()
-                    .border_1()
-                    .border_color(if selected { rgb(t.accent) } else { rgb(t.border) })
-                    .bg(rgb(preset.bg))
-                    .hover(|s| s.border_color(rgb(t.accent)))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_1()
-                            .child(swatch_dot(preset.sidebar))
-                            .child(swatch_dot(preset.surface))
-                            .child(swatch_dot(preset.accent))
-                            .child(swatch_dot(preset.text)),
-                    )
-                    .child(div().text_color(rgb(preset.text)).child(name.to_string()))
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                        apply_theme(preset, cx);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-        }
-        let presets_grid = div()
-            .flex()
-            .flex_wrap()
-            .gap_3()
-            .children(presets)
-            .into_any_element();
-
-        // A color control: name + description on the left, hex field on the
-        // right, and the swatch spectrum below.
-        let color_block = |title: &str,
-                           desc: &str,
-                           target: ColorTarget,
-                           current: u32,
-                           spectrum: AnyElement,
-                           hex: AnyElement| {
-            let t = theme();
-            let _ = (target, current);
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap_1()
-                                .child(div().text_color(rgb(t.text)).child(title.to_string()))
-                                .child(
-                                    div()
-                                        .text_size(px(UI_SMALL_FONT_SIZE))
-                                        .text_color(rgb(t.text_muted))
-                                        .child(desc.to_string()),
-                                ),
-                        )
-                        .child(hex),
-                )
-                .child(spectrum)
-                .into_any_element()
-        };
-
-        // Menu preview + caption.
-        let menu_preview_row = div()
-            .flex()
-            .items_center()
-            .gap_4()
-            .child(self.menu_preview())
-            .child(
-                div()
-                    .text_size(px(UI_SMALL_FONT_SIZE))
-                    .text_color(rgb(t.text_muted))
-                    .child("Live preview of the right-click menu."),
-            )
-            .into_any_element();
-
-        // App-icon preview + upload/reset controls.
-        let app_icon_row = div()
-            .flex()
-            .items_center()
-            .gap_4()
-            .child(self.app_icon_preview())
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_size(px(UI_SMALL_FONT_SIZE))
-                            .text_color(rgb(t.text_muted))
-                            .child("Pick a color below or upload an image (PNG or JPG; square looks best)."),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .id("icon-bg-upload")
-                                    .px_3()
-                                    .py_1()
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .bg(rgb(t.surface))
-                                    .border_1()
-                                    .border_color(rgb(t.border))
-                                    .hover(|s| s.border_color(rgb(t.accent)))
-                                    .child("Upload Background\u{2026}")
-                                    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
-                                        let rx = cx.prompt_for_paths(PathPromptOptions {
-                                            files: true,
-                                            directories: false,
-                                            multiple: false,
-                                            prompt: Some("Choose Background Image".into()),
-                                        });
-                                        cx.spawn(async move |_, cx| {
-                                            if let Ok(Ok(Some(paths))) = rx.await {
-                                                if let Some(p) = paths.into_iter().next() {
-                                                    if let Some(dest) = store_icon_bg_image(&p) {
-                                                        let _ = cx.update(|cx| {
-                                                            apply_icon_bg(IconBg::Image(dest), cx)
-                                                        });
-                                                    }
-                                                }
-                                            }
-                                        })
-                                        .detach();
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id("icon-bg-reset")
-                                    .px_3()
-                                    .py_1()
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .bg(rgb(t.hover))
-                                    .hover(|s| s.bg(rgb(t.selected)))
-                                    .child("Reset")
-                                    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
-                                        apply_icon_bg(IconBg::Default, cx);
-                                    })),
-                            ),
-                    ),
-            )
-            .into_any_element();
-
-        // Icon-pack status + choose/reset + note.
-        let icon_pack_row = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .text_color(rgb(t.text))
-                    .child(match icon_pack() {
-                        Some(p) => format!("Current pack: {}", path_label(&p)),
-                        None => "Using macOS icons".to_string(),
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("pack-choose")
-                            .px_3()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .bg(rgb(t.surface))
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .hover(|s| s.border_color(rgb(t.accent)))
-                            .child("Choose Folder\u{2026}")
-                            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
-                                let rx = cx.prompt_for_paths(PathPromptOptions {
-                                    files: false,
-                                    directories: true,
-                                    multiple: false,
-                                    prompt: Some("Choose Icon Pack".into()),
-                                });
-                                cx.spawn(async move |this, cx| {
-                                    if let Ok(Ok(Some(paths))) = rx.await {
-                                        if let Some(p) = paths.into_iter().next() {
-                                            let _ = this
-                                                .update(cx, |_, cx| apply_icon_pack(Some(p), cx));
-                                        }
-                                    }
-                                })
-                                .detach();
-                            })),
-                    )
-                    .child(
-                        div()
-                            .id("pack-reset")
-                            .px_3()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .bg(rgb(t.hover))
-                            .hover(|s| s.bg(rgb(t.selected)))
-                            .child("Use macOS icons")
-                            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
-                                apply_icon_pack(None, cx);
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .text_size(px(UI_SMALL_FONT_SIZE))
-                    .text_color(rgb(t.text_dim))
-                    .child(
-                        "A folder of images named folder.png, file.png, and per-extension \
-                         (e.g. pdf.png, png.png). PNG with transparency works best.",
-                    ),
-            )
-            .into_any_element();
-
-        vec![
-            settings_header(
-                "Customization",
-                "Make Schnauz yours \u{2014} palette, menus, and app icon.",
-            )
-            .into_any_element(),
-            settings_section(
-                "Theme",
-                Some("Pick a starting palette, then fine-tune the colors below."),
-                vec![presets_grid],
-            ),
-            settings_section(
-                "Colors",
-                Some("Core interface colors. Type a hex value or pick from the swatches."),
-                vec![
-                    color_block(
-                        "Background",
-                        "The main window and file list.",
-                        ColorTarget::Bg,
-                        t.bg,
-                        self.color_row("bg", t.bg, |t, c| t.bg = c, cx).into_any_element(),
-                        self.hex_field(ColorTarget::Bg, t.bg, cx).into_any_element(),
-                    ),
-                    color_block(
-                        "Text",
-                        "Primary text throughout the app.",
-                        ColorTarget::Text,
-                        t.text,
-                        self.color_row("text", t.text, |t, c| t.text = c, cx).into_any_element(),
-                        self.hex_field(ColorTarget::Text, t.text, cx).into_any_element(),
-                    ),
-                    color_block(
-                        "Mouseover",
-                        "The highlight behind hovered rows and buttons.",
-                        ColorTarget::Hover,
-                        t.hover,
-                        self.color_row("hover", t.hover, |t, c| t.hover = c, cx).into_any_element(),
-                        self.hex_field(ColorTarget::Hover, t.hover, cx).into_any_element(),
-                    ),
-                ],
-            ),
-            settings_section(
-                "Menu",
-                Some("The right-click / dropdown menu appearance."),
-                vec![
-                    menu_preview_row,
-                    color_block(
-                        "Menu color",
-                        "The menu background.",
-                        ColorTarget::MenuBg,
-                        menu_style().bg,
-                        self.menu_color_row("menubg", menu_style().bg, |m, c| m.bg = c, cx)
-                            .into_any_element(),
-                        self.hex_field(ColorTarget::MenuBg, menu_style().bg, cx).into_any_element(),
-                    ),
-                    color_block(
-                        "Letter color",
-                        "The menu text.",
-                        ColorTarget::MenuText,
-                        menu_style().text,
-                        self.menu_color_row("menutext", menu_style().text, |m, c| m.text = c, cx)
-                            .into_any_element(),
-                        self.hex_field(ColorTarget::MenuText, menu_style().text, cx)
-                            .into_any_element(),
-                    ),
-                    stepper_row(
-                        "st-menu-opacity",
-                        "Opacity",
-                        "Menu background opacity (lower is more see-through).",
-                        format!("{}%", menu_style().opacity),
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut m = menu_style();
-                            m.opacity = m.opacity.saturating_sub(10);
-                            apply_menu_style(m, cx);
-                            cx.notify();
-                        }),
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut m = menu_style();
-                            m.opacity = (m.opacity + 10).min(100);
-                            apply_menu_style(m, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                    stepper_row(
-                        "st-menu-size",
-                        "Text size",
-                        "Menu font size in pixels.",
-                        format!("{}px", menu_style().font_px as i32),
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut m = menu_style();
-                            m.font_px = (m.font_px - 1.0).max(9.0);
-                            apply_menu_style(m, cx);
-                            cx.notify();
-                        }),
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut m = menu_style();
-                            m.font_px = (m.font_px + 1.0).min(24.0);
-                            apply_menu_style(m, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
-                ],
-            ),
-            settings_section(
-                "App Icon",
-                Some("The Dock and Finder icon."),
-                vec![app_icon_row, self.icon_color_row(cx).into_any_element()],
-            ),
-            settings_section(
-                "Icon Pack",
-                Some("Replace macOS file icons with your own image set."),
-                vec![icon_pack_row],
-            ),
-            div()
-                .pt_1()
-                .child(reset_button(
-                    "reset-customization",
-                    "Reset Customization to Default",
-                    cx.listener(|_, _: &ClickEvent, _, cx| {
-                        apply_theme(Theme::default(), cx);
-                        apply_menu_style(MenuStyle::default(), cx);
-                        apply_icon_bg(IconBg::Default, cx);
-                        apply_icon_pack(None, cx);
-                        cx.notify();
-                    }),
-                ))
-                .into_any_element(),
-        ]
-    }
-
-    /// A grid of color swatches; clicking one sets a single theme field via
-    /// `set`. `tag` keeps element ids unique across rows that share colors.
-    fn color_row(
-        &self,
-        tag: &'static str,
-        current: u32,
-        set: fn(&mut Theme, u32),
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let t = theme();
-        let mut swatches: Vec<AnyElement> = Vec::new();
-        for c in palette_colors() {
-            let selected = c == current;
-            swatches.push(
-                div()
-                    .id((tag, c as usize))
-                    .w(px(22.0))
-                    .h(px(22.0))
-                    .rounded_md()
-                    .cursor_pointer()
-                    .bg(rgb(c))
-                    .border_2()
-                    .border_color(if selected { rgb(t.accent) } else { rgb(t.border) })
-                    .hover(|s| s.border_color(rgb(t.accent)))
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                        let mut nt = theme();
-                        set(&mut nt, c);
-                        apply_theme(nt, cx);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-        }
-        div().flex().flex_wrap().gap_1().children(swatches)
-    }
-
-    /// Like [`color_row`] but sets a field on the menu style.
-    fn menu_color_row(
-        &self,
-        tag: &'static str,
-        current: u32,
-        set: fn(&mut MenuStyle, u32),
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let t = theme();
-        let mut swatches: Vec<AnyElement> = Vec::new();
-        for c in palette_colors() {
-            let selected = c == current;
-            swatches.push(
-                div()
-                    .id((tag, c as usize))
-                    .w(px(22.0))
-                    .h(px(22.0))
-                    .rounded_md()
-                    .cursor_pointer()
-                    .bg(rgb(c))
-                    .border_2()
-                    .border_color(if selected { rgb(t.accent) } else { rgb(t.border) })
-                    .hover(|s| s.border_color(rgb(t.accent)))
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                        let mut nm = menu_style();
-                        set(&mut nm, c);
-                        nm.custom = true;
-                        apply_menu_style(nm, cx);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-        }
-        div().flex().flex_wrap().gap_1().children(swatches)
-    }
-
-    /// A live sample pop-up menu showing the current menu style.
-    fn menu_preview(&self) -> impl IntoElement {
-        let m = menu_style();
-        let t = theme();
-        let row = |label: &str| {
-            div()
-                .mx_1()
-                .px_3()
-                .py_1()
-                .rounded_md()
-                .child(label.to_string())
-        };
-        div()
-            .min_w(px(200.0))
-            .py_1()
-            .bg(m.bg_rgba())
-            .text_color(rgb(m.text))
-            .text_size(px(m.font_px))
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(t.border_strong))
-            .shadow_lg()
-            .child(row("Open"))
-            .child(row("Rename"))
-            .child(row("Add to Bookmarks"))
-            .child(div().my_1().mx_2().h(px(1.0)).bg(rgb(t.border_strong)))
-            .child(row("Move to Trash"))
-    }
-
-    /// A live preview of the app icon (the recolored base — matches the Dock).
-    fn app_icon_preview(&self) -> impl IntoElement {
-        let mut base = div()
-            .flex_none()
-            .w(px(80.0))
-            .h(px(80.0))
-            .flex()
-            .items_center()
-            .justify_center();
-        if let Some(r) = preview_icon_render() {
-            base = base.child(img(ImageSource::Render(r)).w(px(80.0)).h(px(80.0)));
-        }
-        base
-    }
-
-    /// Color swatches that set the app-icon background color.
-    fn icon_color_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = theme();
-        let cur = match icon_bg() {
-            IconBg::Color(c) => Some(c),
-            _ => None,
-        };
-        let mut swatches: Vec<AnyElement> = Vec::new();
-        for c in palette_colors() {
-            let selected = cur == Some(c);
-            swatches.push(
-                div()
-                    .id(("iconbg", c as usize))
-                    .w(px(22.0))
-                    .h(px(22.0))
-                    .rounded_md()
-                    .cursor_pointer()
-                    .bg(rgb(c))
-                    .border_2()
-                    .border_color(if selected { rgb(t.accent) } else { rgb(t.border) })
-                    .hover(|s| s.border_color(rgb(t.accent)))
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                        apply_icon_bg(IconBg::Color(c), cx);
-                    }))
-                    .into_any_element(),
-            );
-        }
-        div().flex().flex_wrap().gap_1().children(swatches)
-    }
-
-    /// A small "current value + editable hex" control for a theme color.
-    fn hex_field(
-        &self,
-        target: ColorTarget,
-        current: u32,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let t = theme();
-        let editing = self.color_edit.as_ref().filter(|(tt, _)| *tt == target);
-        let text = match editing {
-            Some((_, s)) => format!("#{s}\u{2502}"),
-            None => format!("#{current:06x}"),
-        };
-        div()
-            .id(("hex", target as usize))
-            .flex_none()
-            .px_2()
-            .py(px(2.0))
-            .rounded_md()
-            .cursor_text()
-            .bg(rgb(t.surface))
-            .border_1()
-            .border_color(if editing.is_some() { rgb(t.accent) } else { rgb(t.border) })
-            .text_size(px(UI_SMALL_FONT_SIZE))
-            .text_color(rgb(t.text))
-            .child(text)
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.color_edit = Some((target, String::new()));
-                window.focus(&this.focus);
-                cx.notify();
-            }))
-    }
-}
-
-/// A small color dot used in preset previews.
-fn swatch_dot(color: u32) -> impl IntoElement {
-    div().w(px(14.0)).h(px(14.0)).rounded_full().bg(rgb(color))
-}
-
-/// A label/value line in the Information inspector.
-fn info_row(label: &str, value: &str) -> impl IntoElement {
-    let t = theme();
-    div()
-        .flex()
-        .justify_between()
-        .gap_3()
-        .text_size(px(UI_SMALL_FONT_SIZE))
-        .child(
-            div()
-                .flex_none()
-                .text_color(rgb(t.text_dim))
-                .child(label.to_string()),
-        )
-        .child(
-            div()
-                .min_w_0()
-                .truncate()
-                .text_color(rgb(t.text))
-                .child(value.to_string()),
-        )
-}
-
-/// Pretty-print a stored keystroke string ("cmd-shift-p") with Mac symbols.
-fn pretty_keystroke(s: &str) -> String {
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() == 1 {
-        return key_symbol(parts[0]);
-    }
-    let mut out = String::new();
-    for m in &parts[..parts.len() - 1] {
-        out.push_str(match *m {
-            "cmd" => "⌘",
-            "ctrl" => "⌃",
-            "alt" => "⌥",
-            "shift" => "⇧",
-            o => o,
-        });
-    }
-    out.push_str(&key_symbol(parts[parts.len() - 1]));
-    out
-}
-
-fn key_symbol(k: &str) -> String {
-    match k {
-        "enter" => "↩".into(),
-        "escape" => "⎋".into(),
-        "backspace" => "⌫".into(),
-        "delete" => "⌦".into(),
-        "up" => "↑".into(),
-        "down" => "↓".into(),
-        "left" => "←".into(),
-        "right" => "→".into(),
-        "space" => "␣".into(),
-        "tab" => "⇥".into(),
-        o => o.to_uppercase(),
-    }
-}
-
-/// A section heading inside Settings.
-fn settings_title(text: &str) -> impl IntoElement {
-    div()
-        .text_color(rgb(theme().text_muted))
-        .text_size(px(UI_SMALL_FONT_SIZE))
-        .child(text.to_uppercase())
-}
-
-/// The large title + one-line description shown at the top of a settings tab.
-fn settings_header(title: &str, subtitle: &str) -> impl IntoElement {
-    let t = theme();
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .pb_1()
-        .child(
-            div()
-                .text_base()
-                .font_weight(FontWeight::BOLD)
-                .text_color(rgb(t.text))
-                .child(title.to_string()),
-        )
-        .child(
-            div()
-                .text_size(px(UI_SMALL_FONT_SIZE))
-                .text_color(rgb(t.text_muted))
-                .child(subtitle.to_string()),
-        )
-}
-
-/// A hairline divider used inside settings cards.
-fn settings_divider() -> impl IntoElement {
-    div().h(px(1.0)).bg(rgb(theme().border))
-}
-
-/// A settings "card": a titled, bordered container grouping related rows, each
-/// row padded and separated by a hairline. This is the core of the settings
-/// look — related controls read as one unit instead of a flat list.
-fn settings_section(title: &str, subtitle: Option<&str>, rows: Vec<AnyElement>) -> AnyElement {
-    let t = theme();
-    let mut header = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .px_4()
-        .pt_3()
-        .pb_3()
-        .child(
-            div()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(t.text))
-                .child(title.to_string()),
-        );
-    if let Some(s) = subtitle {
-        header = header.child(
-            div()
-                .text_size(px(UI_SMALL_FONT_SIZE))
-                .text_color(rgb(t.text_dim))
-                .child(s.to_string()),
-        );
-    }
-
-    let mut card = div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .rounded_lg()
-        .border_1()
-        .border_color(rgb(t.border))
-        .bg(Theme::alpha(t.surface, 0x33))
-        .child(header)
-        .child(settings_divider());
-
-    for (i, row) in rows.into_iter().enumerate() {
-        if i > 0 {
-            card = card.child(settings_divider());
-        }
-        card = card.child(div().px_4().py_3().child(row));
-    }
-    card.into_any_element()
-}
-
-/// A "Reset to Default" button (used once per settings tab).
-fn reset_button(
-    id: &'static str,
-    label: &str,
-    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let t = theme();
-    div()
-        .flex()
-        .pt_2()
-        .child(
-            div()
-                .id(id)
-                .px_3()
-                .py_1()
-                .rounded_md()
-                .cursor_pointer()
-                .bg(rgb(t.hover))
-                .text_color(rgb(t.text))
-                .border_1()
-                .border_color(rgb(t.border))
-                .hover(|s| s.border_color(rgb(0xd9544f)).text_color(rgb(0xd9544f)))
-                .child(label.to_string())
-                .on_click(on_click),
-        )
-}
-
-/// A live sample of the command palette for the opacity setting: a mock
-/// explorer backdrop with a scaled-down palette floating over it, using the
-/// same background alpha as the real palette. As the opacity stepper changes,
-/// this repaints so the user sees exactly how see-through the search window
-/// will be over their files.
-fn palette_opacity_preview() -> AnyElement {
-    let t = theme();
-    // Backdrop: a few faux "file rows" (icon chip + name/detail bars) so the
-    // transparency is visible — a solid backdrop would hide the effect.
-    let faux_row = |icon: u32, w1: f32, w2: f32| {
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .h(px(22.0))
-            .child(div().flex_none().w(px(12.0)).h(px(12.0)).rounded_sm().bg(rgb(icon)))
-            .child(div().flex_none().w(px(w1)).h(px(7.0)).rounded_full().bg(Theme::alpha(t.text, 0x44)))
-            .child(div().flex_none().w(px(w2)).h(px(7.0)).rounded_full().bg(Theme::alpha(t.text, 0x22)))
-    };
-    // In-flow, fills the fixed-height box (`size_full`). An outer box with only
-    // absolutely-positioned children collapses to zero — so the backdrop must be
-    // in-flow to reliably paint.
-    let backdrop = div()
-        .size_full()
-        .bg(rgb(t.bg))
-        .flex()
-        .flex_col()
-        .py_2()
-        .child(faux_row(t.accent, 90.0, 40.0))
-        .child(faux_row(t.accent, 120.0, 30.0))
-        .child(faux_row(0xd9844f, 70.0, 55.0))
-        .child(faux_row(t.accent, 140.0, 25.0))
-        .child(faux_row(0x4faf7a, 60.0, 45.0))
-        .child(faux_row(t.accent, 100.0, 35.0))
-        .child(faux_row(0xd9544f, 110.0, 30.0));
-
-    // A miniature palette, styled exactly like the real one (same alpha).
-    let hint = |k: &'static str| {
-        div()
-            .px_1()
-            .rounded_sm()
-            .bg(Theme::alpha(t.text_dim, 0x22))
-            .text_color(rgb(t.text_muted))
-            .child(k)
-    };
-    let sample = div()
-        .absolute()
-        .top(px(14.0))
-        .left(px(28.0))
-        .right(px(28.0))
-        .flex()
-        .flex_col()
-        .overflow_hidden()
-        .bg(Theme::alpha(t.surface, palette_alpha()))
-        .rounded_lg()
-        .border_1()
-        .border_color(rgb(t.border_strong))
-        .shadow_lg()
-        // Input line.
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .py_2()
-                .border_b_1()
-                .border_color(rgb(t.border_strong))
-                .child(div().flex_none().text_color(rgb(t.accent)).child("›"))
-                .child(div().text_color(rgb(t.text)).child("Documents")),
-        )
-        // A selected result + a plain one.
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .h(px(24.0))
-                .bg(rgb(t.selected))
-                .child(div().flex_none().w(px(12.0)).h(px(12.0)).rounded_sm().bg(rgb(t.accent)))
-                .child(div().text_color(rgb(t.text)).child("Documents"))
-                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child("~/Documents")),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .h(px(24.0))
-                .child(div().flex_none().w(px(12.0)).h(px(12.0)).rounded_sm().bg(rgb(t.accent)))
-                .child(div().text_color(rgb(t.text)).child("Downloads"))
-                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child("~/Downloads")),
-        )
-        // Footer hints.
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .py_1()
-                .border_t_1()
-                .border_color(rgb(t.border_strong))
-                .text_size(px(UI_SMALL_FONT_SIZE))
-                .text_color(rgb(t.text_dim))
-                .child(hint("↩"))
-                .child("Open")
-                .child(hint("esc"))
-                .child("Close"),
-        );
-
-    div()
-        .relative()
-        .w_full()
-        .h(px(178.0))
-        .rounded_md()
-        .overflow_hidden()
-        .border_1()
-        .border_color(rgb(t.border))
-        // Fixed height + in-flow backdrop; the sample palette floats over it.
-        .child(backdrop)
-        .child(sample)
-        .into_any_element()
-}
-
-/// A labelled on/off toggle row used in the General settings tab. `id` must be
-/// unique per row, or only the first switch receives clicks.
-fn toggle_row(
-    id: &'static str,
-    title: &str,
-    desc: &str,
-    on: bool,
-    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let t = theme();
-    // The pill switch.
-    let knob = div()
-        .absolute()
-        .top(px(2.0))
-        .left(if on { px(20.0) } else { px(2.0) })
-        .w(px(16.0))
-        .h(px(16.0))
-        .rounded_full()
-        .bg(rgb(0xffffff));
-    let switch = div()
-        .id(id)
-        .flex_none()
-        .relative()
-        .w(px(38.0))
-        .h(px(20.0))
-        .rounded_full()
-        .cursor_pointer()
-        .bg(if on { rgb(t.accent) } else { rgb(t.surface) })
-        .child(knob)
-        .on_click(on_click);
-
-    div()
-        .w_full()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_4()
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_color(rgb(t.text)).child(title.to_string()))
-                .child(
-                    div()
-                        .text_size(px(UI_SMALL_FONT_SIZE))
-                        .text_color(rgb(t.text_muted))
-                        .child(desc.to_string()),
-                ),
-        )
-        .child(switch)
-}
-
-/// A settings row with a −/+ stepper and a value label (used for numeric prefs).
-fn stepper_row(
-    id: &'static str,
-    title: &str,
-    desc: &str,
-    value_label: String,
-    on_dec: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    on_inc: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let t = theme();
-    let button = |bid: SharedString, glyph: &str| {
-        div()
-            .id(bid)
-            .flex_none()
-            .w(px(24.0))
-            .h(px(24.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .cursor_pointer()
-            .bg(rgb(t.surface))
-            .text_color(rgb(t.text))
-            .hover(|s| s.bg(rgb(t.hover)))
-            .child(glyph.to_string())
-    };
-
-    div()
-        .w_full()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_4()
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(div().text_color(rgb(t.text)).child(title.to_string()))
-                .child(
-                    div()
-                        .text_size(px(UI_SMALL_FONT_SIZE))
-                        .text_color(rgb(t.text_muted))
-                        .child(desc.to_string()),
-                ),
-        )
-        .child(
-            div()
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(button(SharedString::from(format!("{id}-dec")), "−").on_click(on_dec))
-                .child(
-                    div()
-                        .w(px(40.0))
-                        .flex()
-                        .justify_center()
-                        .text_color(rgb(t.text))
-                        .child(value_label),
-                )
-                .child(button(SharedString::from(format!("{id}-inc")), "+").on_click(on_inc)),
-        )
 }
 
 // Default column widths for the main listing; all are user-resizable.
@@ -3287,10 +1295,6 @@ struct Tab {
     /// Back/forward navigation history and our position within it.
     history: Vec<PathBuf>,
     hist_pos: usize,
-    /// Deepest directory visited along the current lineage. When we move up to
-    /// an ancestor, the breadcrumb keeps showing this path's trailing segments
-    /// (grayed out) so the user can click forward into them again.
-    deepest: Option<PathBuf>,
     /// When `Some`, the path bar is an editable text field holding this string.
     editing_path: Option<String>,
     /// Text-cursor position (char index) within `editing_path`.
@@ -3342,12 +1346,6 @@ struct Tab {
     last_scroll: Instant,
     /// Bumped per scroll so the fade-out animation restarts from opaque.
     scroll_epoch: u64,
-    /// The directory's signature as of the last load; the watcher reloads the
-    /// tab when the folder changes underneath us (new download, deletion, …).
-    dir_sig: Option<DirSig>,
-    /// Same, for the deeper Column-view folders (`col_chain`), so a column
-    /// showing e.g. Downloads picks up new files too.
-    col_sigs: HashMap<PathBuf, DirSig>,
     /// When `Some`, this tab browses a remote SFTP server; `current_dir` is a
     /// remote absolute path on that host. `None` = a normal local tab.
     remote: Option<SftpServer>,
@@ -3465,7 +1463,6 @@ impl Tab {
             entries,
             history: vec![dir.clone()],
             hist_pos: 0,
-            deepest: Some(dir),
             editing_path: None,
             path_cursor: 0,
             path_anchor: None,
@@ -3492,8 +1489,6 @@ impl Tab {
             load_gen: 0,
             last_scroll: Instant::now(),
             scroll_epoch: 0,
-            dir_sig: None,
-            col_sigs: HashMap::new(),
             remote: None,
         };
         tab.recompute_results();
@@ -3613,6 +1608,10 @@ struct Shuffle {
     palette_open: bool,
     file_search: search_ui::State,
     space_map: Option<space_ui::State>,
+    preview_pending: RefCell<HashMap<PathBuf,Arc<AtomicBool>>>,
+    preview_resize: Option<preview_panel::Drag>,
+    info_pending: RefCell<HashSet<PathBuf>>,
+    pdf_pending: RefCell<HashSet<(PathBuf,usize)>>,
     query: String,
     /// Text-cursor position in `query`, as a char index (0..=char count).
     query_cursor: usize,
@@ -3804,98 +1803,47 @@ impl Shuffle {
             }
         })
         .detach();
-        // Watch the visible folders for outside changes (a finishing download,
-        // files created/deleted by other apps): poll each pane's directory —
-        // and in Column view every open column — once a second, off-thread so
-        // a slow network mount can't stall a frame, and reload whatever
-        // changed. The reload re-applies the tab's sort and any active filter,
-        // so new files land in the right spot immediately. Background tabs are
-        // caught the moment they're shown (their stored signature is stale).
+        // Observe only visible local folders. Filesystem notifications replace
+        // the old once-a-second cloud directory hashing.
         cx.spawn(async move |this, cx| {
+            let mut watcher = folder_watch::Watcher::new();
+            let mut maintenance = Instant::now();
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(1000))
-                    .await;
-                // Per pane: (root dir, deeper column dirs). Remote tabs aren't
-                // on the local filesystem, so they're skipped.
+                cx.background_executor().timer(Duration::from_millis(250)).await;
                 let dirs = match this.update(cx, |this, _| {
-                    this.panes
-                        .iter()
-                        .map(|p| {
-                            let t = p.active_tab();
-                            if t.remote.is_some() {
-                                return None;
-                            }
-                            let chain = if t.view == ViewMode::Columns { t.col_chain.clone() } else { Vec::new() };
-                            Some((t.current_dir.clone(), chain))
-                        })
-                        .collect::<Vec<_>>()
-                }) {
-                    Ok(d) => d,
-                    Err(_) => break,
-                };
-                let sampled = dirs.clone();
-                let sigs = cx
-                    .background_spawn(async move {
-                        sampled
-                            .iter()
-                            .map(|d| {
-                                d.as_ref().map(|(root, chain)| {
-                                    (dir_sig(root), chain.iter().map(|c| dir_sig(c)).collect::<Vec<_>>())
-                                })
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .await;
-                let alive = this.update(cx, |this, cx| {
-                    for (pane, (d, sig)) in dirs.into_iter().zip(sigs).enumerate() {
-                        let (Some((dir, chain)), Some((root_sig, chain_sigs))) = (d, sig) else {
-                            continue;
-                        };
-                        // Skip if the pane went away or navigated meanwhile.
-                        if pane >= this.panes.len() || this.tab(pane).current_dir != dir {
-                            continue;
+                    this.panes.iter().map(|p| {
+                        let tab = p.active_tab();
+                        if tab.remote.is_some() { return None; }
+                        Some((tab.current_dir.clone(), if tab.view == ViewMode::Columns { tab.col_chain.clone() } else { Vec::new() }))
+                    }).collect::<Vec<_>>()
+                }) { Ok(dirs) => dirs, Err(_) => break };
+                let wanted = dirs.iter().flatten().flat_map(|(root,chain)| std::iter::once(root.clone()).chain(chain.iter().cloned())).collect();
+                let (returned, changed) = cx.background_spawn(async move {
+                    let changed = watcher.changes(wanted); (watcher, changed)
+                }).await;
+                watcher = returned;
+                if this.update(cx, |this,cx| {
+                    for (pane,dir) in dirs.into_iter().enumerate() {
+                        let Some((root,chain)) = dir else {continue;};
+                        if pane >= this.panes.len() || this.tab(pane).current_dir != root {continue;}
+                        if changed.contains(&root) {
+                            forget_column_listing(&root);
+                            this.reload_pane(pane,cx);
                         }
-                        match (this.tab(pane).dir_sig, root_sig) {
-                            (Some(prev), Some(now)) if prev != now => {
-                                forget_column_listing(&dir);
-                                this.reload_pane(pane, cx);
-                            }
-                            (None, Some(now)) => this.tab_mut(pane).dir_sig = Some(now),
-                            _ => {}
-                        }
-                        // Column view: re-list any deeper column that changed.
-                        if this.tab(pane).col_chain != chain {
-                            continue;
-                        }
-                        let mut changed = false;
-                        let tab = this.tab_mut(pane);
-                        tab.col_sigs.retain(|k, _| chain.contains(k));
-                        for (c, now) in chain.iter().zip(chain_sigs) {
-                            let Some(now) = now else { continue };
-                            match tab.col_sigs.insert(c.clone(), now) {
-                                Some(prev) if prev != now => {
-                                    forget_column_listing(c);
-                                    changed = true;
-                                }
-                                _ => {}
-                            }
-                        }
-                        if changed {
-                            cx.notify();
+                        if this.tab(pane).col_chain == chain {
+                            for folder in chain {if changed.contains(&folder) {forget_column_listing(&folder); cx.notify();}}
                         }
                     }
-                    // Same tick: live-refresh the waterfall tree's folders, and
-                    // persist the tab/split layout if it changed.
-                    this.refresh_waterfall(cx);
-                    this.save_session();
-                });
-                if alive.is_err() {
-                    break;
-                }
+                    if SIDEBAR_DIRTY.swap(false, Ordering::AcqRel) { cx.notify(); }
+                    if maintenance.elapsed() >= Duration::from_secs(1) {
+                        ensure_dynamic_sidebar_icons();
+                        this.refresh_waterfall(cx);
+                        this.save_session();
+                        maintenance = Instant::now();
+                    }
+                }).is_err() {break;}
             }
-        })
-        .detach();
+        }).detach();
         // Hidden debug harness (SHUFFLE_MQ_SIM=1): drive a marquee + edge drag
         // programmatically and log what the auto-scroll loop does. Synthetic OS
         // mouse events don't reach gpui, so this is how the mechanics are
@@ -3985,6 +1933,10 @@ impl Shuffle {
             palette_open: false,
             file_search: search_ui::State::default(),
             space_map: None,
+            preview_pending: RefCell::new(HashMap::new()),
+            preview_resize: None,
+            info_pending: RefCell::new(HashSet::new()),
+            pdf_pending: RefCell::new(HashSet::new()),
             query: String::new(),
             query_cursor: 0,
             query_anchor: None,
@@ -4205,9 +2157,6 @@ impl Shuffle {
         }
         let dir = self.tab(pane).current_dir.clone();
         ensure_dynamic_sidebar_icons(); // pick up newly-mounted volumes/cloud
-        // Stamp the mtime *before* reading so a change racing the read bumps
-        // it again and the watcher catches it on the next tick.
-        self.tab_mut(pane).dir_sig = dir_sig(&dir);
         self.tab_mut(pane).entries = read_entries_fast(&dir);
         self.next_load_gen += 1;
         let gen = self.next_load_gen;
@@ -6164,6 +4113,7 @@ impl Shuffle {
 
     /// After an in-place edit, drop stale caches and refresh the listing.
     fn refresh_after_edit(&mut self, pane: usize, path: PathBuf, cx: &mut Context<Self>) {
+        if let Some(cancel)=self.preview_pending.borrow_mut().remove(&path) {cancel.store(true,Ordering::Release);}
         TEXT_PREVIEW_CACHE.with(|c| { c.borrow_mut().remove(&path); });
         PREVIEW_CACHE.with(|c| {
             c.borrow_mut().remove(&path);
@@ -8148,16 +6098,25 @@ impl Shuffle {
         }
     }
 
-    // ----- command palette (Cmd+P) -----
+    // ----- file search (Cmd+P) and folder actions -----
 
     fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search_in_pane(self.active_pane) && !self.file_search.editing {
+            self.focus_file_search(false, window, cx); return;
+        }
         if self.palette_open { self.close_palette(cx); }
         else { self.focus_file_search(true, window, cx); }
     }
 
     fn close_palette(&mut self, cx: &mut Context<Self>) {
+        if self.file_search.inline && self.file_search.busy { self.file_search.stopped = true; }
         self.file_search.cancel();
         if self.file_search.inline {
+            let pane = self.file_search.pane;
+            if pane < self.panes.len() && self.pane(pane).active == self.file_search.tab {
+                let tab = self.tab_mut(pane);
+                tab.selection.clear(); tab.anchor = None;
+            }
             self.file_search.scope = file_search::Scope::CurrentFolder;
             self.file_search.mode = file_search::Mode::File;
             self.query.clear(); self.query_cursor = 0; self.query_anchor = None;
@@ -8168,11 +6127,11 @@ impl Shuffle {
         cx.notify();
     }
 
-    /// Open the command palette pre-targeted at `path`: a single selected item
+    /// Open the actions popup targeted at `path`: a single selected item
     /// for that folder with the ⌘K actions dropdown already open (Copy path,
     /// Reveal in Finder, Open in new tab, …). Reached by clicking the
     /// breadcrumb's current-location crumb, which previously just re-navigated
-    /// to where you already were. Typing still searches as usual.
+    /// to where you already were.
     fn open_palette_for_path(
         &mut self,
         pane: usize,
@@ -8211,10 +6170,15 @@ impl Shuffle {
         if n == 0 {
             return;
         }
-        let next = (self.selected as i64 + delta).clamp(0, n as i64 - 1);
+        let next = if self.file_search.inline && self.tab(self.file_search.pane).selection.is_empty() {
+            if delta >= 0 { 0 } else { n as i64 - 1 }
+        } else { (self.selected as i64 + delta).clamp(0, n as i64 - 1) };
         self.selected = next as usize;
         // Keep the highlighted row in view as you arrow through a long list.
-        self.palette_scroll.scroll_to_item(self.selected);
+        if self.file_search.inline {
+            self.file_search.scroll.scroll_to_item(self.selected, ScrollStrategy::Center);
+            self.select_search_result(self.selected, cx);
+        } else { self.palette_scroll.scroll_to_item(self.selected); }
         cx.notify();
     }
 
@@ -8522,6 +6486,27 @@ impl Shuffle {
         // so keybindings can't fire underneath it.
         if self.context_menu.is_some() {
             self.menu_key(key, window, cx);
+            return;
+        }
+
+        // Search results are ordinary rows; clicking one leaves text-editing
+        // focus and enables selection, previews, copying and Quick Look.
+        if self.search_in_pane(self.active_pane) && !self.file_search.editing {
+            match key {
+                "escape" => self.close_palette(cx),
+                "down" => self.move_selection(1, cx),
+                "up" => self.move_selection(-1, cx),
+                "enter" => self.activate_selection(cx),
+                "space" if !cmd => self.quick_look(self.active_pane),
+                _ => {
+                    let kc = canon_keystroke(ks);
+                    if let Some(action) = keymap().action_for(&kc) {
+                        if matches!(action, KeyAction::CommandPalette | KeyAction::Copy | KeyAction::CopyPath | KeyAction::SelectAll | KeyAction::GetInfo | KeyAction::RevealInFinder | KeyAction::Share | KeyAction::Open | KeyAction::NewTab | KeyAction::CloseTab) {
+                            self.run_key_action(action, window, cx);
+                        }
+                    }
+                }
+            }
             return;
         }
 
@@ -9195,7 +7180,8 @@ impl Shuffle {
 
     /// The List-view column widths as laid out in this pane right now.
     fn fitted_widths(&self, pane: usize) -> ColumnWidths {
-        let vw = f64::from(self.tab(pane).h_scroll.bounds().size.width) as f32;
+        let measured = PANE_W.with(|w|w.borrow()[pane.min(1)]);
+        let vw = if measured > 0. { measured } else { f32::from(self.tab(pane).h_scroll.bounds().size.width) };
         // Rows are padded px_3 on both sides.
         self.widths.fit(vw - 24.0)
     }
@@ -9205,19 +7191,14 @@ impl Shuffle {
     }
 
     /// Load `dir` as a pane's current directory: re-read contents, update the
-    /// breadcrumb's deepest-tail, record it as most-recent, and persist. Does
+    /// current folder, record it as most-recent, and persist. Does
     /// NOT touch back/forward history (callers manage that).
     fn load_dir_in(&mut self, pane: usize, dir: PathBuf, cx: &mut Context<Self>) {
+        if self.search_in_pane(pane) { self.close_palette(cx); }
         self.rename = None;
         clear_column_cache();
         {
             let tab = self.tab_mut(pane);
-            // Keep the grayed-out forward tail in the breadcrumb when moving to an
-            // ancestor of where we were; otherwise the tail resets to here.
-            let keep = tab.deepest.as_ref().is_some_and(|d| d.starts_with(&dir));
-            if !keep {
-                tab.deepest = Some(dir.clone());
-            }
             tab.current_dir = dir.clone();
             tab.editing_path = None;
             tab.find_query = None;
@@ -9247,6 +7228,7 @@ impl Shuffle {
     /// Navigate a pane into `dir` if it is a directory. New navigation truncates
     /// any forward history, then appends `dir` as the new tip.
     fn navigate_in(&mut self, pane: usize, dir: PathBuf, cx: &mut Context<Self>) {
+        if self.search_in_pane(pane) { self.close_palette(cx); }
         if dir == self.tab(pane).current_dir {
             return;
         }
@@ -9845,6 +7827,7 @@ impl Shuffle {
 
     /// Open a new tab in `pane`, starting in that pane's current directory.
     fn new_tab_in(&mut self, pane: usize, cx: &mut Context<Self>) {
+        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
         let dir = self.tab(pane).current_dir.clone();
         let p = self.pane_mut(pane);
         p.tabs.push(Tab::new(dir));
@@ -9889,7 +7872,6 @@ impl Shuffle {
                         {
                             let tab = &mut this.panes[pane].tabs[tab_ix];
                             tab.current_dir = dir.clone();
-                            tab.deepest = Some(dir.clone());
                             tab.history = vec![dir];
                             tab.hist_pos = 0;
                         }
@@ -9913,6 +7895,7 @@ impl Shuffle {
 
     /// Select a tab in a pane.
     fn select_tab(&mut self, pane: usize, tab: usize, cx: &mut Context<Self>) {
+        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
         self.active_pane = pane;
         let p = self.pane_mut(pane);
         if tab < p.tabs.len() {
@@ -9933,6 +7916,7 @@ impl Shuffle {
         if pane >= self.panes.len() || tab >= self.panes[pane].tabs.len() {
             return;
         }
+        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
         let dir = self.panes[pane].tabs[tab].current_dir.clone();
         let remote = self.panes[pane].tabs[tab].remote.clone();
         let mut new = Tab::new(dir);
@@ -9954,6 +7938,7 @@ impl Shuffle {
         if pane >= self.panes.len() || keep >= self.panes[pane].tabs.len() {
             return;
         }
+        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
         let kept = self.panes[pane].tabs.remove(keep);
         let p = self.pane_mut(pane);
         p.tabs.clear();
@@ -9964,6 +7949,7 @@ impl Shuffle {
     }
 
     fn close_tab(&mut self, pane: usize, tab: usize, cx: &mut Context<Self>) {
+        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
         if pane >= self.panes.len() || tab >= self.panes[pane].tabs.len() {
             return;
         }
@@ -10001,6 +7987,7 @@ impl Shuffle {
         if from.pane >= self.panes.len() || from.tab >= self.panes[from.pane].tabs.len() {
             return;
         }
+        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
         // Two panes max: a split-zone drop while the canvas is already split
         // moves the tab to the end of the right pane instead of creating an
         // invisible third pane.
@@ -10072,21 +8059,11 @@ impl Shuffle {
 
     // ----- selection -----
 
-    /// The root column shares the sorted/text-filtered list; deeper columns
-    /// retain the tab's type filter while browsing down the folder chain.
-    fn visible_column_entries(&self, pane: usize, dir: &Path) -> Vec<Entry> {
-        let tab = self.tab(pane);
-        if dir == tab.current_dir {
-            tab.visible_entries().cloned().collect()
-        } else {
-            column_entries(dir).into_iter()
-                .filter(|entry| tab.entry_filter.accepts(entry.is_folder()) && (tab.show_hidden || !entry.is_hidden()))
-                .collect()
-        }
-    }
-
     /// The paths shown in the focused list or column, in display order.
     fn display_paths(&self, pane: usize) -> Vec<PathBuf> {
+        if self.search_in_pane(pane) {
+            return self.palette_items.iter().map(|item| match &item.action { Action::Open(path,_)=>path.clone() }).collect();
+        }
         let tab = self.tab(pane);
         if tab.view == ViewMode::Columns {
             let dir = if tab.col_active == 0 {
@@ -10104,6 +8081,8 @@ impl Shuffle {
     fn focus_entry(&mut self, pane: usize, path: PathBuf, cx: &mut Context<Self>) {
         self.tab_mut(pane).anchor = Some(path.clone());
         self.preview_page = 0;
+        self.cancel_unused_previews();
+        if self.space_map.is_some() && self.tab(pane).view != ViewMode::Gallery { cx.notify(); return; }
         // Remote files aren't on the local disk, so QuickLook/PDF rendering
         // can't read them directly. Fetch a copy to a temp cache and preview
         // that (images & PDFs only, size-capped). Info (local stat) is skipped.
@@ -10829,155 +8808,9 @@ impl Shuffle {
             tab.selection.clear();
             tab.selection.insert(target.clone());
         }
+        col_scroll(pane,k).scroll_to_item(idx,ScrollStrategy::Center);
         cx.notify();
         self.focus_entry(pane, target, cx);
-    }
-
-    /// Gather file info for `path` in the background (once), then repaint.
-    fn ensure_info(&self, path: PathBuf, cx: &mut Context<Self>) {
-        // Only gather info when the Information panel is actually shown.
-        if !prefs().info || lookup_info(&path).is_some() {
-            return;
-        }
-        cx.spawn(async move |this, cx| {
-            let p = path.clone();
-            let info = cx.background_spawn(async move { gather_info(&p) }).await;
-            let _ = this.update(cx, |_, cx| {
-                INFO_CACHE.with(|c| {
-                    c.borrow_mut().insert(path, info);
-                });
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// Build a preview for `path` in the background (once), then repaint.
-    /// `force` generates it even when the Preview pref is off (Gallery view).
-    fn ensure_preview(&self, path: PathBuf, force: bool, cx: &mut Context<Self>) {
-        if (!force && !prefs().preview) || lookup_preview(&path).is_some() {
-            return;
-        }
-        cx.spawn(async move |this, cx| {
-            let p = path.clone();
-            let (text, img) = cx.background_spawn(async move {
-                let text = text_preview::read(&p).map(Arc::new);
-                let img = if text.is_none() { build_preview(&p) } else { None };
-                (text, img)
-            }).await;
-            let _ = this.update(cx, |_, cx| {
-                TEXT_PREVIEW_CACHE.with(|c| { c.borrow_mut().insert(path.clone(), text); });
-                PREVIEW_CACHE.with(|c| {
-                    c.borrow_mut().insert(path, img);
-                });
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// Render one page of a PDF for the inspector pager in the background
-    /// (once), recording the document's page count along the way.
-    fn ensure_pdf_page(&self, path: PathBuf, page: usize, cx: &mut Context<Self>) {
-        if !is_pdf(&path) || lookup_pdf_page(&path, page).is_some() {
-            return;
-        }
-        // Remote PDFs live in a downloaded temp copy; render pages from there
-        // but key the cache by the remote path (what the inspector looks up).
-        let src = if self.active_tab().remote.is_some() {
-            remote_preview_temp(&path)
-        } else {
-            path.clone()
-        };
-        cx.spawn(async move |this, cx| {
-            let p = src.clone();
-            let out = cx.background_spawn(async move { render_pdf_page(&p, page) }).await;
-            let _ = this.update(cx, |this, cx| {
-                match out {
-                    Some((img, count)) => {
-                        insert_pdf_page(path.clone(), page, Some(img));
-                        PDF_COUNT_CACHE.with(|c| {
-                            c.borrow_mut().insert(path.clone(), count);
-                        });
-                        // Have the second page ready before the first ‹ › click.
-                        if page == 0 && count > 1 {
-                            this.ensure_pdf_page(path, 1, cx);
-                        }
-                    }
-                    None => insert_pdf_page(path, page, None),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// Preview a remote (SFTP) file: download it once to a temp cache, build the
-    /// preview from that local copy, and store the result under the *remote*
-    /// path so the inspector's cache lookups find it. Limited to images and
-    /// PDFs under a size cap so we never pull a huge binary just to preview it.
-    fn ensure_remote_preview(&self, remote_path: PathBuf, size: u64, cx: &mut Context<Self>) {
-        if !prefs().preview || lookup_preview(&remote_path).is_some() {
-            return;
-        }
-        let Some(server) = self.active_tab().remote.clone() else {
-            return;
-        };
-        // Only fetch types worth previewing.
-        if !is_image(&remote_path) && !is_pdf(&remote_path) {
-            return;
-        }
-        // Cap the download; mark oversized files unavailable so we don't retry.
-        const MAX_PREVIEW_BYTES: u64 = 40 * 1024 * 1024;
-        if size > MAX_PREVIEW_BYTES {
-            PREVIEW_CACHE.with(|c| c.borrow_mut().insert(remote_path, None));
-            cx.notify();
-            return;
-        }
-        let use_system = prefs().ssh_use_system;
-        let want_pdf = is_pdf(&remote_path);
-        cx.spawn(async move |this, cx| {
-            let s = server.clone();
-            let rp = remote_path.clone();
-            let built = cx
-                .background_spawn(async move {
-                    let local = remote_preview_temp(&rp);
-                    if let Some(parent) = local.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                    // Fetch a fresh copy (the remote file may have changed).
-                    let r = rp.to_string_lossy().replace('"', "");
-                    let l = local.to_string_lossy().replace('"', "");
-                    let script = format!("get \"{r}\" \"{l}\"");
-                    match sftp_batch(&s, &script, use_system) {
-                        Ok(_) => {
-                            let img = build_preview(&local);
-                            let pdf = if want_pdf { render_pdf_page(&local, 0) } else { None };
-                            Some((img, pdf))
-                        }
-                        Err(_) => None,
-                    }
-                })
-                .await;
-            let _ = this.update(cx, |_this, cx| {
-                match built {
-                    Some((img, pdf)) => {
-                        PREVIEW_CACHE.with(|c| c.borrow_mut().insert(remote_path.clone(), img));
-                        if let Some((pimg, count)) = pdf {
-                            insert_pdf_page(remote_path.clone(), 0, Some(pimg));
-                            PDF_COUNT_CACHE
-                                .with(|c| c.borrow_mut().insert(remote_path.clone(), count));
-                        }
-                    }
-                    // Download/build failed → cache "unavailable" (shows the icon).
-                    None => {
-                        PREVIEW_CACHE.with(|c| c.borrow_mut().insert(remote_path.clone(), None));
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
     }
 
     /// The floating "why this name won't work" pill shown over `pane` while an
@@ -11038,7 +8871,7 @@ impl Shuffle {
         if show_preview {
             if let Some(text) = text {
                 return Some(
-                    div().id("inspector").flex_none().w(px(420.0)).h_full()
+                    div().id("inspector").flex_none().w_full().h_full()
                         .min_h_0().flex().flex_col().gap_3().p_4()
                         .bg(rgb(t.sidebar)).border_l_1().border_color(rgb(t.border))
                         .child(div().flex_none().font_weight(FontWeight::SEMIBOLD)
@@ -11058,7 +8891,7 @@ impl Shuffle {
         let mut col = div()
             .id("inspector")
             .flex_none()
-            .w(px(280.0))
+            .w_full()
             .h_full()
             .overflow_y_scroll()
             .flex()
@@ -11093,8 +8926,8 @@ impl Shuffle {
             let handle = page_img.or_else(|| lookup_preview(&sel).flatten());
             let body: AnyElement = match handle {
                 Some(handle) => img(ImageSource::Render(handle))
-                    .max_w(px(248.0))
-                    .max_h(px(360.0))
+                    .max_w_full()
+                    .max_h(px(600.0))
                     .object_fit(ObjectFit::Contain)
                     .into_any_element(),
                 // Not ready yet or unavailable → show the file's icon.
@@ -11110,7 +8943,7 @@ impl Shuffle {
                 .min_h(px(120.0))
                 // Clip so a tall preview can't paint over the title above or the
                 // "Information" section below.
-                .max_h(px(380.0))
+                .max_h(px(620.0))
                 .overflow_hidden()
                 .p_2()
                 .rounded_md()
@@ -11348,70 +9181,25 @@ impl Shuffle {
         }
     }
 
-    /// Build macOS file-type icons for the current directory off the render
-    /// thread, one file-type at a time, yielding between each so scrolling stays
-    /// smooth. Until an icon is ready the row shows the emoji placeholder.
+    /// Drain requests from rows that were actually laid out this frame.
     fn prewarm_icons(&self, cx: &mut Context<Self>) {
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut jobs: Vec<(String, PathBuf)> = Vec::new();
-        ICON_CACHE.with(|cache| {
-            let cache = cache.borrow();
-            let mut has_dir = false;
-            // Warm icons for the active tab of every visible pane.
-            for pane in &self.panes {
-                let tab = pane.active_tab();
-                for entry in tab.visible_entries() {
-                    if entry.is_folder() {
-                        has_dir = true;
-                        continue;
-                    }
-                    let path = tab.current_dir.join(&entry.name);
-                    if let Some(key) = icon_key(&path) {
-                        // Skip types we've already built or already queued.
-                        if cache.contains_key(&key) || !seen.insert(key.clone()) {
-                            continue;
-                        }
-                        jobs.push((key, path));
-                    }
-                }
-            }
-            // The shared generic folder icon, built once for all directories.
-            if has_dir && !cache.contains_key(FOLDER_KEY) {
-                jobs.push((FOLDER_KEY.to_string(), folder_dir_path()));
-            }
-        });
-        if jobs.is_empty() {
-            return;
-        }
-
-        cx.spawn(async move |this, cx| {
-            for (key, path) in jobs {
-                // An active icon pack overrides the macOS icon. Pack images are
-                // read + decoded entirely off the main thread.
-                let built = if let Some(pack_file) = pack_icon_path(&key) {
-                    cx.background_spawn(async move { decode_image_file(&pack_file) })
-                        .await
-                } else {
-                    // AppKit's icon fetch must stay on the main thread (calling it
-                    // off-main can deadlock), but it's the cheap part. The heavy
-                    // decode/resize runs on a background thread.
-                    let tiff = icon_tiff(&path);
-                    match tiff {
-                        Some(t) => cx.background_spawn(async move { decode_icon(&t) }).await,
-                        None => None,
-                    }
+        let jobs=ICON_REQUESTS.with(|q|std::mem::take(&mut *q.borrow_mut()));
+        if jobs.is_empty(){return;}
+        cx.spawn(async move |this,cx| {
+            for (key,(path,epoch)) in jobs {
+                if ICON_EPOCH.with(|e|e.get())!=epoch {continue;}
+                let built=if let Some(pack)=pack_icon_path(&key){
+                    cx.background_spawn(async move {decode_image_file(&pack)}).await
+                }else{
+                    match icon_tiff(&path){Some(bytes)=>cx.background_spawn(async move {decode_icon(&bytes)}).await,None=>None}
                 };
-                ICON_CACHE.with(|cache| {
-                    cache.borrow_mut().insert(key, built);
-                });
-                // Repaint so the freshly-built icon appears; stop if the view
-                // is gone. (The decode already happened off-thread above.)
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
-                    break;
+                if ICON_EPOCH.with(|e|e.get())==epoch {
+                    ICON_CACHE.with(|c|c.borrow_mut().insert(key.clone(),built));
+                    ICON_PENDING.with(|p|{p.borrow_mut().remove(&key);});
                 }
+                if this.update(cx,|_,cx|cx.notify()).is_err(){break;}
             }
-        })
-        .detach();
+        }).detach();
     }
 
     /// Pin the current directory to bookmarks (no-op if already pinned).
@@ -12868,12 +10656,13 @@ impl Shuffle {
         // Highlight the active pane's border (only meaningful when split).
         let split = self.panes.len() > 1;
         let active = pane == self.active_pane;
-        let body: AnyElement = match view {
+        let searching = self.search_in_pane(pane);
+        let body: AnyElement = if searching { self.render_file_results(cx) } else { match view {
             ViewMode::List => self.render_list_body(pane, cx),
             ViewMode::Icons => self.render_icons_body(pane, cx),
             ViewMode::Columns => self.render_columns_body(pane, cx),
             ViewMode::Gallery => self.render_gallery_body(pane, cx),
-        };
+        }};
 
         div()
             .relative()
@@ -12886,24 +10675,14 @@ impl Shuffle {
                 gpui::canvas(
                     move |bounds, window, _| {
                         let width = f64::from(bounds.size.width) as f32;
-                        let toolbar_size = |w: f32| {
-                            if w > 0.0 && w < 470.0 {
-                                0
-                            } else if w > 0.0 && w < 640.0 {
-                                1
-                            } else {
-                                2
-                            }
-                        };
                         let changed = PANE_W.with(|w| {
                             let mut widths = w.borrow_mut();
                             let old = widths[pane.min(1)];
                             widths[pane.min(1)] = width;
-                            toolbar_size(old) != toolbar_size(width)
+                            (old-width).abs() > 0.5
                         });
-                        // Width is measured after rendering. Re-render when a
-                        // breakpoint changes so the toolbar immediately gives
-                        // the current folder enough space after splitting.
+                        // Re-render for any width change so headers and rows
+                        // agree after view changes, splits and preview resizing.
                         if changed {
                             window.on_next_frame(move |_, cx| {
                                 weak.update(cx, |_, cx| cx.notify()).ok();
@@ -12931,6 +10710,7 @@ impl Shuffle {
                 cx.listener(move |this, _: &MouseDownEvent, window, cx| {
                     window.focus(&this.focus);
                     if this.active_pane != pane {
+                        if this.palette_open && this.file_search.inline { this.close_palette(cx); }
                         this.active_pane = pane;
                         cx.notify();
                     }
@@ -12951,7 +10731,7 @@ impl Shuffle {
                     .min_h_0()
                     .child(body)
                     .children(self.rename_error_pill(pane))
-                    .child(self.render_filter_box(pane, cx))
+                    .when(!searching, |body| body.child(self.render_filter_box(pane, cx)))
                     .children(self.render_copy_feedback(pane)),
             )
             .children(self.render_terminal_panel(pane, cx))
@@ -13094,7 +10874,7 @@ impl Shuffle {
                     ("file-list", pane),
                     item_count,
                     cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                        let widths = this.fitted_widths(pane);
+                        let widths = fw;
                         let tab = this.tab(pane);
                         let find_active = tab.is_filtered();
                         let has_parent = !find_active && prefs().show_parent && tab.current_dir.parent().is_some();
@@ -13364,64 +11144,28 @@ impl Shuffle {
             .into_any_element()
     }
 
-    /// The Column (Miller) view body: cascading folder columns.
-    fn render_columns_body(&self, pane: usize, cx: &Context<Self>) -> AnyElement {
-        let t = theme();
-        let tab = self.tab(pane);
-        let mut dirs: Vec<PathBuf> = vec![tab.current_dir.clone()];
-        dirs.extend(tab.col_chain.iter().cloned());
-        let anchor = tab.anchor.clone();
-
-        let mut cols: Vec<AnyElement> = Vec::new();
-        for (i, dir) in dirs.iter().enumerate() {
-            let entries = self.visible_column_entries(pane, dir);
-            let next_dir = dirs.get(i + 1).cloned();
-            let mut rows: Vec<AnyElement> = Vec::new();
-            for e in &entries {
-                let target = dir.join(&e.name);
-                let selected = next_dir.as_deref() == Some(target.as_path())
-                    || anchor.as_deref() == Some(target.as_path())
-                    || tab.selection.contains(&target);
-                let ctx_active = self.is_ctx_target(&target);
-                rows.push(column_row(pane, i, &e.name, target, e.is_dir, selected, ctx_active, cx));
-            }
-            let vscroll = col_scroll(pane, i);
-            let thumb = static_scrollbar_thumb(&vscroll);
-            cols.push(
-                div()
-                    .id(("col", pane * 100 + i))
-                    .relative()
-                    .flex_none()
-                    .w(px(230.0))
-                    .h_full()
-                    .border_r_1()
-                    .border_color(rgb(t.border))
-                    .child(
-                        div()
-                            .id(("col-scroll", pane * 100 + i))
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&vscroll)
-                            .flex()
-                            .flex_col()
-                            .py_1()
-                            .children(rows),
-                    )
-                    .children(thumb)
-                    .into_any_element(),
-            );
+    /// Virtualized Miller columns share listing data and filter masks.
+    fn render_columns_body(&self,pane:usize,cx:&Context<Self>)->AnyElement {
+        let t=theme();let tab=self.tab(pane);
+        let mut dirs=vec![tab.current_dir.clone()];dirs.extend(tab.col_chain.iter().cloned());
+        let mut cols=Vec::new();
+        for (column,dir) in dirs.iter().enumerate(){
+            let count=self.visible_column_entries(pane,dir).len();let path=dir.clone();let next=dirs.get(column+1).cloned();
+            let scroll=col_scroll(pane,column);let base=scroll.0.borrow().base_handle.clone();
+            cols.push(div().id(("col",pane*100+column)).relative().flex_none().w(px(220.)).h_full()
+                .border_r_1().border_color(rgb(t.border))
+                .child(uniform_list(("column-rows",pane*100+column),count,cx.processor(move|this,range:std::ops::Range<usize>,_,cx|{
+                    let entries=this.visible_column_entries(pane,&path);let tab=this.tab(pane);
+                    range.filter_map(|row|{
+                        let entry=entries.get(row)?;let target=path.join(&entry.name);
+                        let selected=next.as_deref()==Some(target.as_path()) || tab.anchor.as_deref()==Some(target.as_path()) || tab.selection.contains(&target);
+                        Some(column_row(pane,column,&entry.name,target.clone(),entry.is_dir,selected,this.is_ctx_target(&target),cx))
+                    }).collect()
+                })).size_full().track_scroll(scroll)
+                    .on_scroll_wheel(cx.listener(|_,_:&ScrollWheelEvent,_,cx|cx.notify())))
+                .children(static_scrollbar_thumb(&base)).into_any_element());
         }
-
-        div()
-            .id(("columns", pane))
-            .flex_1()
-            .min_h_0()
-            .overflow_x_scroll()
-            .track_scroll(&tab.h_scroll)
-            .flex()
-            .flex_row()
-            .children(cols)
-            .into_any_element()
+        div().id(("columns-body",pane)).flex_1().min_h_0().overflow_x_scroll().flex().children(cols).into_any_element()
     }
 
     /// The Gallery view body: a large preview on top + a filmstrip below.
@@ -13717,8 +11461,12 @@ fn header_cell(
 }
 
 impl Render for Shuffle {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let owner=cx.entity().downgrade();
+        window.on_next_frame(move|_,cx|{let _=owner.update(cx,|this,cx|this.prewarm_icons(cx));});
         let t = theme();
+        self.cancel_unused_previews();
+        self.ensure_column_metadata(cx);
         // Kick off any pending waterfall folder reads before rendering the tree.
         self.ensure_waterfall_loaded(cx);
         // Main row: sidebar | content (canvas) | optional inspector.
@@ -13730,7 +11478,7 @@ impl Render for Shuffle {
             .child(self.render_content(cx));
         if let Some(map) = self.render_space_map(cx) { main_row = main_row.child(map); }
         else if let Some(inspector) = self.render_inspector(cx) {
-            main_row = main_row.child(inspector);
+            main_row = main_row.child(self.render_preview_panel(inspector, f32::from(window.viewport_size().width), cx));
         }
 
         let mut root = div()
@@ -13805,15 +11553,14 @@ impl Render for Shuffle {
                 this.navigate_to(PathBuf::from("/"), cx);
             }))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
-                if !this.palette_open {
-                    this.toggle_palette(window, cx);
-                }
+                this.focus_file_search(false, window, cx);
             }))
             // Track column drags anywhere in the window so the cursor can leave
             // the thin handle without dropping the resize.
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 let x = f64::from(ev.position.x) as f32;
                 let y = f64::from(ev.position.y) as f32;
+                this.resize_preview(x, f32::from(window.viewport_size().width), cx);
                 // A press-then-move on a file row becomes a native OS drag (so
                 // files can be dropped into Finder or any other app).
                 this.maybe_start_os_drag(x, y, window, cx);
@@ -13833,6 +11580,7 @@ impl Render for Shuffle {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
+                    this.finish_preview_resize(cx);
                     this.drag_candidate = None;
                     this.terminal_resize = None;
                     this.end_resize();
@@ -13910,9 +11658,8 @@ impl Render for Shuffle {
         if let Some(panel) = self.render_jobs_panel() {
             root = root.child(panel);
         }
-        if self.palette_open {
-            root = if self.file_search.inline { root.child(self.render_file_results(cx)) }
-                else { root.child(self.render_palette(cx)) };
+        if self.palette_open && !self.file_search.inline {
+            root = root.child(self.render_palette(cx));
         }
         if self.context_menu.is_some() {
             root = root.child(self.render_context_menu(cx));
@@ -14202,28 +11949,6 @@ fn expand_path(s: &str) -> PathBuf {
     } else {
         PathBuf::from(s)
     }
-}
-
-/// Open the Settings window (shared by the menu action and the palette).
-fn open_settings_window(cx: &mut App) {
-    let bounds = Bounds::centered(None, size(px(760.0), px(560.0)), cx);
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Settings".into()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        |window, cx| {
-            let view = cx.new(Settings::new);
-            window.focus(&view.read(cx).focus);
-            view
-        },
-    )
-    .ok();
-    cx.activate(true);
 }
 
 /// One clickable row in the right-click context menu.
@@ -15670,6 +13395,15 @@ fn cloud_badged_icon(icon: AnyElement, cloud: CloudSync, badge: f32) -> AnyEleme
 
 /// Like [`icon_element`] but at an explicit pixel size (for the icon/gallery views).
 fn icon_element_sized(path: &Path, is_dir: bool, size: f32) -> AnyElement {
+    if !is_browsable_folder(path,is_dir) {
+        if let Some(key)=icon_key(path) {
+            if !ICON_CACHE.with(|c|c.borrow().contains_key(&key)) && !ICON_PENDING.with(|p|p.borrow().contains_key(&key)) {
+                let epoch=ICON_EPOCH.with(|e|e.get());
+                ICON_PENDING.with(|p|{p.borrow_mut().insert(key.clone(),epoch);});
+                ICON_REQUESTS.with(|q|{q.borrow_mut().insert(key,(path.to_path_buf(),epoch));});
+            }
+        }
+    }
     // Cache-only lookup — never build on the render thread. Directories use the
     // shared generic folder icon (built synchronously at startup, so no emoji
     // placeholder). Files use their type-specific icon once the background
@@ -15695,8 +13429,11 @@ fn icon_element_sized(path: &Path, is_dir: bool, size: f32) -> AnyElement {
 thread_local! {
     // Documents share an extension icon; apps use a separate key for each path.
     // `None` records "couldn't build one" to avoid retrying.
-    static ICON_CACHE: RefCell<HashMap<String, Option<Arc<RenderImage>>>> =
-        RefCell::new(HashMap::new());
+    static ICON_CACHE: RefCell<Cache<String, Option<Arc<RenderImage>>>> =
+        RefCell::new(Cache::new(512, 32*1024*1024, image_bytes, |k| k==FOLDER_KEY || k==FILE_KEY || k.starts_with("fav:")));
+    static ICON_REQUESTS: RefCell<HashMap<String, (PathBuf,u64)>> = RefCell::new(HashMap::new());
+    static ICON_PENDING: RefCell<HashMap<String,u64>> = RefCell::new(HashMap::new());
+    static ICON_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 fn icon_key(path: &Path) -> Option<String> {
@@ -15715,6 +13452,10 @@ fn icon_key(path: &Path) -> Option<String> {
 }
 
 /// Read a previously-built icon from the cache by its key. Never builds.
+fn image_bytes(image:&Option<Arc<RenderImage>>)->usize {
+    image.as_ref().map_or(1,|image|(0..image.frame_count()).map(|i|image.as_bytes(i).map_or(0,<[u8]>::len)).sum())
+}
+
 fn lookup_cached(key: &str) -> Option<Arc<RenderImage>> {
     ICON_CACHE.with(|cache| cache.borrow().get(key).cloned().flatten())
 }
@@ -15875,35 +13616,26 @@ fn fps_overlay() -> AnyElement {
 /// Snapshot of the sidebar's cloud + volume scans, refreshed off-thread.
 static SIDEBAR_SCAN: OnceLock<Mutex<Option<SidebarScan>>> = OnceLock::new();
 static SIDEBAR_SCANNING: AtomicBool = AtomicBool::new(false);
+static SIDEBAR_DIRTY: AtomicBool = AtomicBool::new(false);
 type SidebarScan = (Instant, Vec<(String, PathBuf)>, Vec<(String, PathBuf)>);
 
 /// The sidebar's cloud providers + mounted volumes, from a short-lived cache.
 /// `render` calls this every frame; the actual `read_dir`/`stat` walk (which
-/// can block for seconds on a stale network mount) runs at most every couple of
-/// seconds, on a background thread. The very first call scans synchronously so
-/// the sidebar is complete on first paint.
+/// can block for seconds on a stale network mount) runs off-thread, including
+/// the first scan. A dirty flag makes additions and removals repaint once ready.
 fn sidebar_locations() -> (Vec<(String, PathBuf)>, Vec<(String, PathBuf)>) {
-    const TTL: Duration = Duration::from_secs(2);
+    const TTL: Duration = Duration::from_secs(10);
     let cell = SIDEBAR_SCAN.get_or_init(|| Mutex::new(None));
     let cached = cell.lock().unwrap().clone();
-    match cached {
-        Some((at, cloud, vols)) => {
-            if at.elapsed() > TTL && !SIDEBAR_SCANNING.swap(true, Ordering::SeqCst) {
-                std::thread::spawn(|| {
-                    let fresh = (Instant::now(), cloud_locations(), mounted_volumes());
-                    *SIDEBAR_SCAN.get().unwrap().lock().unwrap() = Some(fresh);
-                    SIDEBAR_SCANNING.store(false, Ordering::SeqCst);
-                });
-            }
-            (cloud, vols)
-        }
-        None => {
-            let cloud = cloud_locations();
-            let vols = mounted_volumes();
-            *cell.lock().unwrap() = Some((Instant::now(), cloud.clone(), vols.clone()));
-            (cloud, vols)
-        }
+    if cached.as_ref().is_none_or(|(at,_,_)| at.elapsed()>TTL) && !SIDEBAR_SCANNING.swap(true,Ordering::SeqCst) {
+        std::thread::spawn(|| {
+            let fresh=(Instant::now(),cloud_locations(),mounted_volumes());
+            *SIDEBAR_SCAN.get().unwrap().lock().unwrap()=Some(fresh);
+            SIDEBAR_DIRTY.store(true,Ordering::Release);
+            SIDEBAR_SCANNING.store(false,Ordering::SeqCst);
+        });
     }
+    cached.map(|(_,cloud,volumes)|(cloud,volumes)).unwrap_or_default()
 }
 
 /// List a folder's visible subdirectories (sorted case-insensitively) plus its
@@ -16084,24 +13816,20 @@ fn nobrowse_mounts() -> HashSet<PathBuf> {
 /// providers + mounted volumes). These are dynamic, so their icons are keyed by
 /// the path string and (re)built by [`ensure_dynamic_sidebar_icons`].
 fn dynamic_sidebar_paths() -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = cloud_locations().into_iter().map(|(_, p)| p).collect();
-    v.extend(mounted_volumes().into_iter().map(|(_, p)| p));
+    let (cloud,volumes) = sidebar_locations();
+    let mut v: Vec<PathBuf> = cloud.into_iter().map(|(_,p)|p).collect();
+    v.extend(volumes.into_iter().map(|(_,p)|p));
     v
 }
 
-/// Build the real macOS icons for the currently-mounted volumes and synced
-/// cloud folders, keyed by path. Cheap (icon_tiff is a few ms) and main-thread,
-/// so it's safe to call on navigation / startup — never from render.
+/// Queue icons for mounted volumes and cloud folders using the cached snapshot.
 fn ensure_dynamic_sidebar_icons() {
-    for p in dynamic_sidebar_paths() {
-        let key = p.to_string_lossy().into_owned();
-        if ICON_CACHE.with(|c| c.borrow().contains_key(&key)) {
-            continue;
-        }
-        let icon = build_macos_icon(&p);
-        ICON_CACHE.with(|c| {
-            c.borrow_mut().insert(key, icon);
-        });
+    for path in dynamic_sidebar_paths() {
+        let key=path.to_string_lossy().into_owned();
+        if ICON_CACHE.with(|c|c.borrow().contains_key(&key)) || ICON_PENDING.with(|p|p.borrow().contains_key(&key)){continue;}
+        let epoch=ICON_EPOCH.with(|e|e.get());
+        ICON_PENDING.with(|p|{p.borrow_mut().insert(key.clone(),epoch);});
+        ICON_REQUESTS.with(|q|{q.borrow_mut().insert(key,(path,epoch));});
     }
 }
 
@@ -16885,16 +14613,16 @@ thread_local! {
     /// Persistent vertical scroll handles for Column view, keyed by (pane,
     /// column index) so each column keeps its scroll position across frames and
     /// we can read its offset to draw a scrollbar thumb.
-    static COL_SCROLLS: RefCell<HashMap<(usize, usize), gpui::ScrollHandle>> =
+    static COL_SCROLLS: RefCell<HashMap<(usize, usize), UniformListScrollHandle>> =
         RefCell::new(HashMap::new());
 }
 
 /// The persistent scroll handle for one Column-view column.
-fn col_scroll(pane: usize, col: usize) -> gpui::ScrollHandle {
+fn col_scroll(pane: usize, col: usize) -> UniformListScrollHandle {
     COL_SCROLLS.with(|m| {
         m.borrow_mut()
             .entry((pane, col))
-            .or_insert_with(gpui::ScrollHandle::new)
+            .or_insert_with(UniformListScrollHandle::new)
             .clone()
     })
 }
@@ -17018,257 +14746,6 @@ fn build_macos_icon(path: &Path) -> Option<Arc<RenderImage>> {
     decode_icon(&tiff)
 }
 
-thread_local! {
-    /// Cache of generated file previews. `None` = generation failed/unavailable.
-    static TEXT_PREVIEW_CACHE: RefCell<HashMap<PathBuf, Option<Arc<text_preview::TextPreview>>>> =
-        RefCell::new(HashMap::new());
-    static PREVIEW_CACHE: RefCell<HashMap<PathBuf, Option<Arc<RenderImage>>>> =
-        RefCell::new(HashMap::new());
-    /// Cache of gathered file information.
-    static INFO_CACHE: RefCell<HashMap<PathBuf, FileInfo>> = RefCell::new(HashMap::new());
-}
-
-fn lookup_preview(path: &Path) -> Option<Option<Arc<RenderImage>>> {
-    PREVIEW_CACHE.with(|c| c.borrow().get(path).cloned())
-}
-
-thread_local! {
-    /// Rendered PDF pages for the inspector pager: (path, page) → image.
-    /// `None` = that page couldn't be rendered.
-    static PDF_PAGE_CACHE: RefCell<HashMap<(PathBuf, usize), Option<Arc<RenderImage>>>> =
-        RefCell::new(HashMap::new());
-    /// Page counts of PDFs we've rendered at least one page of.
-    static PDF_COUNT_CACHE: RefCell<HashMap<PathBuf, usize>> = RefCell::new(HashMap::new());
-}
-
-fn lookup_pdf_page(path: &Path, page: usize) -> Option<Option<Arc<RenderImage>>> {
-    PDF_PAGE_CACHE.with(|c| c.borrow().get(&(path.to_path_buf(), page)).cloned())
-}
-
-fn lookup_pdf_count(path: &Path) -> Option<usize> {
-    PDF_COUNT_CACHE.with(|c| c.borrow().get(path).copied())
-}
-
-/// Insert a rendered page, evicting far-away pages so flipping through a long
-/// PDF can't accumulate unbounded image memory (each page is a few MB).
-fn insert_pdf_page(path: PathBuf, page: usize, img: Option<Arc<RenderImage>>) {
-    PDF_PAGE_CACHE.with(|c| {
-        let mut m = c.borrow_mut();
-        if m.len() >= 12 {
-            let lo = page.saturating_sub(3);
-            let hi = page + 3;
-            m.retain(|(p, pg), _| p == &path && (lo..=hi).contains(pg));
-        }
-        m.insert((path, page), img);
-    });
-}
-
-/// Rasterize one page of a PDF via AppKit's `NSPDFImageRep`, off the render
-/// thread. Returns the page image and the document's page count.
-fn render_pdf_page(path: &Path, page: usize) -> Option<(Arc<RenderImage>, usize)> {
-    use objc2_foundation::{NSPoint, NSRect, NSSize};
-
-    let bytes = fs::read(path).ok()?;
-    let data = NSData::with_bytes(&bytes);
-    let rep = NSPDFImageRep::imageRepWithData(&data)?;
-    let count = rep.pageCount().max(1) as usize;
-    rep.setCurrentPage(page.min(count - 1) as isize);
-
-    let size = rep.size();
-    if size.width < 1.0 || size.height < 1.0 {
-        return None;
-    }
-    // ~800px on the long edge: crisp at the inspector's 288px (incl. retina)
-    // without ballooning the page cache.
-    let scale = (800.0 / size.width.max(size.height)).clamp(0.5, 4.0);
-    let (w, h) = (
-        (size.width * scale).round() as isize,
-        (size.height * scale).round() as isize,
-    );
-
-    let bmp = unsafe {
-        NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
-            NSBitmapImageRep::alloc(),
-            std::ptr::null_mut(),
-            w,
-            h,
-            8,
-            4,
-            true,
-            false,
-            NSDeviceRGBColorSpace,
-            0,
-            0,
-        )
-    }?;
-    let ctx = NSGraphicsContext::graphicsContextWithBitmapImageRep(&bmp)?;
-    NSGraphicsContext::saveGraphicsState_class();
-    NSGraphicsContext::setCurrentContext(Some(&ctx));
-    let dst = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(w as f64, h as f64));
-    let ok = rep.drawInRect(dst);
-    NSGraphicsContext::restoreGraphicsState_class();
-    if !ok {
-        return None;
-    }
-
-    let tiff = bmp.TIFFRepresentation()?;
-    if tiff.len() == 0 {
-        return None;
-    }
-    let decoded = image::load_from_memory(&tiff.to_vec()).ok()?;
-    let rgba = decoded.to_rgba8();
-    let (dw, dh) = rgba.dimensions();
-    let mut raw = rgba.into_raw();
-    for px in raw.chunks_exact_mut(4) {
-        px.swap(0, 2); // RGBA → BGRA
-    }
-    let buffer = image::RgbaImage::from_raw(dw, dh, raw)?;
-    Some((
-        Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])),
-        count,
-    ))
-}
-
-fn lookup_info(path: &Path) -> Option<FileInfo> {
-    INFO_CACHE.with(|c| c.borrow().get(path).cloned())
-}
-
-/// Deterministic local temp path for previewing a remote file. Keeps the
-/// original file name (so the extension drives QuickLook/PDF rendering) and
-/// hashes the full remote path so distinct files never collide.
-fn remote_preview_temp(remote: &Path) -> PathBuf {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    remote.to_string_lossy().hash(&mut h);
-    let name = remote
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "file".into());
-    std::env::temp_dir()
-        .join("shuffle-remote-preview")
-        .join(format!("{:016x}-{name}", h.finish()))
-}
-
-/// Generate a preview image for any file via macOS QuickLook (`qlmanage -t`),
-/// then decode it into a GPUI `RenderImage`. Runs off the render thread.
-fn build_preview(path: &Path) -> Option<Arc<RenderImage>> {
-    if !path.is_file() { return None; }
-    let out_dir = std::env::temp_dir().join("shuffle-preview");
-    let _ = fs::create_dir_all(&out_dir);
-    let name = path.file_name()?.to_string_lossy().into_owned();
-    let png = out_dir.join(format!("{name}.png"));
-    let _ = fs::remove_file(&png); // avoid showing a stale preview
-
-    // QuickLook renders almost anything (images, PDFs, Office docs, code, …).
-    let ok = Command::new("qlmanage")
-        .args(["-t", "-s", "600", "-o"])
-        .arg(&out_dir)
-        .arg(path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !ok || !png.exists() {
-        return None;
-    }
-
-    let decoded = image::open(&png).ok()?;
-    let decoded = decoded.thumbnail(600, 600); // bound memory; keeps aspect
-    let rgba = decoded.to_rgba8();
-    let (w, h) = rgba.dimensions();
-    let mut raw = rgba.into_raw();
-    for px in raw.chunks_exact_mut(4) {
-        px.swap(0, 2); // RGBA → BGRA
-    }
-    let buffer = image::RgbaImage::from_raw(w, h, raw)?;
-    Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
-}
-
-/// Everything we display in the Information inspector for one file.
-#[derive(Clone)]
-struct FileInfo {
-    kind: String,
-    size: String,
-    created: String,
-    modified: String,
-    accessed: String,
-    dimensions: Option<String>,
-    color: Option<String>,
-    signed: Option<String>,
-}
-
-/// Gather file information (cheap calls only; image header read, optional
-/// codesign check). Safe to call off the render thread.
-fn gather_info(path: &Path) -> FileInfo {
-    let md = fs::metadata(path).ok();
-    let is_dir = md.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-    let size = md.as_ref().map(|m| format_size(is_dir, m.len())).unwrap_or_else(|| "--".into());
-    let created = format_date(md.as_ref().and_then(|m| m.created().ok()));
-    let modified = format_date(md.as_ref().and_then(|m| m.modified().ok()));
-    let accessed = format_date(md.as_ref().and_then(|m| m.accessed().ok()));
-
-    // Image dimensions + color, both from the header only (no full decode).
-    let (mut dimensions, mut color) = (None, None);
-    if let Ok((w, h)) = image::image_dimensions(path) {
-        dimensions = Some(format!("{w} × {h}"));
-        use image::ImageDecoder;
-        if let Ok(reader) = image::ImageReader::open(path).and_then(|r| r.with_guessed_format()) {
-            if let Ok(decoder) = reader.into_decoder() {
-                color = Some(color_label(decoder.color_type()));
-            }
-        }
-    }
-
-    // Code signature (apps / binaries). Cheap-ish; only run for plausible items.
-    let signed = code_signature(path, is_dir);
-
-    FileInfo {
-        kind: kind_label(path.file_name().and_then(|n| n.to_str()).unwrap_or(""), is_dir),
-        size,
-        created,
-        modified,
-        accessed,
-        dimensions,
-        color,
-        signed,
-    }
-}
-
-fn color_label(c: image::ColorType) -> String {
-    use image::ColorType::*;
-    match c {
-        L8 | L16 => "Grayscale",
-        La8 | La16 => "Grayscale + Alpha",
-        Rgb8 | Rgb16 | Rgb32F => "RGB",
-        Rgba8 | Rgba16 | Rgba32F => "RGB + Alpha",
-        _ => "Other",
-    }
-    .to_string()
-}
-
-/// Returns a short code-signature status for apps/executables, else `None`.
-fn code_signature(path: &Path, is_dir: bool) -> Option<String> {
-    let is_app = is_app_bundle(path, is_dir);
-    if !is_app && is_dir {
-        return None;
-    }
-    let out = Command::new("codesign")
-        .args(["-dv", "--verbose=2"])
-        .arg(path)
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stderr);
-    if !out.status.success() {
-        return is_app.then(|| "Not signed".to_string());
-    }
-    let authority = text
-        .lines()
-        .find_map(|l| l.strip_prefix("Authority="))
-        .map(|a| a.to_string());
-    Some(authority.unwrap_or_else(|| "Signed".to_string()))
-}
-
 /// Format a modification time as a local date/time, or "--" if unknown.
 fn format_date(modified: Option<SystemTime>) -> String {
     match modified {
@@ -17364,60 +14841,6 @@ fn read_entries_fast(dir: &Path) -> Vec<Entry> {
 /// `sort_by_cached_key` so each name is lowercased once, not on every compare.
 fn sort_default(entries: &mut [Entry]) {
     entries.sort_by_cached_key(|e| (!e.is_folder(), e.name.to_lowercase()));
-}
-
-thread_local! {
-    /// Cache of directory listings for Column view, so it isn't re-read from
-    /// disk on every frame. Cleared whenever the filesystem might have changed.
-    static COL_ENTRIES: RefCell<HashMap<PathBuf, Vec<Entry>>> = RefCell::new(HashMap::new());
-}
-
-/// Directory listing for a column (cached). Default sort (folders first, name).
-fn column_entries(dir: &Path) -> Vec<Entry> {
-    if let Some(v) = COL_ENTRIES.with(|c| c.borrow().get(dir).cloned()) {
-        return v;
-    }
-    // Columns only show name + icon, so the cheap (no-stat) read is enough.
-    let v = read_entries_fast(dir);
-    COL_ENTRIES.with(|c| c.borrow_mut().insert(dir.to_path_buf(), v.clone()));
-    v
-}
-
-fn clear_column_cache() {
-    COL_ENTRIES.with(|c| c.borrow_mut().clear());
-}
-
-/// Drop one folder's cached column listing so the next frame re-reads it.
-fn forget_column_listing(dir: &Path) {
-    COL_ENTRIES.with(|c| c.borrow_mut().remove(dir));
-}
-
-/// What the folder watcher compares to spot outside changes. The folder's
-/// mtime covers local disks (any create/delete/rename bumps it); cloud stores
-/// (Dropbox, OneDrive, iCloud…) add files without touching it, so for those a
-/// hash of the entry names is folded in too. `None` if the folder can't be
-/// stat'd (gone, or no permission).
-#[derive(Clone, Copy, PartialEq)]
-struct DirSig {
-    mtime: Option<SystemTime>,
-    names: u64,
-}
-
-fn dir_sig(dir: &Path) -> Option<DirSig> {
-    use std::hash::{Hash, Hasher};
-    let mtime = fs::metadata(dir).ok()?.modified().ok();
-    let mut names = 0u64;
-    if cloud_kind(dir).is_some() {
-        if let Ok(rd) = fs::read_dir(dir) {
-            // Order-independent: sum of per-name hashes, plus the count.
-            for e in rd.flatten() {
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                e.file_name().hash(&mut h);
-                names = names.wrapping_add(h.finish()).wrapping_add(1);
-            }
-        }
-    }
-    Some(DirSig { mtime, names })
 }
 
 /// Sort a directory listing in place by the given criterion/direction. Uses
@@ -17826,287 +15249,6 @@ fn fuzzy_score(needle: &str, haystack: &str) -> Option<i32> {
     }
     score -= (h.len() as i32) / 8; // prefer shorter names
     Some(score)
-}
-
-/// One entry in the in-memory file index.
-struct IndexEntry {
-    name: String,
-    path: PathBuf,
-    is_dir: bool,
-}
-
-/// A flat, in-memory index of everything under a root directory, used for fast
-/// fuzzy search without spawning Spotlight.
-struct FileIndex {
-    entries: Vec<IndexEntry>,
-}
-
-/// Non-hidden directory names we never descend into (huge + irrelevant to file
-/// search). Hidden dirs (dotfiles like .bun, .pyenv, .cargo, .git, .Trash) are
-/// skipped wholesale via `skip_hidden`, which removes the bulk of the noise.
-///
-/// The build-output/dependency dirs below are the big win on a developer
-/// machine: a single `~/Documents/Projects` can hide hundreds of thousands of
-/// generated files under `target`/`build`/`Pods`/etc. Indexing those bloats the
-/// walk (slow launch), the memory, and the search results. We skip them the way
-/// `ripgrep`/`fd` do by default.
-const SKIP_DIRS: &[&str] = &[
-    "node_modules",
-    "Library",
-    // Build outputs / generated artifacts.
-    "target",       // Rust/Java
-    "build",        // Gradle/CMake/Xcode/etc.
-    "dist",         // JS/Python bundles
-    "DerivedData",  // Xcode
-    "Pods",         // CocoaPods
-    "Carthage",     // Carthage
-    "__pycache__",  // Python bytecode
-    // Vendored dependencies.
-    "vendor",
-    "bower_components",
-];
-
-impl FileIndex {
-    /// Walk `root` in parallel (jwalk), skipping hidden dirs and noise dirs,
-    /// into a flat list. Runs off the UI thread.
-    fn build(root: PathBuf) -> Self {
-        // Leave a couple of cores for the UI thread so the (still fairly large)
-        // first-launch walk can't starve rendering and make Cmd+P feel frozen.
-        let threads = std::thread::available_parallelism()
-            .map(|n| (n.get().saturating_sub(2)).max(2))
-            .unwrap_or(2);
-        // `~/Library` is skipped as noise, but the cloud drives live inside
-        // it: Dropbox / Google Drive / OneDrive sync to
-        // `~/Library/CloudStorage/<Provider>` and iCloud Drive to
-        // `~/Library/Mobile Documents/com~apple~CloudDocs`. Walk that narrow
-        // path through Library and nothing else, so cloud files show up in
-        // the palette.
-        let home = home_dir();
-        let library = home.join("Library");
-        let mobile_docs = library.join("Mobile Documents");
-        let walker = jwalk::WalkDir::new(&root)
-            .skip_hidden(true)
-            .parallelism(jwalk::Parallelism::RayonNewPool(threads))
-            .process_read_dir(move |_depth, path, _state, children| {
-                // The Go module cache (`~/go/pkg`, hundreds of thousands of files)
-                // is the single biggest source of index noise, but `pkg` is a
-                // legitimate source-dir name in Go projects — so only skip it
-                // when its parent directory is literally `go`.
-                let parent_is_go = path.file_name().is_some_and(|n| n == "go");
-                let at_library = path == library.as_path();
-                let at_mobile_docs = path == mobile_docs.as_path();
-                children.retain(|res| match res {
-                    Ok(e) => {
-                        let name = e.file_name();
-                        let name = name.to_string_lossy();
-                        // Inside Library, descend only toward the cloud drives.
-                        if at_library {
-                            return e.file_type().is_dir()
-                                && (name == "CloudStorage" || name == "Mobile Documents");
-                        }
-                        if at_mobile_docs {
-                            return e.file_type().is_dir() && name == "com~apple~CloudDocs";
-                        }
-                        if e.file_type().is_dir() {
-                            if SKIP_DIRS.contains(&name.as_ref()) {
-                                // The home-level Library alone passes, for the
-                                // cloud-drive path above.
-                                return name == "Library" && path == home.as_path();
-                            }
-                            if parent_is_go && name == "pkg" {
-                                return false;
-                            }
-                            true
-                        } else {
-                            true
-                        }
-                    }
-                    Err(_) => false,
-                });
-            });
-
-        let mut entries = Vec::new();
-        for entry in walker {
-            let Ok(e) = entry else { continue };
-            if e.depth() == 0 {
-                continue; // the root itself
-            }
-            let is_dir = e.file_type().is_dir();
-            let name = e.file_name().to_string_lossy().into_owned();
-            entries.push(IndexEntry {
-                name,
-                path: e.path(),
-                is_dir,
-            });
-        }
-        FileIndex { entries }
-    }
-
-    /// Fuzzy-rank the index against `query` in parallel; return the top `limit`.
-    fn search(&self, query: &str, limit: usize) -> Vec<(String, PathBuf, bool)> {
-        let q: Vec<char> = query.chars().flat_map(|c| c.to_lowercase()).collect();
-        if q.is_empty() {
-            return Vec::new();
-        }
-        let q_str: String = q.iter().collect();
-        let q_bigrams: Vec<(char, char)> = q.windows(2).map(|w| (w[0], w[1])).collect();
-        let mut scored: Vec<(i32, usize)> = self
-            .entries
-            .par_iter()
-            .enumerate()
-            .filter_map(|(i, e)| {
-                rank_entry(&q, &q_str, &q_bigrams, &e.name, &e.path, e.is_dir).map(|s| (s, i))
-            })
-            .collect();
-        scored.sort_unstable_by(|a, b| {
-            b.0.cmp(&a.0)
-                .then_with(|| self.entries[a.1].name.len().cmp(&self.entries[b.1].name.len()))
-        });
-        scored.truncate(limit);
-        scored
-            .into_iter()
-            .map(|(_, i)| {
-                let e = &self.entries[i];
-                (e.name.clone(), e.path.clone(), e.is_dir)
-            })
-            .collect()
-    }
-}
-
-fn is_word_boundary(c: char) -> bool {
-    matches!(c, '/' | ' ' | '_' | '-' | '.')
-}
-
-/// Allocation-free Sørensen–Dice over character bigrams: query bigrams are
-/// pre-computed (lowercased); the name is lowercased on the fly. Tolerant of
-/// typos/transpositions (e.g. "dcouments" vs "documents"). Fast enough to run
-/// on every index entry that fails the subsequence test.
-fn name_bigram_dice(q_bigrams: &[(char, char)], name: &str) -> f32 {
-    let qn = q_bigrams.len();
-    if qn == 0 {
-        return 0.0;
-    }
-    let cap = qn.min(64);
-    let mut used = [false; 64];
-    let mut inter = 0usize;
-    let mut name_bigrams = 0usize;
-    let mut prev: Option<char> = None;
-    for ch in name.chars() {
-        let lc = ch.to_ascii_lowercase();
-        if let Some(p) = prev {
-            name_bigrams += 1;
-            for i in 0..cap {
-                if !used[i] && q_bigrams[i] == (p, lc) {
-                    used[i] = true;
-                    inter += 1;
-                    break;
-                }
-            }
-        }
-        prev = Some(lc);
-    }
-    if name_bigrams == 0 {
-        return 0.0;
-    }
-    2.0 * inter as f32 / (qn + name_bigrams) as f32
-}
-
-/// Rank one candidate: prefer a real subsequence match (`score_entry`); if it
-/// isn't a subsequence, fall back to typo-tolerant bigram similarity so
-/// transposed/misspelled queries still surface the right file.
-fn rank_entry(
-    q: &[char],
-    q_str: &str,
-    q_bigrams: &[(char, char)],
-    name: &str,
-    path: &Path,
-    is_dir: bool,
-) -> Option<i32> {
-    if let Some(s) = score_entry(q, q_str, name, path, is_dir) {
-        return Some(s);
-    }
-    let sim = name_bigram_dice(q_bigrams, name);
-    if sim < 0.5 {
-        return None;
-    }
-    let mut score = (sim * 1500.0) as i32;
-    let name_len = name.chars().count() as i32;
-    score -= (name_len - q.len() as i32).max(0) * 4; // coverage
-    score -= path.components().count() as i32 * 8; // depth
-    if is_dir {
-        score += 40;
-    }
-    Some(score)
-}
-
-/// Full ranking of one candidate: subsequence gate + strong exact/prefix
-/// bonuses, a coverage penalty (favor names close to the query length), and a
-/// path-depth penalty (shallower = closer to home = ranked higher). Shared by
-/// the in-memory index and the Spotlight fallback so ranking is consistent.
-/// `q_str` is the lowercased query string; `q` its chars.
-fn score_entry(q: &[char], q_str: &str, name: &str, path: &Path, is_dir: bool) -> Option<i32> {
-    let mut score = index_score(q, name)?;
-    let name_lc = name.to_lowercase();
-
-    if name_lc == q_str {
-        score += 100_000; // exact name match — always wins
-    } else {
-        let stem = name_lc.rsplit_once('.').map(|(s, _)| s).unwrap_or(&name_lc);
-        if stem == q_str {
-            score += 60_000; // name without extension matches
-        }
-    }
-    if name_lc.starts_with(q_str) {
-        score += 5_000;
-    } else if name_lc.contains(q_str) {
-        score += 1_500;
-    }
-
-    // Coverage: the closer the name's length is to the query, the better
-    // ("Documents" beats "DocumentSymbolProvider.js" for "documents").
-    let name_len = name.chars().count() as i32;
-    score -= (name_len - q.len() as i32).max(0) * 4;
-    // Depth: shallower paths (closer to home) rank higher.
-    score -= path.components().count() as i32 * 8;
-    if is_dir {
-        score += 40;
-    }
-    Some(score)
-}
-
-/// Allocation-free subsequence fuzzy score (fzf-style). `query` is pre-lowercased.
-/// Returns `None` if `query` isn't a subsequence of `name`. Rewards contiguous
-/// runs and word-start matches; lightly penalizes length. Built for speed —
-/// called on every index entry, every keystroke.
-fn index_score(query: &[char], name: &str) -> Option<i32> {
-    let mut qi = 0;
-    let mut score = 0i32;
-    let mut last: i32 = -2;
-    let mut idx: i32 = 0;
-    let mut prev = '/'; // treat string start as a boundary
-    for ch in name.chars() {
-        if qi >= query.len() {
-            break;
-        }
-        if ch.to_ascii_lowercase() == query[qi] {
-            if idx == last + 1 {
-                score += 6;
-            }
-            if idx == 0 || is_word_boundary(prev) {
-                score += 10;
-            }
-            score -= idx / 4;
-            last = idx;
-            qi += 1;
-        }
-        prev = ch;
-        idx += 1;
-    }
-    if qi == query.len() {
-        Some(score - idx / 8)
-    } else {
-        None
-    }
 }
 
 /// Full-text search inside `dir` via Spotlight: paths whose content matches
@@ -18668,16 +15810,17 @@ fn load_menu_style() -> MenuStyle {
     m
 }
 
-/// Persist feature prefs as `key=bool` lines.
+/// Persist feature preferences as key/value lines.
 fn save_prefs(p: &Prefs) {
     if let Some(file) = config_file("prefs.txt") {
         if let Some(parent) = file.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let body = format!(
+        let mut body = format!(
             "preview={}\npreview_pages={}\ninfo={}\nshow_parent={}\nsidebar_collapsed={}\nrecent_limit={}\npalette_history={}\ngroups_enabled={}\nshow_filter_button={}\nshow_fps={}\nscript_actions={}\nssh_use_system={}\nssh_configured={}\nwaterfall={}\npalette_opacity={}\n",
             p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.recent_limit, p.palette_history, p.groups_enabled, p.show_filter_button, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured, p.waterfall, p.palette_opacity
         );
+        body.push_str(&format!("preview_width={}\n",p.preview_width));
         let _ = fs::write(&file, body);
     }
 }
@@ -18787,7 +15930,7 @@ fn load_keymap() -> Keymap {
     k
 }
 
-/// Load feature prefs, defaulting everything to off.
+/// Load preferences, retaining defaults for missing or invalid entries.
 fn load_prefs() -> Prefs {
     let mut p = Prefs::default();
     if let Some(file) = config_file("prefs.txt") {
@@ -18800,6 +15943,7 @@ fn load_prefs() -> Prefs {
                 match k.trim() {
                     "preview" => p.preview = on,
                     "preview_pages" => p.preview_pages = on,
+                    "preview_width" => if let Ok(width) = v.trim().parse::<u16>() { p.preview_width = width.clamp(220,1200); },
                     "info" => p.info = on,
                     "show_parent" => p.show_parent = on,
                     "sidebar_collapsed" => p.sidebar_collapsed = on,
@@ -18830,35 +15974,7 @@ fn load_prefs() -> Prefs {
 }
 
 fn main() {
-    // Hidden benchmark mode: `shuffle --index-bench <query>` builds the ~/ index
-    // and runs a search, printing timings and the top hits, then exits.
     let args: Vec<String> = std::env::args().collect();
-    if args.len() >= 3 && args[1] == "--index-bench" {
-        let t0 = std::time::Instant::now();
-        let index = FileIndex::build(std::env::var_os("GETTER_INDEX_ROOT").or_else(|| std::env::var_os("SHUFFLE_STUDIO_INDEX_ROOT")).map(PathBuf::from).unwrap_or_else(home_dir));
-        eprintln!(
-            "index: {} entries built in {} ms",
-            index.entries.len(),
-            t0.elapsed().as_millis()
-        );
-        let t1 = std::time::Instant::now();
-        let hits = index.search(&args[2], 10);
-        eprintln!(
-            "search {:?}: {} hits in {} µs",
-            args[2],
-            hits.len(),
-            t1.elapsed().as_micros()
-        );
-        for (name, path, is_dir) in hits {
-            eprintln!(
-                "  {} {:<28} {}",
-                if is_dir { "DIR " } else { "file" },
-                name,
-                path.display()
-            );
-        }
-        return;
-    }
     // Hidden check: `shuffle --pdf-bench <file> [page]` renders one PDF page
     // through the inspector-pager pipeline and prints the result, then exits.
     if args.len() >= 3 && args[1] == "--pdf-bench" {
@@ -19051,37 +16167,6 @@ fn main() {
         ];
         for (n, d, s) in cases {
             eprintln!("  {:>16}  match={}", n, fq.matches_entry(n, *d, *s, now));
-        }
-        return;
-    }
-
-    // Synthetic, disk-free validation of typo ranking.
-    if args.len() >= 2 && args[1] == "--typo-test" {
-        let mk = |p: &str, is_dir: bool| {
-            let path = PathBuf::from(p);
-            IndexEntry {
-                name: path.file_name().unwrap().to_string_lossy().into_owned(),
-                path,
-                is_dir,
-            }
-        };
-        let index = FileIndex {
-            entries: vec![
-                mk("/Users/guzma/Documents", true),
-                mk("/Users/guzma/Downloads", true),
-                mk("/Users/guzma/Music", true),
-                mk("/Users/guzma/go/pkg/mod/x/spec-example-documents", true),
-                mk("/Users/guzma/Documents/foo/DocumentSummaryInformation", false),
-                mk("/Users/guzma/Documents/report.docx", false),
-            ],
-        };
-        for q in ["documents", "dcouments", "documnets", "dwnloads", "musc"] {
-            let hits = index.search(q, 3);
-            eprintln!(
-                "{:?} -> {:?}",
-                q,
-                hits.iter().map(|h| h.0.clone()).collect::<Vec<_>>()
-            );
         }
         return;
     }

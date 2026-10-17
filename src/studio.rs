@@ -57,6 +57,7 @@ impl Shuffle {
                 tab.show_hidden = !tab.show_hidden;
                 let filter = tab.entry_filter;
                 tab.set_entry_filter(filter);
+                if this.search_in_pane(pane) { this.refresh_file_search(cx); }
                 this.save_session();
                 this.prewarm_icons(cx);
                 cx.notify();
@@ -198,7 +199,7 @@ impl Shuffle {
                     .iter()
                     .position(|path| path == &file)
                 {
-                    col_scroll(pane, 0).set_offset(point(px(0.0), px(-(index as f32 * ROW_H))));
+                    col_scroll(pane, 0).scroll_to_item(index, ScrollStrategy::Center);
                 }
             }
         } else {
@@ -217,6 +218,7 @@ impl Shuffle {
             return;
         }
         self.tab_mut(pane).set_entry_filter(filter);
+        if self.search_in_pane(pane) { self.refresh_file_search(cx); }
         self.rename = None;
         self.context_menu = None;
         self.sort_menu = None;
@@ -269,7 +271,7 @@ impl Shuffle {
                     .into_any_element(),
             );
         }
-        let count = tab.visible_count();
+        let count = if self.search_in_pane(pane) { self.palette_items.len() } else { tab.visible_count() };
         div()
             .flex_none()
             .h(px(36.0))
@@ -292,10 +294,12 @@ impl Shuffle {
                     .children(buttons),
             )
             .child(div().flex_1())
-            .child(div().truncate().child(if tab.is_filtered() {
+            .child(div().truncate().child(if self.search_in_pane(pane) {
+                format!("{count} result{}",if count == 1 {""} else {"s"})
+            } else if tab.is_filtered() {
                 format!("{count} of {} items", tab.entries.len())
             } else {
-                format!("{count} items")
+                format!("{count} item{}",if count == 1 {""} else {"s"})
             }))
             .into_any_element()
     }
@@ -389,7 +393,7 @@ impl Shuffle {
         self.project_dialog_error = self.project_load_error.clone();
         self.context_menu = None;
         self.sidebar_menu = None;
-        self.palette_open = false;
+        self.close_palette(cx);
         cx.notify();
     }
 
@@ -456,6 +460,7 @@ impl Shuffle {
             .ok_or("This project's folders are unavailable. Reconnect the drive and try again.")?;
         let old = self.projects.active;
         library.active = id;
+        self.close_palette(cx);
         self.space_map = None;
         // Persist the outgoing layout and destination together before switching.
         self.persist_library(library)?;
@@ -627,10 +632,9 @@ impl Shuffle {
                     .w(px(96.0))
                     .flex_none()
                     .child(
-                        div()
-                            .text_size(px(14.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Schnauz"),
+                        div().flex().items_center().gap_1()
+                            .child(div().text_size(px(14.0)).font_weight(FontWeight::SEMIBOLD).child("Schnauz"))
+                            .child(self.render_search_mascot(cx)),
                     )
                     .child(
                         div()
@@ -934,15 +938,18 @@ impl Shuffle {
     pub(super) fn render_studio_status(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
         let tab = self.active_tab();
-        let count = if tab.is_filtered() {
+        let searching = self.search_in_pane(self.active_pane);
+        let count = if searching { self.palette_items.len() } else if tab.is_filtered() {
             tab.find_results.len()
         } else {
             tab.entries.len()
         };
-        let count_label = if tab.is_filtered() {
+        let count_label = if searching {
+            format!("{count} result{}",if count == 1 {""} else {"s"})
+        } else if tab.is_filtered() {
             format!("{count} of {} items", tab.entries.len())
         } else {
-            format!("{count} items")
+            format!("{count} item{}",if count == 1 {""} else {"s"})
         };
         let label = if tab.selection.is_empty() {
             count_label
@@ -963,6 +970,14 @@ impl Shuffle {
             .text_color(rgb(t.text_muted))
             .child(div().size(px(6.0)).rounded_full().bg(rgb(t.accent)))
             .child(label)
+            .when(self.file_search.stopped, |bar| {
+                bar.child(
+                    div()
+                        .flex_none()
+                        .text_color(rgb(t.accent))
+                        .child("Search stopped · Results may be incomplete"),
+                )
+            })
             .child(
                 div()
                     .flex_1()

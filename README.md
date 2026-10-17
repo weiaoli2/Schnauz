@@ -36,7 +36,13 @@ name and `.txt` at the end. **Content** checks only text content, supports UTF-8
 BOM-marked UTF-16, and never matches by name. Search runs only after typing, reports
 results progressively and cancels when changed or closed. Hidden-item visibility
 follows the active tab. Results are capped at 500 with a notice to refine the query.
-Click a result or press Enter to reveal it in the browser. Escape closes search and
+Results use the main file pane, with Name and Location columns. Click to select,
+preview or copy; double-click to open. **Show in Folder** or Enter reveals the
+selected item in the browser. Type/hidden filters also apply to search results.
+The small Schnauz beside the app name sits when idle and runs while searching.
+Click the running Schnauz to stop and keep results. The status bar then shows
+**Search stopped · Results may be incomplete** until the next search.
+Escape or **Done ×** closes search and
 restores Current Folder + File. No home-folder index is built at launch.
 
 Right-click a folder, empty folder area or sidebar folder and choose **Inspect…**
@@ -61,8 +67,17 @@ Projects persist local tabs; remote tabs remain available during the running
 session. Unavailable local folders are skipped when restoring.
 
 The preview pane appears only for a single selected file with an available
-preview. Text files use a readable 14 pt text view in a 420 pt scrolling pane.
+preview. Drag its left edge to change its width; the setting is remembered.
+Double-click the edge to reset to 420 pt. Text files use readable 14 pt text.
 Large text previews are bounded, and show a notice when shortened.
+
+Lists, search results and columns render visible rows and request their icons
+as needed. Column listings share entries and cache visibility masks. Icon,
+preview and listing caches have limits; obsolete local preview jobs are debounced
+and cancelled. Visible local folders use macOS change notifications, with an
+adaptive fallback when notifications are unavailable. Ordinary file selections
+do not launch code-signature checks. The old home index and its direct scanning
+dependencies have been removed.
 
 Right-click the file area and choose **New Text File…**. Enter a name; `.txt` is
 added automatically. Cancel creates nothing, and existing files are never replaced.
@@ -108,8 +123,8 @@ Normal settings live in `~/Library/Application Support/Schnauz/`. Existing
 Getter or Shuffle Studio settings are reused automatically if present.
 This prepared workspace reuses its local compiler cache in offline mode.
 If adding a new dependency, use `CARGO_NET_OFFLINE=false ./build.sh` to fetch it.
-For native UI checks, `SHUFFLE_STUDIO_CONFIG_DIR`, `SHUFFLE_STUDIO_START_DIR`
-and `SHUFFLE_STUDIO_INDEX_ROOT` can point at disposable test folders.
+For native UI checks, `SCHNAUZ_CONFIG_DIR` and `SCHNAUZ_START_DIR` can point at
+disposable test folders.
 
 ## Source
 
@@ -120,6 +135,13 @@ and `SHUFFLE_STUDIO_INDEX_ROOT` can point at disposable test folders.
 - `src/clipboard_path.rs`: pasted-path interpretation
 - `src/new_text_file.rs`: named text-file creation without overwriting
 - `src/text_preview.rs`: bounded native text previews
+- `src/previews.rs`: cancellable preview jobs, metadata and bounded preview caches
+- `src/preview_panel.rs`: preview divider dragging, limits and remembered width
+- `src/cache.rs`: weighted LRU storage for icons, previews and shared listings
+- `src/folder_watch.rs`: macOS filesystem notifications and adaptive fallback
+- `src/columns.rs`: shared column entries and cached visibility masks
+- `src/settings.rs`: settings window and controls
+- `src/mascot.rs`: native sitting/running Schnauz animation and stop control
 - `src/file_search.rs`, `src/search_ui.rs`: scoped name/content search and its toolbar
 - `src/space_map.rs`, `src/space_ui.rs`: explicit folder scans and interactive size map
 - `src/studio_terminal.rs`, `src/terminal-shell/`: PTY sessions and folder synchronization

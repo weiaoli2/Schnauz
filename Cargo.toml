@@ -2,7 +2,7 @@
 name = "schnauz"
 version = "0.1.0"
 edition = "2021"
-description = "Schnauz — a personal workspace for your files"
+description = "Schnauz — a personal Mac file manager"
 publish = false
 
 [dependencies]
@@ -13,10 +13,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 gpui = "0.2.2"
 chrono = "0.4"
-# Parallel fuzzy scoring of the in-memory file index.
-rayon = "1"
-# Fast parallel directory walking for index builds.
-jwalk = "0.8"
 # Decode the TIFF that NSImage hands us for file-type icons.
 image = { version = "0.25", features = ["tiff"] }
 # Fetch real macOS file icons via NSWorkspace (Apple Silicon / AppKit).
@@ -26,9 +22,7 @@ objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSImage", "NSImag
 # Reach the underlying NSView so we can start native OS drag sessions (drag files out to Finder/other apps).
 raw-window-handle = "0.6"
 
-# Ships as a universal binary (arm64 + x86_64) via release.sh so it runs on
-# both Apple Silicon and Intel Macs. Build with a thin release profile while
-# we iterate; we can tune this later.
+# Local builds target this Mac. The optimized profile is used for normal builds.
 [profile.dev]
 opt-level = 0
 

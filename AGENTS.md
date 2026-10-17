@@ -14,8 +14,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   `STUDIO_BUILD_PROFILE=debug ./build.sh`. Rust stable and Xcode are required.
 - Run `./test.sh` after project or file-operation changes. Use disposable
   folders for copy, move, rename and delete verification.
-- Native UI QA can set `SHUFFLE_STUDIO_CONFIG_DIR`, `SHUFFLE_STUDIO_START_DIR`
-  and `SHUFFLE_STUDIO_INDEX_ROOT` to disposable paths. Do not change HOME.
+- Native UI QA can set `SCHNAUZ_CONFIG_DIR` and `SCHNAUZ_START_DIR`
+  to disposable paths. Do not change HOME.
 - `dev-env.sh` reuses the prepared cache under `../../work` and builds offline.
   Use `CARGO_NET_OFFLINE=false` when a new dependency must be downloaded.
 - Show a working first version, gather feedback, then iterate. Default visual
@@ -23,6 +23,11 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - The first preview was launched with `../../work/qa-profile`. The user began
   browsing in that window. Preserve its settings/workspaces if switching the
   running app to its normal profile; it may now contain user-created state.
+- The live app now uses `~/Library/Application Support/Schnauz/`. Its projects
+  and tabs were preserved from both preview profiles, including the user's two
+  Desktop tabs and earlier Applications/Home tabs. Backups are in
+  `../../work/profile-backups/`. Treat preview profiles as user data too; never
+  replace live state with QA fixtures or leave a testing view active for the user.
 - User feedback: no automatic recursive folder-size calculations while browsing.
   Main text is 12 logical px/pt, small labels 11, file rows 26 px. Keep it compact.
 - All/Folders/Files visibility is independent for each tab and persists in sessions
@@ -51,6 +56,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   toggle applies in every view and combines with type/text filters.
 - Hide the inspector without an actual previewable single selection. Show text as
   readable native text in a scrollable panel, with bounded reads for large files.
+- The preview's left edge resizes both text and visual previews. Remember width
+  after the drag, retain room for browsing, and double-click to reset to 420 pt.
 - New Text File asks for a name before creating anything, appends .txt, and uses
   create_new so existing data cannot be overwritten. Copy feedback names items in-pane.
 
@@ -59,6 +66,12 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Search recursively on demand, cancel stale work and show progressive results.
   Content mode must validate text rather than matching binary bytes or filenames.
   Do not restore startup home indexing.
+- Show search results in the main file pane, with single-click selection/preview,
+  double-click opening and explicit Show in Folder. Keep type/hidden filters,
+  keyboard selection and copying consistent with the displayed search results.
+- The small Schnauz mascot sits idle and runs only while search is active. Clicking
+  it stops the scan, keeps the results, and shows a short status-bar notice that
+  results may be incomplete. Clear that notice when a new search starts.
 - Inspect… is an explicit folder-size scan, available on folder, background and
   sidebar menus. Keep automatic browsing calculations off. Preserve the right-hand
   map while navigating from its file tiles or folder headings; never open a file

@@ -15,6 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::entry_filter::EntryFilter;
 use std::os::macos::fs::MetadataExt as MacMetadataExt;
 
 pub const RESULT_LIMIT: usize = 500;
@@ -51,6 +52,7 @@ pub struct Request {
     pub mode: Mode,
     pub query: String,
     pub show_hidden: bool,
+    pub filter: EntryFilter,
     pub cancel: Arc<AtomicBool>,
 }
 
@@ -151,7 +153,11 @@ pub fn run(request: Request, tx: Sender<Update>) {
                 }
                 Mode::Content => false,
             };
-            if matched {
+            if matched
+                && request
+                    .filter
+                    .accepts(crate::is_browsable_folder(&path, is_dir))
+            {
                 batch.push(Hit {
                     path: visible_path(path),
                     is_dir,
@@ -309,6 +315,15 @@ fn content_matches(path: &Path, words: &[String], cancel: &AtomicBool) -> io::Re
 mod tests {
     use super::*;
     fn search(root: &Path, query: &str, mode: Mode, hidden: bool) -> Vec<PathBuf> {
+        search_filtered(root, query, mode, hidden, EntryFilter::All)
+    }
+    fn search_filtered(
+        root: &Path,
+        query: &str,
+        mode: Mode,
+        hidden: bool,
+        filter: EntryFilter,
+    ) -> Vec<PathBuf> {
         let (tx, rx) = std::sync::mpsc::channel();
         run(
             Request {
@@ -316,6 +331,7 @@ mod tests {
                 query: query.into(),
                 mode,
                 show_hidden: hidden,
+                filter,
                 cancel: Arc::new(AtomicBool::new(false)),
             },
             tx,
@@ -338,6 +354,8 @@ mod tests {
         fs::write(folder.join(".test hidden.txt"), "needle café").unwrap();
         fs::write(folder.join("binary.bin"), b"needle caf\xc3\xa9\0binary").unwrap();
         fs::write(folder.join("needle café name.txt"), "unrelated").unwrap();
+        fs::create_dir(folder.join("test folder")).unwrap();
+        fs::create_dir(folder.join("test tool.app")).unwrap();
         let names = search(&folder, "test .txt", Mode::File, false);
         assert_eq!(names.len(), 2);
         assert!(names.iter().all(|p| p.starts_with(&folder)));
@@ -349,6 +367,14 @@ mod tests {
         );
         assert_eq!(search(&root, "test .txt", Mode::File, false).len(), 3);
         assert!(drive_root(&folder).unwrap().is_absolute());
+        assert_eq!(
+            search_filtered(&folder, "test", Mode::File, false, EntryFilter::Folders),
+            vec![folder.join("test folder")]
+        );
+        let files = search_filtered(&folder, "test", Mode::File, false, EntryFilter::Files);
+        assert_eq!(files.len(), 4);
+        assert!(files.contains(&folder.join("test tool.app")));
+        assert!(!files.contains(&folder.join("test folder")));
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

@@ -94,11 +94,19 @@ impl Shuffle {
                 if cancel.load(Ordering::Acquire) {
                     return;
                 }
-                let updates: Vec<_> = rx.try_iter().collect();
-                if updates.is_empty() {
+                let mut updates = Vec::new();
+                let disconnected = loop {
+                    match rx.try_recv() {
+                        Ok(update) => updates.push(update),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break false,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => break true,
+                    }
+                };
+                if updates.is_empty() && !disconnected {
                     continue;
                 }
-                let done = updates.iter().any(|u| matches!(u, Update::Done(_)));
+                let complete = updates.iter().any(|u| matches!(u, Update::Done(_)));
+                let done = complete || disconnected;
                 let active = this
                     .update(cx, |this, cx| {
                         let Some(state) = this.space_map.as_mut().filter(|s| s.id == id) else {
@@ -112,6 +120,9 @@ impl Shuffle {
                                     state.error = Some("This folder could not be inspected.".into())
                                 }
                             }
+                        }
+                        if disconnected && !complete {
+                            state.error = Some("This folder could not be inspected.".into());
                         }
                         cx.notify();
                         true
@@ -290,7 +301,12 @@ impl Shuffle {
                     .child(format!(
                         "{} · {} {}",
                         format_size(false, tree.nodes[root].bytes),
-                        tree.counts[root], if tree.counts[root] == 1 { "file" } else { "files" }
+                        tree.counts[root],
+                        if tree.counts[root] == 1 {
+                            "file"
+                        } else {
+                            "files"
+                        }
                     )),
             );
             if tree.nodes[root].bytes == 0 {

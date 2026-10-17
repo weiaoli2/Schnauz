@@ -1,5 +1,5 @@
 //! Bounded, native text previews. Never render binary data as document text.
-use std::{fs::File, io::Read, path::Path};
+use std::{fs::File, io::Read, path::Path, os::unix::fs::OpenOptionsExt};
 
 const MAX_BYTES: usize = 128 * 1024;
 const MAX_LINES: usize = 2000;
@@ -24,7 +24,7 @@ pub(crate) fn read(path: &Path) -> Option<TextPreview> {
 }
 
 fn read_text(path: &Path) -> Option<TextPreview> {
-    let file = File::open(path).ok()?;
+    let file = File::options().read(true).custom_flags(libc::O_NONBLOCK).open(path).ok()?;
     if !file.metadata().ok()?.is_file() {
         return None;
     }
