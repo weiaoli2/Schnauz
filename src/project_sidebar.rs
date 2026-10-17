@@ -144,6 +144,54 @@ impl Shuffle {
         .detach();
     }
 
+    fn add_dropped_locations(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let project = self.projects.active;
+        cx.spawn(async move |this, cx| {
+            // A cloud/network folder can take time to stat. Keep even that
+            // shallow validation off the UI thread; never scan its contents.
+            let folders = cx
+                .background_spawn(async move {
+                    paths
+                        .into_iter()
+                        .filter(|p| p.is_dir() && is_browsable_folder(p, true))
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let mut candidate = this.projects.clone();
+                let Some(sidebar) = candidate.sidebar_for_mut(project) else {
+                    return;
+                };
+                let before = sidebar.locations.len();
+                for path in folders {
+                    sidebar.set_path(Section::Locations, path, true);
+                }
+                let added = sidebar.locations.len() - before;
+                if added == 0 {
+                    this.set_notice(
+                        "Drop folders here; existing Locations are kept once.".into(),
+                        cx,
+                    );
+                } else if let Err(error) = this.persist_library(candidate) {
+                    this.set_notice(error, cx);
+                } else {
+                    if this.projects.active == project {
+                        this.collapsed_sections.remove("LOCATIONS");
+                    }
+                    this.set_notice(
+                        format!(
+                            "Added {added} folder{} to Locations",
+                            if added == 1 { "" } else { "s" }
+                        ),
+                        cx,
+                    );
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn project_folder_section(
         &self,
         items: &mut Vec<AnyElement>,
@@ -166,17 +214,67 @@ impl Shuffle {
                 this.choose_project_folder(section, cx)
             }))
             .into_any_element();
-        items.push(self.section_header_el(title, Some(add), cx));
-        if self.collapsed_sections.contains(title) {
+        let mut content = vec![self.section_header_el(title, Some(add), cx)];
+        if !self.collapsed_sections.contains(title) {
+            let paths = self.projects.sidebar().paths(section);
+            if paths.is_empty() {
+                content.push(empty_hint("Click + or drop a folder here").into_any_element());
+            }
+            for path in paths {
+                self.project_path_row(&mut content, key, path, section, cx);
+            }
+        }
+        if !matches!(section, Section::Locations) {
+            items.extend(content);
             return;
         }
-        let paths = self.projects.sidebar().paths(section);
-        if paths.is_empty() {
-            items.push(empty_hint("Click + to add a folder").into_any_element());
-        }
-        for path in paths {
-            self.project_path_row(items, key, path, section, cx);
-        }
+        let hint = self.locations_drop_hover && cx.has_active_drag();
+        items.push(
+            div()
+                .id("locations-drop-target")
+                .relative()
+                .flex()
+                .flex_col()
+                .min_h(px(48.))
+                .children(content)
+                .on_drag_move::<ExternalPaths>(cx.listener(
+                    |this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| {
+                        let hovered = ev.bounds.contains(&ev.event.position);
+                        if this.locations_drop_hover != hovered {
+                            this.locations_drop_hover = hovered;
+                            cx.notify();
+                        }
+                    },
+                ))
+                .drag_over::<ExternalPaths>(|s, _, _, _| s.bg(Theme::alpha(theme().accent, 0x18)))
+                .on_drop(cx.listener(|this, drag: &ExternalPaths, _, cx| {
+                    this.locations_drop_hover = false;
+                    this.add_dropped_locations(drag.paths().to_vec(), cx);
+                    cx.notify();
+                }))
+                .when(hint, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left_0()
+                            .right_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .p_3()
+                            .rounded_md()
+                            .bg(rgb(theme().sidebar))
+                            .border_1()
+                            .border_color(rgb(theme().accent))
+                            .text_color(rgb(theme().accent))
+                            .text_size(px(UI_SMALL_FONT_SIZE))
+                            .child("Drop to add to favourites"),
+                    )
+                })
+                .into_any_element(),
+        );
     }
 
     pub(super) fn project_tagged_section(
@@ -230,7 +328,7 @@ impl Shuffle {
                         return;
                     }
                     let pane = this.active_pane;
-                this.unsync_ssh_browser(pane, cx);
+                    this.unsync_ssh_browser(pane, cx);
                     let is_dir = nav.is_dir();
                     let folder = if is_dir {
                         nav.clone()

@@ -391,7 +391,10 @@ impl Shuffle {
         library.remember_layout(layout.clone());
         let result = library
             .create(&name, layout)
-            .and_then(|id| self.persist_library(library).map(|_| id))
+            .and_then(|id| {
+                library.sidebar_for_mut(Some(id)).unwrap().todoist_create_request = Some(todoist::request_id());
+                self.persist_library(library).map(|_| id)
+            })
             .and_then(|id| self.switch_project(Some(id), cx));
         match result {
             Ok(()) => {
@@ -400,6 +403,7 @@ impl Shuffle {
                 self.collapsed_sections.remove("PROJECTS");
                 self.collapsed_sections.remove("LOCATIONS");
                 self.set_notice(format!("Created project ‘{}’", name.trim()), cx);
+                self.open_todoist(cx);
             }
             Err(error) => {
                 self.project_dialog_error = Some(error);
@@ -458,6 +462,8 @@ impl Shuffle {
             self.sync_terminal_directory(pane);
         }
         self.save_session();
+        self.todoist.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.ensure_todoist(false, cx);
         cx.notify();
         Ok(())
     }
@@ -654,10 +660,16 @@ impl Shuffle {
                 ),
             )
             .child(
-                studio_button("studio-preview", "Preview", prefs().preview)
+                studio_button("studio-preview", "Preview", prefs().preview && !self.todoist.open)
                     .tooltip(tip("Show or hide the preview panel · ⌘⇧I"))
-                    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| toggle_inspector(cx))),
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.show_file_preview(cx))),
             )
+            .child(studio_button("studio-todoist", "Tasks", self.todoist.open)
+                .tooltip(tip("Todoist tasks for the current project"))
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    if this.todoist.open { this.todoist.open = false; cx.notify(); }
+                    else { this.open_todoist(cx); }
+                })))
             .child(
                 studio_button("studio-save", "New project", true)
                     .tooltip(tip("Create a project from these tabs · ⌘⇧S"))

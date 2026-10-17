@@ -1,7 +1,7 @@
 # Schnauz
 
 Read [PROJECT.md](PROJECT.md) first for the working location, build commands,
-current stage and the Todoist proposal. This file records detailed working rules.
+current stage and the Todoist integration. This file records detailed working rules.
 
 Independent personal macOS app based on WizenPainter/shuffle, starting at
 50a94466dadef2c483913bc2cd5c76999cda4dda. The local branch is `studio`;
@@ -72,6 +72,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   including refreshed search results. Keep selection visible when changing views.
 - Context, sort and sidebar menus use AppKit so they can extend beyond the app
   window and scroll at display edges. Never hold a GPUI borrow during menu tracking.
+  Finder tag menu items carry real coloured NSImage dots (cached, Retina, non-template);
+  preserve the dot field when adapting MenuNode to NSMenuItem.
 - All/Folders/Files visibility is independent for each tab and persists in sessions
   and projects. Keep every view, selection and keyboard navigation consistent
   with the visible results; tint the top bar while a type filter is active.
@@ -98,6 +100,10 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   list; Favorites and its controls/model are removed. Merge legacy project and
   Personal favorites into Locations on load, deduplicating without dropping files
   or unavailable paths. Preserve legacy files; new saves contain Locations only.
+  Folders can be dropped onto Locations to add shortcuts to the active project.
+  Show “Drop to add to favourites” over that section while hovering a file drag.
+  Add folder references only, deduplicate, and never move/copy the dropped files.
+  A collapsed sidebar still has only its expand button.
   The Tag icon adds/removes local
   selection from Tagged Items; clicking a tagged file reveals it. Sidebar folders
   offer View in… with All projects first, then checkable individual projects;
@@ -196,10 +202,37 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   prepare a 0.5 release candidate, and install the release app in Applications.
   Do not publish before his review or restart live terminals to install a build.
 
-- Future idea under discussion (not yet approved for implementation): link each
-  Schnauz project to a Todoist project; a right-hand Tasks pane shows its tasks,
-  offers completion and quick-add scoped to that Todoist project, and follows
-  Schnauz project switching. Optional later action: create a task from a file.
+- Todoist was approved for implementation, including automatic project creation.
+  A Tasks pane below the shared path/filter bars follows the selected Schnauz
+  project and stays visible without file selection. Match Todoist projects by
+  normalized, case-insensitive name; reuse a unique match, ask for a choice if
+  several have that name. New Schnauz projects persist a creation intent and stable
+  idempotency key. Once connected, create the same-named Todoist project only after
+  successfully checking all project pages and finding no match. A failed lookup
+  must never trigger creation. Existing unlinked projects first look for a match;
+  the explicit Find or create button authorizes creation if absent. Personal can
+  have its own optional link. Keep actual IDs as opaque strings in projects.json.
+  Todoist names are reflected in the Schnauz project name with uniqueness checks.
+- Connect through Settings → General → Connections or the Tasks pane. The personal
+  build uses an API token entered in a native secure field, stored only under
+  local.schnauz.todoist in Keychain. todoist.json holds nonsecret account metadata.
+  Never use another app's credentials or the user's live account for tests.
+  Disconnect only removes Schnauz access, not the personal token other apps may use.
+  OAuth is a future distribution improvement; do not embed a client secret.
+- src/todoist.rs manages typed caches and background work; src/todoist_ui.rs renders
+  only visible task rows, with sections, subtasks, due dates, priority colours,
+  completion and Add task. native/todoist/ implements fixed-host HTTPS API v1,
+  Keychain and native dialogs via todoistctl. Follow all pagination cursors,
+  scope every page to the captured project, keep cached tasks on failure, honour
+  rate-limit backoff, refresh every 30 seconds only with Tasks open and the app
+  active. Discard responses after account changes and stale reads after writes.
+  Add/complete actions retain their original project across project switches.
+  Failed add forms retain text and the write request ID for explicit retry.
+  Opening a pane or listing projects never writes tasks. Only new-project creation
+  intents or the explicit Find/create button may create a project.
+  ./test.sh includes native URLProtocol fixtures plus project/cache regressions;
+  no live Todoist calls or Keychain access in tests. Manual account/UI QA remains
+  Oliver's workflow. Preview videos stop while Tasks occupies the right pane.
 
 - Remote listings enter the requested directory with SFTP `cd` before `ls -la`.
   Store immediate child basenames only; drop dot/parent entries even when a client

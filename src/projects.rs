@@ -77,7 +77,15 @@ impl Layout {
     }
 }
 
-/// Explicit project shortcuts and history. No automatically discovered roots.
+/// Nonsecret binding to the corresponding Todoist project.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct TodoistLink {
+    pub account_id: String,
+    pub project_id: String,
+    pub project_name: String,
+}
+
+/// Explicit project shortcuts and connections. No automatically discovered roots.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct Sidebar {
@@ -86,6 +94,11 @@ pub(crate) struct Sidebar {
     pub server_folders: Vec<PathBuf>,
     pub servers: Vec<SftpServer>,
     pub tagged: Vec<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub todoist: Option<TodoistLink>,
+    /// Stable idempotency key for a user-requested matching project creation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub todoist_create_request: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -292,6 +305,24 @@ impl Library {
         Ok(id)
     }
 
+    pub fn set_name(&mut self, id: u64, name: &str) -> Result<(), String> {
+        let name = valid_name(name)?;
+        if name.eq_ignore_ascii_case("Personal")
+            || self
+                .items
+                .iter()
+                .any(|p| p.id != id && p.name.to_lowercase() == name.to_lowercase())
+        {
+            return Err("Another Schnauz project already uses this Todoist name.".into());
+        }
+        self.items
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or("Project no longer exists")?
+            .name = name;
+        Ok(())
+    }
+
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let bytes = serde_json::to_vec_pretty(self)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -333,8 +364,8 @@ fn valid_name(name: &str) -> Result<String, String> {
     if name.is_empty() {
         return Err("Give your project a name.".into());
     }
-    if name.chars().count() > 80 || name.chars().any(char::is_control) {
-        return Err("Use up to 80 characters without line breaks.".into());
+    if name.chars().count() > 120 || name.chars().any(char::is_control) {
+        return Err("Use up to 120 characters without line breaks.".into());
     }
     Ok(name.to_string())
 }
@@ -685,5 +716,57 @@ mod tests {
         assert!(library
             .create("Personal", library.items[0].layout.clone())
             .is_err());
+    }
+    #[test]
+    fn todoist_links_and_pending_creations_persist_per_project_without_changing_legacy_data() {
+        let scratch = Scratch::new();
+        let layout = Layout {
+            panes: vec![SavedPane {
+                tabs: vec![tab(scratch.0.clone())],
+                active: 0,
+            }],
+            active_pane: 0,
+            split_ratio: 0.5,
+        };
+        let mut library = Library::default();
+        let a = library.create("Design", layout.clone()).unwrap();
+        let b = library.create("Admin", layout).unwrap();
+        library.sidebar_for_mut(Some(a)).unwrap().todoist = Some(TodoistLink {
+            account_id: "account-A".into(),
+            project_id: "opaque-project-A".into(),
+            project_name: "Design".into(),
+        });
+        library
+            .sidebar_for_mut(Some(b))
+            .unwrap()
+            .todoist_create_request = Some("stable-idempotency-key".into());
+        library
+            .personal_sidebar
+            .locations
+            .push(scratch.0.join("unavailable"));
+        let file = scratch.0.join("projects.json");
+        library.save(&file).unwrap();
+        let restored = Library::load(&file).unwrap();
+        assert_eq!(restored, library);
+        assert!(restored.personal_sidebar.todoist.is_none());
+        assert!(restored.sidebar_for(Some(b)).unwrap().todoist.is_none());
+        let legacy: Sidebar = serde_json::from_str(r#"{"locations":["/legacy-folder"]}"#).unwrap();
+        assert!(legacy.todoist.is_none() && legacy.todoist_create_request.is_none());
+        assert_eq!(legacy.locations, vec![PathBuf::from("/legacy-folder")]);
+        library.set_name(a, "DESIGN").unwrap();
+        assert!(library.set_name(a, "Admin").is_err());
+        assert!(library.set_name(a, "Personal").is_err());
+        assert!(library.set_name(a, "Bad\nName").is_err());
+        assert_eq!(library.items[0].name, "DESIGN");
+        assert_eq!(
+            library
+                .sidebar_for(Some(a))
+                .unwrap()
+                .todoist
+                .as_ref()
+                .unwrap()
+                .project_id,
+            "opaque-project-A"
+        );
     }
 }

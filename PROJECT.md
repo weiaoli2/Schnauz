@@ -72,6 +72,7 @@ the server account/repository and current review status before proceeding.
 | Global drive capacity and cloud paths/menus | `src/volumes.rs`, `volumectl.swift`, `src/cloud_locations.rs`, `src/cloud_actions.rs` |
 | Direct Nextcloud accounts, links, sharing and locks | `src/nextcloud.rs`, `native/nextcloud/Core.swift`, `native/nextcloud/main.swift` |
 | Saved folder views and list columns | `src/folder_views.rs`, `src/list_ui.rs` |
+| Todoist API bridge, cache and Tasks pane | `src/todoist.rs`, `src/todoist_ui.rs`, `native/todoist/` |
 | Inline name editor and click-to-rename timing | `src/rename_ui.rs`, click dispatch in `src/main.rs` and `src/search_ui.rs` |
 | Preview layout and media | `src/preview_panel.rs`, `src/previews.rs`, `src/video_preview.rs` |
 | Terminal and SSH following | `src/studio_terminal.rs`, `src/ssh_sync.rs`, `src/terminal-shell/` |
@@ -95,54 +96,43 @@ Local terminal directory changes are allowed only
 at an idle prompt. SSH follows **terminal → browser only**; never send directory
 commands into a remote session. Unsync returns to local browsing without ending SSH.
 
-## Todoist proposal — discussion only
+## Todoist integration
 
-This integration is not implemented or approved for implementation yet. The
-following is a suggested first version, saved for the next design discussion.
+Oliver approved implementation on 2026-10-17 and added a specific rule: Schnauz
+and Todoist projects share the same name. Creating a Schnauz project checks all
+Todoist projects, links an existing name match and immediately displays its tasks,
+or creates a same-named Todoist project if absent. Ambiguous duplicate names get
+an explicit chooser. A failed lookup cannot cause project creation. If disconnected,
+the creation intent waits in the local project until Todoist is connected.
 
-**Interaction:** Add a **Tasks** choice beside Preview in the right-hand pane,
-below the path and filter bars. Once connected, a project can explicitly select
-an existing Todoist project. Switching Schnauz projects switches the task list.
-Show open tasks, section/subtask structure, due dates and priorities, with a
-checkbox to complete and a small **Add task…** field. Task details can open in
-Todoist. Tasks stay visible independently of the file preview's auto-hide rule.
+Connect in **Settings → General → Connections → Todoist**, or open **Tasks** and
+use **Connect Todoist…**. For this personal build, enter the API token in the native
+secure dialog. Only macOS Keychain stores it. `todoist.json` holds the local account
+reference and display identity; project links and stable creation-request IDs live
+in `projects.json`. Existing projects migrate without links. Disconnect removes
+Schnauz access without revoking a personal token used by other apps.
 
-**Connection:** For the first personal build, let Oliver enter his Todoist API
-token in the app and store it through the macOS Keychain API. Keep credentials
-out of project files, logs, command arguments and Git. For distribution, plan a
-**Connect Todoist** browser login; verify the production callback flow before
-shipping it. Todoist documents OAuth public clients with PKCE, so never embed a
-confidential client secret in the app.
+The **Tasks** button selects the right pane, below the full-width navigation and
+filter bars. It follows Schnauz project switching and uses the saved preview width.
+Existing unlinked projects look for matching names; **Find or create matching
+project** can explicitly create one if absent. Open tasks show sections, subtasks,
+due dates and priority colours. Click a circle to complete, a task to open Todoist,
+or **Add task…** for a native entry dialog with an optional due date. Failed forms
+keep their content for retry. Writes retain the project captured when opened.
 
-**Implementation shape:**
+Requests run through `native/todoist/` / `todoistctl` to Todoist API v1, with tokens
+outside Rust/settings/argv/logs. The Rust bridge caches by account/project, keeps
+old results on failure, follows pagination, checks response identity and excludes
+stale reads after a write. The virtual list renders only visible rows. Refresh is
+30 seconds while Tasks is open and Schnauz active, plus reopening/focus when stale;
+rate-limit backoff applies to manual refresh too. The native helper refuses redirects.
 
-- Add an optional, backwards-compatible project link with a local account
-  reference and Todoist project ID. Store IDs as strings in existing local
-  project settings; names are display labels. Existing projects load unlinked.
-  Personal can have its own optional link. No automatic project creation.
-- Keep a small native Rust API layer in a proposed `src/todoist.rs` and UI in
-  `src/todoist_ui.rs`. Use direct HTTPS; there is no need to run an AI agent or
-  CLI for routine task operations.
-- Fetch projects for the picker and active tasks filtered by the linked project;
-  follow pagination to avoid showing only the first page. Creating a task uses
-  the captured destination project, even if the user switches projects while
-  the request runs. Completion updates Todoist explicitly.
-- Run requests in background workers, cache by account/project, and discard
-  stale responses after a project/account switch. Show cached results immediately
-  and refresh when the pane opens or the app regains focus; refresh periodically
-  only while visible. Network work must never block file browsing.
-- Show loading, offline and failure states. Retain a failed new-task draft and
-  mark cached results as stale. Start with online writes rather than building
-  an offline mutation queue. Keep refreshes bounded and back off on rate limits.
-- Verify persistence/migration, pagination, project-switch races and failed
-  writes using fixtures and a mock service before any live account testing.
+`./test.sh` includes offline URLProtocol fixtures for naming/creation, pagination,
+captured project destinations, completion, idempotency, errors and settings, plus
+Rust tests for project persistence, hierarchy and cache races. Do not contact the
+live Todoist service or read/write Keychain during automated QA. Actual login and
+UI verification remain Oliver's manual checks. The app has not been restarted.
 
-Later possibilities: create a task from a selected file, attach a useful file
-reference, or add task editing. Local file references would work only on machines
-that can access those paths. These are separate follow-up choices.
-
-API basis: [Todoist API v1](https://developer.todoist.com/api/v1/) supports
-project-scoped task reads, task creation/completion, pagination and authentication.
-Recheck the current schemas when implementing. The existing
-`/Users/oliw/OliPomodoro` app is a possible local reference for Todoist behavior;
-review relevant source only and do not reuse its credentials or running state.
+Future distribution work: OAuth browser connection, without an embedded client
+secret. File-to-task actions and advanced task editing remain separate ideas.
+API reference: [Todoist API v1](https://developer.todoist.com/api/v1/).

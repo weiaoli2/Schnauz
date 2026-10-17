@@ -31,6 +31,8 @@ for helper in removebg cloudctl volumectl; do
 done
 xcrun swiftc -module-cache-path "$TARGET/swift-module-cache" -O native/nextcloud/Core.swift native/nextcloud/main.swift -o "$APP/Contents/MacOS/nextcloudctl"
 codesign --force --sign - "$APP/Contents/MacOS/nextcloudctl"
+xcrun swiftc -module-cache-path "$TARGET/swift-module-cache" -O native/todoist/Core.swift native/todoist/main.swift -o "$APP/Contents/MacOS/todoistctl"
+codesign --force --sign - "$APP/Contents/MacOS/todoistctl"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

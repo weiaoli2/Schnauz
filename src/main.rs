@@ -106,6 +106,8 @@ mod cloud_locations;
 mod cloud_actions;
 mod nextcloud;
 mod rename_ui;
+mod todoist;
+mod todoist_ui;
 use settings::*;
 use previews::*;
 use cache::Cache;
@@ -1514,6 +1516,8 @@ struct Shuffle {
     /// A name click or native drag consumed this gesture; still bubble mouse-up
     /// so the root clears drag and marquee state. Reset on the next press.
     suppress_entry_click: bool,
+    locations_drop_hover: bool,
+    todoist: todoist::State,
     /// Open "Sort By" dropdown: (pane, x, y) in window coords.
     sort_menu: Option<(usize, f32, f32)>,
     /// Pending "move to Trash" confirmation: (pane, paths).
@@ -1656,6 +1660,24 @@ impl Shuffle {
             cx.notify();
         })
         .detach();
+        cx.observe_global::<todoist::Global>(|this, cx| {
+            let state = cx.global::<todoist::Global>().clone();
+            if this.todoist.revision != state.revision {
+                this.todoist.caches.clear();
+                this.todoist.attempted.clear();
+                this.todoist.pending.clear();
+                this.todoist.link_errors.clear();
+                this.todoist.completions.clear();
+                this.todoist.revision = state.revision;
+                if state.account.is_some() && this.projects.sidebar().todoist_create_request.is_some() {
+                    this.open_todoist(cx);
+                } else {
+                    this.ensure_todoist(false, cx);
+                }
+            }
+            if let Some(message) = state.notice { this.set_notice(message, cx); }
+            cx.notify();
+        }).detach();
         // Sync + repaint whenever the saved SFTP servers change (from Settings).
         cx.observe_global::<SftpServersGlobal>(|this, cx| {
             let servers = cx.global::<SftpServersGlobal>().0.clone();
@@ -1851,6 +1873,8 @@ impl Shuffle {
             rename: None,
             pending_click_rename: None,
             suppress_entry_click: false,
+            locations_drop_hover: false,
+            todoist: todoist::State::default(),
             sort_menu: None,
             confirm_delete: None,
             next_load_gen: 0,
@@ -9598,6 +9622,8 @@ impl Shuffle {
         if pane + 1 == self.panes.len() {
             if let Some(map) = self.render_space_map(cx) {
                 body_row = body_row.child(map);
+            } else if self.todoist.open {
+                body_row = body_row.child(self.render_preview_panel(self.render_todoist(cx), pane, cx));
             } else if let Some(inspector) = self.render_inspector(cx) {
                 body_row = body_row.child(self.render_preview_panel(inspector, pane, cx));
             }
@@ -10165,6 +10191,10 @@ impl Shuffle {
 impl Render for Shuffle {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if std::mem::take(&mut self.dismiss_space_map) { self.close_space_map(window, cx); }
+        if self.todoist.open && window.is_window_active() {
+            let owner = cx.entity().downgrade();
+            window.on_next_frame(move |_, cx| { let _ = owner.update(cx, |this, cx| this.ensure_todoist(false, cx)); });
+        }
         self.sync_video_preview(cx);
         let owner=cx.entity().downgrade();
         window.on_next_frame(move|_,cx|{let _=owner.update(cx,|this,cx|this.prewarm_icons(cx));});
@@ -10207,7 +10237,7 @@ impl Render for Shuffle {
             // Native menu-bar actions (File / View / Go menus).
             .on_action(cx.listener(|this, _: &NewProject, window, cx| this.open_project_dialog(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleStudioSplit, _, cx| this.toggle_studio_split(cx)))
-            .on_action(cx.listener(|_, _: &ToggleInspector, _, cx| studio::toggle_inspector(cx)))
+            .on_action(cx.listener(|this, _: &ToggleInspector, _, cx| this.show_file_preview(cx)))
             .on_action(cx.listener(|this, _: &NewTab, _, cx| {
                 let p = this.active_pane;
                 this.new_tab_in(p, cx);
@@ -14355,6 +14385,7 @@ fn main() {
         set_active_prefs(saved_prefs);
         cx.set_global(PrefsGlobal(saved_prefs));
         cx.set_global(nextcloud::State::load());
+        cx.set_global(todoist::Global::load());
 
         // Load key bindings.
         let saved_keymap = load_keymap();

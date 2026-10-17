@@ -254,6 +254,7 @@ impl Shuffle {
     pub(super) fn sync_video_preview(&mut self, cx: &mut Context<Self>) {
         let tab = self.active_tab();
         let wanted = (prefs().preview
+            && !self.todoist.open
             && self.space_map.is_none()
             && tab.remote.is_none()
             && tab.selection.len() == 1)

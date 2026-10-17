@@ -111,6 +111,9 @@ Click a project in the sidebar to switch to its own tagged items, locations, clo
 folder, or right-click a file/folder and choose **Add to Locations**. The separate
 Favorites section and its code are removed; existing favorites move into Locations
 without duplicates, including files and currently unavailable paths.
+Drop folders onto **Locations** to add them without moving the originals. While
+hovering, **Drop to add to favourites** identifies the target. Duplicate shortcuts
+are kept once.
 **Personal** keeps its own browsing tabs and locations.
 New projects start with empty **Locations**, **Cloud**, **Servers**
 and **Tagged Items**. Add folders with **+**; servers can also include explicit
@@ -122,7 +125,9 @@ an individual project; checkmarks indicate membership, and clicking again remove
 it there. This changes shortcuts only; source files stay in place. All projects
 means the projects that currently exist (including Personal); future projects
 still start empty. Tags are project membership, stored centrally rather than in
-Finder tags or file metadata. Existing saved workspaces are imported automatically;
+Finder tags or file metadata. The file context menu **Tags** separately applies
+Finder colour labels, shown with real coloured dots in the native menu.
+Existing saved workspaces are imported automatically;
 their original settings file is preserved. Legacy saved servers migrate once to
 **Personal**; passwords remain in the macOS Keychain. Removing a project connection
 keeps shared host credentials available for other projects.
@@ -177,6 +182,24 @@ Project changes save automatically. Live terminal sessions survive project
 switches while the app stays open; terminals start fresh after quitting the app.
 Projects persist local tabs; remote tabs remain available during the running
 session. Unavailable local folders are skipped when restoring.
+
+The **Tasks** button opens Todoist beside the file pane. First connect under
+**Settings → General → Connections → Todoist**, using an API token entered in a
+secure native field and stored in Keychain. A Schnauz project uses the same name
+as its Todoist project: a unique existing match is linked, while a newly created
+Schnauz project creates the Todoist counterpart only if no match exists. Duplicate
+Todoist names get a chooser. Offline creation intents wait until connected.
+
+Selecting another Schnauz project switches Tasks with it. Existing unlinked
+projects first search by name; **Find or create matching project** can create a
+missing counterpart. Tasks show sections/subtasks and due dates. Click the circle
+to complete, the task text to open Todoist, or **Add task…** to enter a task and
+optional due date. A task is sent to the project where its dialog was opened,
+even if you switch projects. Failed forms keep their text for an explicit retry.
+Cached tasks remain visible during connection errors. Only visible rows render,
+and refresh runs in the background while Tasks is open. **Preview** returns to
+file previews. Todoist account/server compatibility still requires a manual test;
+automated tests use fixtures without live service or Keychain access.
 
 The preview pane appears only for a single selected file with an available
 preview. It starts below the full-width path and filter bars. Drag its left edge
