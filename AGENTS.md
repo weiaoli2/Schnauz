@@ -1,5 +1,8 @@
 # Schnauz
 
+Read [PROJECT.md](PROJECT.md) first for the working location, build commands,
+current stage and the Todoist proposal. This file records detailed working rules.
+
 Independent personal macOS app based on WizenPainter/shuffle, starting at
 50a94466dadef2c483913bc2cd5c76999cda4dda. The local branch is `studio`;
 `studio-starting-point` preserves the unmodified source. `upstream` is reference only.

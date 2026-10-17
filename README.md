@@ -3,6 +3,9 @@
 A personal Mac file manager based on [Shuffle](https://github.com/WizenPainter/shuffle).
 This is an independent local version, with its own application identity and settings.
 
+For continuing development with Codex CLI, start with [PROJECT.md](PROJECT.md)
+and the repository's [AGENTS.md](AGENTS.md).
+
 Developer, design and product direction: **Oliver Weber**. Implementation
 assistance: **Codex**. Original codebase: **Shuffle by Jaime Guzman (MIT)**.
 See [CREDITS.txt](CREDITS.txt) for the full attribution.
