@@ -33,6 +33,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   double-click launches, and Show Package Contents explicitly browses the bundle.
 - Plain-text path paste opens a folder or reveals a file; text editors and the
   terminal retain ordinary paste behavior. Copied file objects still paste files.
+- The breadcrumb ends at the current folder and clips overflowing ancestors on
+  the left. Keep the current folder visible, including in narrow split panes.
 - The terminal is a persistent native PTY with an Alacritty-backed component in
   `vendor/gpui-terminal`; old one-shot command mode is removed. Keep two-way cwd
   sync via OSC 7 and prompt hooks. Browser changes must queue while a foreground

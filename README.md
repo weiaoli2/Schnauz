@@ -15,6 +15,8 @@ This is an independent local version, with its own application identity and sett
 - Search, split/join panes, preview and workspace controls in the toolbar.
 - Named workspaces for local folders: tabs, view modes, sorting and split layout.
 - A preview panel and footer with item counts, current path and appearance control.
+- The clickable path ends at the current folder. Long paths clip from the left,
+  and hovering shows the complete path.
 - Paste a local folder path with **⌘V** to open it. Paste a file path to open its
   enclosing folder and select that file. Absolute paths, `~/` paths, quoted paths
   and local `file://` URLs work; copied file objects retain ordinary copy/paste.

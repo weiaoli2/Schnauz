@@ -12557,19 +12557,14 @@ impl Shuffle {
         cx.notify();
     }
 
-    /// Clickable breadcrumb for a pane. Segments up to and including the current
-    /// directory are bright; any deeper "forward tail" is grayed but still
-    /// clickable. Empty space to the right enters edit mode.
+    /// Clickable path ending at the current folder. The inner row keeps its
+    /// natural width and is anchored on the right when it overflows, so clipping
+    /// hides ancestors on the left instead of the folder being browsed.
     fn render_breadcrumb(&self, pane: usize, cx: &Context<Self>) -> impl IntoElement {
         use std::path::Component;
 
         let tab = self.tab(pane);
         let current_dir = tab.current_dir.clone();
-        // Show the deepest tail if the current dir is an ancestor of it.
-        let display = match &tab.deepest {
-            Some(d) if d.starts_with(&current_dir) => d.clone(),
-            _ => current_dir.clone(),
-        };
 
         // A remote tab's root is the server, not the local disk.
         let root_label = match &tab.remote {
@@ -12579,7 +12574,7 @@ impl Shuffle {
         let mut segs: Vec<AnyElement> = Vec::new();
         let mut acc = PathBuf::new();
         let mut idx = 0usize;
-        for comp in display.components() {
+        for comp in current_dir.components() {
             let (label, full) = match comp {
                 Component::RootDir => {
                     acc.push("/");
@@ -12594,12 +12589,11 @@ impl Shuffle {
             if idx > 0 {
                 segs.push(breadcrumb_sep());
             }
-            let active = current_dir.starts_with(&full);
             // Palette-on-click only for the crumb of the CURRENT dir, and only
             // on local tabs (Reveal in Finder etc. make no sense for a remote
             // path — there the crumb keeps its refresh/navigate behavior).
             let is_current = full == current_dir && tab.remote.is_none();
-            segs.push(breadcrumb_seg(pane * 4096 + idx, pane, label, full, active, is_current, cx));
+            segs.push(breadcrumb_seg(pane * 4096 + idx, pane, label, full, true, is_current, cx));
             idx += 1;
         }
 
@@ -12607,24 +12601,35 @@ impl Shuffle {
             .id(("breadcrumb", pane))
             .flex()
             .items_center()
+            .justify_end()
             .flex_1()
             .min_w_0()
             // Clip so long paths can't paint over the view/sort toolbar (or
             // bleed into the neighbouring pane) when a pane is narrow.
             .overflow_hidden()
             .h(px(22.0))
-            .children(segs)
-            // Filler captures clicks on the empty part of the bar → edit mode.
+            .tooltip(tip(current_dir.to_string_lossy().into_owned()))
             .child(
                 div()
-                    .id(("path-edit-zone", pane))
-                    .flex_1()
+                    .flex_none()
+                    .min_w_full()
+                    .flex()
+                    .items_center()
+                    .whitespace_nowrap()
                     .h_full()
-                    .min_w_0()
-                    .cursor_text()
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.begin_path_edit(pane, window, cx)
-                    })),
+                    .children(segs)
+                    // With a short path, spare room remains clickable to edit.
+                    .child(
+                        div()
+                            .id(("path-edit-zone", pane))
+                            .flex_1()
+                            .h_full()
+                            .min_w_0()
+                            .cursor_text()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.begin_path_edit(pane, window, cx)
+                            })),
+                    ),
             )
     }
 
@@ -12959,6 +12964,7 @@ impl Shuffle {
     /// listing + scrollbar, plus the right-edge split drop zone.
     fn render_pane(&self, pane: usize, cx: &Context<Self>) -> impl IntoElement {
         let view = self.tab(pane).view;
+        let weak = cx.entity().downgrade();
         // Highlight the active pane's border (only meaningful when split).
         let split = self.panes.len() > 1;
         let active = pane == self.active_pane;
@@ -12978,8 +12984,31 @@ impl Shuffle {
             // Measure the pane each frame (the toolbar compacts when narrow).
             .child(
                 gpui::canvas(
-                    move |bounds, _, _| {
-                        PANE_W.with(|w| w.borrow_mut()[pane.min(1)] = f64::from(bounds.size.width) as f32)
+                    move |bounds, window, _| {
+                        let width = f64::from(bounds.size.width) as f32;
+                        let toolbar_size = |w: f32| {
+                            if w > 0.0 && w < 470.0 {
+                                0
+                            } else if w > 0.0 && w < 640.0 {
+                                1
+                            } else {
+                                2
+                            }
+                        };
+                        let changed = PANE_W.with(|w| {
+                            let mut widths = w.borrow_mut();
+                            let old = widths[pane.min(1)];
+                            widths[pane.min(1)] = width;
+                            toolbar_size(old) != toolbar_size(width)
+                        });
+                        // Width is measured after rendering. Re-render when a
+                        // breakpoint changes so the toolbar immediately gives
+                        // the current folder enough space after splitting.
+                        if changed {
+                            window.on_next_frame(move |_, cx| {
+                                weak.update(cx, |_, cx| cx.notify()).ok();
+                            });
+                        }
                     },
                     |_, _, _, _| {},
                 )
