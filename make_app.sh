@@ -18,8 +18,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/shuffle-studio"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+mkdir -p "$TARGET/swift-module-cache"
 for helper in removebg cloudctl; do
-    xcrun swiftc -O "$helper.swift" -o "$APP/Contents/MacOS/$helper"
+    xcrun swiftc -module-cache-path "$TARGET/swift-module-cache" -O "$helper.swift" -o "$APP/Contents/MacOS/$helper"
     codesign --force --sign - "$APP/Contents/MacOS/$helper"
 done
 cat > "$APP/Contents/Info.plist" <<PLIST

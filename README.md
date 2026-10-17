@@ -5,7 +5,10 @@ This is an independent local version, with its own application identity and sett
 
 ## First version
 
-- Studio Light and Studio Dark appearances, an indigo accent, and roomier lists.
+- Studio Light and Studio Dark appearances, an indigo accent, and compact 12 pt lists.
+- Folder totals are not calculated automatically; the size column shows file sizes only.
+- **All · Folders · Files** controls for every tab. Active filters tint the top bar,
+  show the visible item count, and are remembered in sessions and saved workspaces.
 - Search, split/join panes, preview and workspace controls in the toolbar.
 - Named workspaces for local folders: tabs, view modes, sorting and split layout.
 - A preview panel and footer with item counts, current path and appearance control.
@@ -55,6 +58,7 @@ and `SHUFFLE_STUDIO_INDEX_ROOT` can point at disposable test folders.
 - `src/theme.rs`: palette and live theming
 - `src/studio.rs`: custom toolbar, footer and workspace controls
 - `src/workspaces.rs`: JSON workspace storage and validation
+- `src/entry_filter.rs`: per-tab folder/file visibility
 - `src/main.rs`: the existing GPUI file browser and file operations
 - `scripts/generate_icon.swift`: editable native icon artwork
 

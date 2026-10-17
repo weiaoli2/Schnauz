@@ -1,5 +1,6 @@
 //! Named, local-folder workspaces. Storage is independent of the GPUI views.
 
+use crate::entry_filter::EntryFilter;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
@@ -13,6 +14,8 @@ pub(crate) struct SavedTab {
     pub view: String,
     pub sort: String,
     pub ascending: bool,
+    #[serde(default)]
+    pub filter: EntryFilter,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -215,6 +218,7 @@ mod tests {
             view: "columns".into(),
             sort: "name".into(),
             ascending: false,
+            filter: EntryFilter::Folders,
         }
     }
 
@@ -278,5 +282,20 @@ mod tests {
         fs::write(&path, b"{broken").unwrap();
         assert!(Library::load(&path).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"{broken");
+    }
+
+    #[test]
+    fn old_sessions_default_to_all_and_new_sessions_preserve_each_filter() {
+        let old = r#"{"panes":[{"tabs":[{"path":"/tmp","view":"list","sort":"none","ascending":true}],"active":0}],"active_pane":0,"split_ratio":0.5}"#;
+        let mut layout: Layout = serde_json::from_str(old).unwrap();
+        assert_eq!(layout.panes[0].tabs[0].filter, EntryFilter::All);
+        for filter in [EntryFilter::All, EntryFilter::Folders, EntryFilter::Files] {
+            let mut saved = layout.panes[0].tabs[0].clone();
+            saved.filter = filter;
+            layout.panes[0].tabs.push(saved);
+        }
+        let json = serde_json::to_vec(&layout).unwrap();
+        let restored: Layout = serde_json::from_slice(&json).unwrap();
+        assert_eq!(restored, layout);
     }
 }

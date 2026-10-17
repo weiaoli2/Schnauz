@@ -41,6 +41,8 @@ use objc2_foundation::{NSData, NSFileManager, NSObject, NSString, NSURL};
 use rayon::prelude::*;
 
 const RECENTS_CAP: usize = 12;
+const UI_FONT_SIZE: f32 = 12.0;
+const UI_SMALL_FONT_SIZE: f32 = 11.0;
 
 // Menu-bar actions. OpenSettings/Quit are app-level; the rest are dispatched to
 // the focused explorer window and handled in `Shuffle::render`'s root.
@@ -74,6 +76,8 @@ actions!(
 mod theme;
 use theme::*;
 mod workspaces;
+mod entry_filter;
+use entry_filter::EntryFilter;
 mod studio;
 
 // ----- feature preferences (the General tab toggles) -------------------------
@@ -244,7 +248,7 @@ struct MenuStyle {
 impl Default for MenuStyle {
     fn default() -> Self {
         let d = Theme::default();
-        MenuStyle { bg: d.surface, text: d.text, opacity: 100, font_px: 14.0, custom: false }
+        MenuStyle { bg: d.surface, text: d.text, opacity: 100, font_px: UI_FONT_SIZE, custom: false }
     }
 }
 
@@ -1105,7 +1109,7 @@ impl Render for Settings {
                             .pr_2()
                             .rounded_md()
                             .cursor_pointer()
-                            .text_xs()
+                            .text_size(px(UI_SMALL_FONT_SIZE))
                             .text_color(if active_sec { rgb(t.text) } else { rgb(t.text_muted) })
                             .when(active_sec, |s| s.bg(rgb(t.hover)))
                             .when(!active_sec, |s| s.hover(|s| s.bg(rgb(t.hover))))
@@ -1153,7 +1157,7 @@ impl Render for Settings {
             .flex()
             .size_full()
             .bg(rgb(t.bg))
-            .text_sm()
+            .text_size(px(UI_FONT_SIZE))
             .text_color(rgb(t.text))
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
@@ -1282,7 +1286,7 @@ impl Settings {
                     .child(div().text_color(rgb(t.text)).child("Search window opacity"))
                     .child(
                         div()
-                            .text_xs()
+                            .text_size(px(UI_SMALL_FONT_SIZE))
                             .text_color(rgb(t.text_muted))
                             .child("How opaque the Cmd+P search window is. Click the number to type a value (20–100). Lower lets the explorer show through."),
                     ),
@@ -1322,7 +1326,7 @@ impl Settings {
                     .flex_col()
                     .gap_1()
                     .child(div().text_color(rgb(t.text)).child("Scripts folder"))
-                    .child(div().text_xs().text_color(rgb(t.text_muted)).child(format!(
+                    .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(format!(
                         "{} script{} loaded — the README there explains the format.",
                         script_count,
                         if script_count == 1 { "" } else { "s" }
@@ -1374,7 +1378,7 @@ impl Settings {
         if servers.is_empty() {
             connection_rows.push(
                 div()
-                    .text_xs()
+                    .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(t.text_dim))
                     .child(
                         "No saved servers yet. Add one from the sidebar: Connect to \
@@ -1402,7 +1406,7 @@ impl Settings {
                                 .child(div().text_color(rgb(t.text)).child(s.name.clone()))
                                 .child(
                                     div()
-                                        .text_xs()
+                                        .text_size(px(UI_SMALL_FONT_SIZE))
                                         .text_color(rgb(t.text_muted))
                                         .child(format!("sftp://{}", s.display())),
                                 ),
@@ -1694,7 +1698,7 @@ impl Settings {
         if !upstream_updates_enabled() {
             return div().flex().flex_col().gap_1()
                 .child(format!("Shuffle Studio {}", env!("CARGO_PKG_VERSION")))
-                .child(div().text_xs().text_color(rgb(theme().text_muted))
+                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(theme().text_muted))
                     .child("Personal build · updates are installed from this project's builds."))
                 .into_any_element();
         }
@@ -1724,7 +1728,7 @@ impl Settings {
         if let Some(s) = status {
             right = right.child(
                 div()
-                    .text_xs()
+                    .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(if avail { t.accent } else { t.text_muted }))
                     .child(s),
             );
@@ -1779,7 +1783,7 @@ impl Settings {
                                 option_env!("SHUFFLE_BUILD_SHA").unwrap_or("dev")
                             )),
                     )
-                    .child(div().text_xs().text_color(rgb(t.text_muted)).child(
+                    .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
                         "Check GitHub for a newer release and install it in place \u{2014} the app swaps itself and relaunches.",
                     )),
             )
@@ -1820,7 +1824,7 @@ impl Settings {
                             .py(px(2.0))
                             .rounded_md()
                             .cursor_pointer()
-                            .text_xs()
+                            .text_size(px(UI_SMALL_FONT_SIZE))
                             .bg(rgb(t.surface))
                             .border_1()
                             .border_color(if recording { rgb(t.accent) } else { rgb(t.border) })
@@ -1934,7 +1938,7 @@ impl Settings {
                                 .child(div().text_color(rgb(t.text)).child(title.to_string()))
                                 .child(
                                     div()
-                                        .text_xs()
+                                        .text_size(px(UI_SMALL_FONT_SIZE))
                                         .text_color(rgb(t.text_muted))
                                         .child(desc.to_string()),
                                 ),
@@ -1953,7 +1957,7 @@ impl Settings {
             .child(self.menu_preview())
             .child(
                 div()
-                    .text_xs()
+                    .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(t.text_muted))
                     .child("Live preview of the right-click menu."),
             )
@@ -1972,7 +1976,7 @@ impl Settings {
                     .gap_2()
                     .child(
                         div()
-                            .text_xs()
+                            .text_size(px(UI_SMALL_FONT_SIZE))
                             .text_color(rgb(t.text_muted))
                             .child("Pick a color below or upload an image (PNG or JPG; square looks best)."),
                     )
@@ -2095,7 +2099,7 @@ impl Settings {
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(t.text_dim))
                     .child(
                         "A folder of images named folder.png, file.png, and per-extension \
@@ -2405,7 +2409,7 @@ impl Settings {
             .bg(rgb(t.surface))
             .border_1()
             .border_color(if editing.is_some() { rgb(t.accent) } else { rgb(t.border) })
-            .text_xs()
+            .text_size(px(UI_SMALL_FONT_SIZE))
             .text_color(rgb(t.text))
             .child(text)
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -2428,7 +2432,7 @@ fn info_row(label: &str, value: &str) -> impl IntoElement {
         .flex()
         .justify_between()
         .gap_3()
-        .text_xs()
+        .text_size(px(UI_SMALL_FONT_SIZE))
         .child(
             div()
                 .flex_none()
@@ -2484,7 +2488,7 @@ fn key_symbol(k: &str) -> String {
 fn settings_title(text: &str) -> impl IntoElement {
     div()
         .text_color(rgb(theme().text_muted))
-        .text_xs()
+        .text_size(px(UI_SMALL_FONT_SIZE))
         .child(text.to_uppercase())
 }
 
@@ -2505,7 +2509,7 @@ fn settings_header(title: &str, subtitle: &str) -> impl IntoElement {
         )
         .child(
             div()
-                .text_xs()
+                .text_size(px(UI_SMALL_FONT_SIZE))
                 .text_color(rgb(t.text_muted))
                 .child(subtitle.to_string()),
         )
@@ -2537,7 +2541,7 @@ fn settings_section(title: &str, subtitle: Option<&str>, rows: Vec<AnyElement>) 
     if let Some(s) = subtitle {
         header = header.child(
             div()
-                .text_xs()
+                .text_size(px(UI_SMALL_FONT_SIZE))
                 .text_color(rgb(t.text_dim))
                 .child(s.to_string()),
         );
@@ -2673,7 +2677,7 @@ fn palette_opacity_preview() -> AnyElement {
                 .bg(rgb(t.selected))
                 .child(div().flex_none().w(px(12.0)).h(px(12.0)).rounded_sm().bg(rgb(t.accent)))
                 .child(div().text_color(rgb(t.text)).child("Documents"))
-                .child(div().text_xs().text_color(rgb(t.text_muted)).child("~/Documents")),
+                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child("~/Documents")),
         )
         .child(
             div()
@@ -2684,7 +2688,7 @@ fn palette_opacity_preview() -> AnyElement {
                 .h(px(24.0))
                 .child(div().flex_none().w(px(12.0)).h(px(12.0)).rounded_sm().bg(rgb(t.accent)))
                 .child(div().text_color(rgb(t.text)).child("Downloads"))
-                .child(div().text_xs().text_color(rgb(t.text_muted)).child("~/Downloads")),
+                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child("~/Downloads")),
         )
         // Footer hints.
         .child(
@@ -2696,7 +2700,7 @@ fn palette_opacity_preview() -> AnyElement {
                 .py_1()
                 .border_t_1()
                 .border_color(rgb(t.border_strong))
-                .text_xs()
+                .text_size(px(UI_SMALL_FONT_SIZE))
                 .text_color(rgb(t.text_dim))
                 .child(hint("↩"))
                 .child("Open")
@@ -2765,7 +2769,7 @@ fn toggle_row(
                 .child(div().text_color(rgb(t.text)).child(title.to_string()))
                 .child(
                     div()
-                        .text_xs()
+                        .text_size(px(UI_SMALL_FONT_SIZE))
                         .text_color(rgb(t.text_muted))
                         .child(desc.to_string()),
                 ),
@@ -2816,7 +2820,7 @@ fn stepper_row(
                 .child(div().text_color(rgb(t.text)).child(title.to_string()))
                 .child(
                     div()
-                        .text_xs()
+                        .text_size(px(UI_SMALL_FONT_SIZE))
                         .text_color(rgb(t.text_muted))
                         .child(desc.to_string()),
                 ),
@@ -2855,9 +2859,9 @@ const SIDEBAR_COLLAPSED_W: f32 = 52.0;
 /// colored bar sits behind the traffic lights).
 const TITLEBAR_H: f32 = 56.0;
 /// Tab strip row height.
-const TAB_H: f32 = 40.0;
+const TAB_H: f32 = 34.0;
 /// Fixed list-row height (so marquee selection can map y-coordinates to rows).
-const ROW_H: f32 = 32.0;
+const ROW_H: f32 = 26.0;
 /// Overlay scrollbar: stays solid this long after the last scroll…
 const SCROLLBAR_LINGER: f32 = 1.0;
 /// …then fades out over this long (seconds).
@@ -3287,6 +3291,7 @@ struct Tab {
     /// When `Some`, an in-directory "find" filter is active (opened by `/`).
     /// `find_results` holds the matching `entries` indices, best match first.
     find_query: Option<String>,
+    entry_filter: EntryFilter,
     find_results: Vec<usize>,
     /// Text cursor (char index) within `find_query`.
     find_cursor: usize,
@@ -3336,6 +3341,105 @@ struct Tab {
 }
 
 impl Tab {
+    fn set_entry_filter(&mut self, filter: EntryFilter) {
+        self.entry_filter = filter;
+        self.selection.clear();
+        self.anchor = None;
+        self.col_chain.clear();
+        self.col_active = 0;
+        self.scroll_handle = UniformListScrollHandle::new();
+        self.h_scroll = ScrollHandle::new();
+        self.recompute_results();
+    }
+
+    fn is_filtered(&self) -> bool {
+        self.entry_filter != EntryFilter::All || self.find_query.is_some()
+    }
+
+    fn visible_entries(&self) -> impl Iterator<Item = &Entry> {
+        let filtered = self.is_filtered();
+        let count = self.visible_count();
+        (0..count).filter_map(move |row| {
+            let index = if filtered { self.find_results[row] } else { row };
+            self.entries.get(index)
+        })
+    }
+
+    fn visible_count(&self) -> usize {
+        if self.is_filtered() { self.find_results.len() } else { self.entries.len() }
+    }
+
+    /// Combine the type switch with the text query, preserving the current sort.
+    fn recompute_results(&mut self) {
+        let tab = self;
+        let q = tab.find_query.as_deref().unwrap_or("").trim();
+        if q.is_empty() {
+            tab.find_results = tab.entries.iter().enumerate()
+                .filter_map(|(i, entry)| tab.entry_filter.accepts(entry.is_dir).then_some(i))
+                .collect();
+            return;
+        }
+        let fq = FilterQuery::parse(q);
+        let has_text = !fq.text.is_empty();
+        // Content search resolves asynchronously; until its hits for THIS term
+        // land, a content: query matches nothing (the spinner-free "searching"
+        // state). update_content_search() recomputes when mdfind returns.
+        let content_ready = match &fq.content {
+            None => None,
+            Some(term) => {
+                if tab.content_for.as_deref() == Some(term.as_str()) {
+                    tab.content_hits.as_ref()
+                } else {
+                    tab.find_results.clear();
+                    return;
+                }
+            }
+        };
+        let dir = tab.current_dir.clone();
+        let plain = fq.text.clone();
+
+        // Sort order: when a column sort is active OR there's no free text to
+        // rank by, keep the list's existing order; otherwise rank by match.
+        let keep_order = tab.sort_key != SortKey::None || !has_text;
+
+        let mut scored: Vec<(i32, usize)> = Vec::new();
+        for (i, e) in tab.entries.iter().enumerate() {
+            if !tab.entry_filter.accepts(e.is_dir) {
+                continue;
+            }
+            if !fq.matches_entry(&e.name, e.is_dir, e.size, e.modified) {
+                continue;
+            }
+            if let Some(hits) = content_ready {
+                if !hits.contains(&dir.join(&e.name)) {
+                    continue;
+                }
+            }
+            let score = if has_text {
+                match find_score(&plain, &e.name) {
+                    Some(s) => s,
+                    None => continue,
+                }
+            } else {
+                0
+            };
+            scored.push((score, i));
+        }
+
+        if !keep_order {
+            // Best score first; ties → dirs first, then alphabetical.
+            let entries = &tab.entries;
+            scored.sort_by(|a, b| {
+                b.0.cmp(&a.0)
+                    .then_with(|| entries[b.1].is_dir.cmp(&entries[a.1].is_dir))
+                    .then_with(|| {
+                        entries[a.1].name.to_lowercase().cmp(&entries[b.1].name.to_lowercase())
+                    })
+            });
+        }
+        tab.find_results = scored.into_iter().map(|(_, i)| i).collect();
+    }
+
     fn new(dir: PathBuf) -> Self {
         // Fast first paint; full metadata is filled in from the background.
         let entries = read_entries_fast(&dir);
@@ -3349,6 +3453,7 @@ impl Tab {
             path_cursor: 0,
             path_anchor: None,
             find_query: None,
+            entry_filter: EntryFilter::All,
             find_results: Vec::new(),
             find_cursor: 0,
             find_anchor: None,
@@ -3421,7 +3526,7 @@ impl Render for TooltipView {
             .border_1()
             .border_color(rgb(t.border))
             .text_color(rgb(t.text))
-            .text_xs()
+            .text_size(px(UI_SMALL_FONT_SIZE))
             .shadow_lg()
             .child(self.text.clone())
     }
@@ -3443,7 +3548,7 @@ impl Render for TabDragPreview {
             .border_1()
             .border_color(rgb(t.accent))
             .text_color(rgb(t.text))
-            .text_sm()
+            .text_size(px(UI_FONT_SIZE))
             .shadow_lg()
             .child(self.label.clone())
     }
@@ -4086,7 +4191,7 @@ impl Shuffle {
         let gen = self.next_load_gen;
         self.tab_mut(pane).load_gen = gen;
         self.sort_tab(pane);
-        if self.tab(pane).find_query.is_some() {
+        if self.tab(pane).is_filtered() {
             self.recompute_find(pane);
         }
         cx.notify();
@@ -4103,7 +4208,7 @@ impl Shuffle {
                 {
                     this.tab_mut(pane).entries = full;
                     this.sort_tab(pane);
-                    if this.tab(pane).find_query.is_some() {
+                    if this.tab(pane).is_filtered() {
                         this.recompute_find(pane);
                     }
                     cx.notify();
@@ -4127,6 +4232,7 @@ impl Shuffle {
         self.tab_mut(pane).load_gen = gen;
         // Show a placeholder (empty) immediately; the listing arrives async.
         self.tab_mut(pane).entries.clear();
+        self.recompute_find(pane);
         cx.notify();
         let use_system = prefs().ssh_use_system;
         cx.spawn(async move |this, cx| {
@@ -4147,13 +4253,14 @@ impl Shuffle {
                         this.tab_mut(pane).entries = entries;
                         this.remote_error = None;
                         this.sort_tab(pane);
-                        if this.tab(pane).find_query.is_some() {
+                        if this.tab(pane).is_filtered() {
                             this.recompute_find(pane);
                         }
                         this.prewarm_icons(cx);
                     }
                     Err(e) => {
                         this.tab_mut(pane).entries.clear();
+                        this.recompute_find(pane);
                         this.remote_error = Some(e);
                     }
                 }
@@ -4285,7 +4392,7 @@ impl Shuffle {
             }
         }
         self.sort_tab(pane);
-        if self.tab(pane).find_query.is_some() {
+        if self.tab(pane).is_filtered() {
             self.recompute_find(pane);
         }
         cx.notify();
@@ -4300,8 +4407,7 @@ impl Shuffle {
             let sel = self.tab(pane).anchor.clone().or_else(|| {
                 let dir = self.tab(pane).current_dir.clone();
                 self.tab(pane)
-                    .entries
-                    .iter()
+                    .visible_entries()
                     .find(|e| !e.is_dir)
                     .map(|e| dir.join(&e.name))
             });
@@ -4347,7 +4453,7 @@ impl Shuffle {
             let (view, off) = {
                 let tab = self.tab(pane);
                 let off = usize::from(
-                    tab.find_query.is_none()
+                    !tab.is_filtered()
                         && prefs().show_parent
                         && tab.current_dir.parent().is_some(),
                 );
@@ -4732,7 +4838,7 @@ impl Shuffle {
             .flex()
             .flex_col()
             .gap_1p5()
-            .text_xs()
+            .text_size(px(UI_SMALL_FONT_SIZE))
             .child(row("Kind", ip.info.kind.clone()))
             .child(row("Size", size))
             .child(row("Where", ip.path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()))
@@ -4759,7 +4865,7 @@ impl Shuffle {
                 .py_1()
                 .rounded_md()
                 .cursor_pointer()
-                .text_xs()
+                .text_size(px(UI_SMALL_FONT_SIZE))
                 .text_color(rgb(t.text))
                 .bg(rgb(t.hover))
                 .hover(|s| s.bg(rgb(t.selected)))
@@ -4931,7 +5037,7 @@ impl Shuffle {
                 .py_1()
                 .rounded_md()
                 .cursor_pointer()
-                .text_xs()
+                .text_size(px(UI_SMALL_FONT_SIZE))
                 .text_color(rgb(if on { t.text } else { t.text_dim }))
                 .when(on, |s| s.bg(rgb(t.selected)))
                 .hover(|s| s.text_color(rgb(t.text)))
@@ -4951,7 +5057,7 @@ impl Shuffle {
                 .flex()
                 .items_center()
                 .gap_3()
-                .text_xs()
+                .text_size(px(UI_SMALL_FONT_SIZE))
                 .child(div().flex_none().w(px(80.0)).text_color(rgb(t.text_dim)).child(label))
                 .child(
                     div()
@@ -4995,7 +5101,7 @@ impl Shuffle {
                             .id("batch-where")
                             .flex()
                             .gap_3()
-                            .text_xs()
+                            .text_size(px(UI_SMALL_FONT_SIZE))
                             .child(div().flex_none().w(px(80.0)).text_color(rgb(t.text_dim)).child("Where"))
                             .child(
                                 div()
@@ -5019,7 +5125,7 @@ impl Shuffle {
                 .child(field(1, "Start at", &br.b)),
         };
 
-        let mut preview = div().flex().flex_col().gap_0p5().text_xs();
+        let mut preview = div().flex().flex_col().gap_0p5().text_size(px(UI_SMALL_FONT_SIZE));
         for (from, to, problem) in plan.iter().take(8) {
             let bad = problem.is_some();
             preview = preview.child(
@@ -5208,7 +5314,7 @@ impl Shuffle {
             .border_1()
             .border_color(rgb(t.border_strong))
             .shadow_lg()
-            .text_xs()
+            .text_size(px(UI_SMALL_FONT_SIZE))
             .text_color(rgb(t.text));
         for j in visible {
             let total = j.prog.total.load(Ordering::Relaxed);
@@ -5761,36 +5867,6 @@ impl Shuffle {
             if ok {
                 let _ = this.update(cx, |this, cx| this.refresh_pane(pane, cx));
             }
-        })
-        .detach();
-    }
-
-    /// Compute a folder's total size in the background (once) and cache it, then
-    /// repaint so List view can show it. No-op if cached or already computing.
-    fn ensure_folder_size(&self, dir: PathBuf, cx: &mut Context<Self>) {
-        if folder_size_lookup(&dir).is_some() {
-            return;
-        }
-        let pending = FOLDER_SIZE_PENDING.get_or_init(|| Mutex::new(HashSet::new()));
-        if !pending.lock().unwrap().insert(dir.clone()) {
-            return; // already in flight
-        }
-        cx.spawn(async move |this, cx| {
-            let d = dir.clone();
-            let size = cx.background_spawn(async move { dir_total_size(&d) }).await;
-            let _ = this.update(cx, |_, cx| {
-                FOLDER_SIZE
-                    .get_or_init(|| Mutex::new(HashMap::new()))
-                    .lock()
-                    .unwrap()
-                    .insert(dir.clone(), size);
-                FOLDER_SIZE_PENDING
-                    .get_or_init(|| Mutex::new(HashSet::new()))
-                    .lock()
-                    .unwrap()
-                    .remove(&dir);
-                cx.notify();
-            });
         })
         .detach();
     }
@@ -6909,7 +6985,7 @@ impl Shuffle {
                     .child(div().text_color(rgb(t.text)).child(msg))
                     .child(
                         div()
-                            .text_xs()
+                            .text_size(px(UI_SMALL_FONT_SIZE))
                             .text_color(rgb(t.text_muted))
                             .child("They can be recovered from the Trash."),
                     )
@@ -7203,7 +7279,7 @@ impl Shuffle {
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(div().text_xs().text_color(rgb(t.text_muted)).child(label))
+                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(label))
                 .child(
                     div()
                         .id(label)
@@ -7241,7 +7317,7 @@ impl Shuffle {
                 let mut recent = div().flex().flex_col().gap_1();
                 if !self.server_history.is_empty() {
                     recent = recent
-                        .child(div().text_xs().text_color(rgb(t.text_dim)).child("Recent"));
+                        .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_dim)).child("Recent"));
                     for u in self.server_history.iter().take(5) {
                         let target = u.clone();
                         recent = recent.child(
@@ -7264,7 +7340,7 @@ impl Shuffle {
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .child(div().text_xs().text_color(rgb(t.text_muted)).child(
+                    .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
                         "Address — smb://, afp://, ftp://, or sftp://user@host to browse over SSH.",
                     ))
                     .child(
@@ -7295,7 +7371,7 @@ impl Shuffle {
                 .child(field_row("Password", CredField::Password, &form.password, true))
                 .child(
                     div()
-                        .text_xs()
+                        .text_size(px(UI_SMALL_FONT_SIZE))
                         .text_color(rgb(t.text_dim))
                         .child("Password is stored in your macOS Keychain — Tab moves between fields."),
                 )
@@ -7372,7 +7448,7 @@ impl Shuffle {
                             )
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_size(px(UI_SMALL_FONT_SIZE))
                                     .text_color(rgb(t.text_muted))
                                     .child("Reconnect on launch"),
                             ),
@@ -7435,7 +7511,7 @@ impl Shuffle {
                     .border_color(if primary { rgb(t.accent) } else { rgb(t.border) })
                     .hover(|s| s.border_color(rgb(t.accent)))
                     .child(div().text_color(rgb(t.text)).child(title))
-                    .child(div().text_xs().text_color(rgb(t.text_muted)).child(desc))
+                    .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(desc))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.choose_ssh_mode(use_system, cx);
                     }))
@@ -7477,7 +7553,7 @@ impl Shuffle {
                             .text_color(rgb(t.text))
                             .child("Connect over SSH"),
                     )
-                    .child(div().text_xs().text_color(rgb(t.text_muted)).child(
+                    .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
                         "How should Shuffle Studio authenticate to SFTP servers? You can change this \
                          anytime in Settings \u{2192} Connections.",
                     ))
@@ -7895,11 +7971,11 @@ impl Shuffle {
             .py_1p5()
             .bg(rgb(t.accent))
             .text_color(rgb(0xffffff))
-            .text_xs();
+            .text_size(px(UI_SMALL_FONT_SIZE));
 
         let bar = match status {
             UpdateStatus::Available(ver) => bar
-                .child(div().child("↑").text_sm())
+                .child(div().child("↑").text_size(px(UI_FONT_SIZE)))
                 .child(div().flex_1().child(format!(
                     "Shuffle {ver} is available (you have v{}).",
                     env!("CARGO_PKG_VERSION")
@@ -7933,13 +8009,13 @@ impl Shuffle {
                             cx.listener(|this, _, _, cx| this.dismiss_update(cx)),
                         ),
                 ),
-            UpdateStatus::Downloading(ver) => bar.child(div().child("↓").text_sm()).child(
+            UpdateStatus::Downloading(ver) => bar.child(div().child("↓").text_size(px(UI_FONT_SIZE))).child(
                 div()
                     .flex_1()
                     .child(format!("Downloading Shuffle {ver}… the app will relaunch itself.")),
             ),
             UpdateStatus::Failed(reason) => bar
-                .child(div().child("⚠").text_sm())
+                .child(div().child("⚠").text_size(px(UI_FONT_SIZE)))
                 .child(div().flex_1().child(format!("Update failed: {reason}.")))
                 .child(
                     div()
@@ -8966,7 +9042,7 @@ impl Shuffle {
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .text_xs()
+                                    .text_size(px(UI_SMALL_FONT_SIZE))
                                     .text_color(rgb(t.text_muted))
                                     .child(item.subtitle.clone()),
                             ),
@@ -9073,7 +9149,7 @@ impl Shuffle {
                     .py_1()
                     .border_t_1()
                     .border_color(rgb(t.border_strong))
-                    .text_xs()
+                    .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(t.text_dim))
                     .child(palette_hint("↩", enter_label))
                     .when(has_actions, |f| f.child(palette_hint("⌘K", "Actions")))
@@ -9652,74 +9728,9 @@ impl Shuffle {
         }
     }
 
-    /// Recompute a pane's `find_results`. Empty query shows every entry;
-    /// otherwise filters + ranks by similarity (typo-tolerant).
+    /// Rebuild the visible results after a query, type, sort or directory change.
     fn recompute_find(&mut self, pane: usize) {
-        let tab = self.tab_mut(pane);
-        let Some(q) = tab.find_query.as_deref() else {
-            return;
-        };
-        let q = q.trim();
-        if q.is_empty() {
-            tab.find_results = (0..tab.entries.len()).collect();
-            return;
-        }
-        let fq = FilterQuery::parse(q);
-        let has_text = !fq.text.is_empty();
-        // Content search resolves asynchronously; until its hits for THIS term
-        // land, a content: query matches nothing (the spinner-free "searching"
-        // state). update_content_search() recomputes when mdfind returns.
-        let content_ready = match &fq.content {
-            None => None,
-            Some(term) => {
-                if tab.content_for.as_deref() == Some(term.as_str()) {
-                    tab.content_hits.as_ref()
-                } else {
-                    tab.find_results.clear();
-                    return;
-                }
-            }
-        };
-        let dir = tab.current_dir.clone();
-        let plain = fq.text.clone();
-
-        // Sort order: when a column sort is active OR there's no free text to
-        // rank by, keep the list's existing order; otherwise rank by match.
-        let keep_order = tab.sort_key != SortKey::None || !has_text;
-
-        let mut scored: Vec<(i32, usize)> = Vec::new();
-        for (i, e) in tab.entries.iter().enumerate() {
-            if !fq.matches_entry(&e.name, e.is_dir, e.size, e.modified) {
-                continue;
-            }
-            if let Some(hits) = content_ready {
-                if !hits.contains(&dir.join(&e.name)) {
-                    continue;
-                }
-            }
-            let score = if has_text {
-                match find_score(&plain, &e.name) {
-                    Some(s) => s,
-                    None => continue,
-                }
-            } else {
-                0
-            };
-            scored.push((score, i));
-        }
-
-        if !keep_order {
-            // Best score first; ties → dirs first, then alphabetical.
-            let entries = &tab.entries;
-            scored.sort_by(|a, b| {
-                b.0.cmp(&a.0)
-                    .then_with(|| entries[b.1].is_dir.cmp(&entries[a.1].is_dir))
-                    .then_with(|| {
-                        entries[a.1].name.to_lowercase().cmp(&entries[b.1].name.to_lowercase())
-                    })
-            });
-        }
-        tab.find_results = scored.into_iter().map(|(_, i)| i).collect();
+        self.tab_mut(pane).recompute_results();
     }
 
     /// Kick off (or clear) the Spotlight content search for a pane's filter.
@@ -9786,6 +9797,7 @@ impl Shuffle {
                 tab.find_results.clear();
                 tab.content_hits = None;
                 tab.content_for = None;
+                self.recompute_find(pane);
                 cx.notify();
             }
             "enter" => {
@@ -9798,6 +9810,9 @@ impl Shuffle {
                     let t = self.tab_mut(pane);
                     t.find_query = None;
                     t.find_results.clear();
+                    t.content_hits = None;
+                    t.content_for = None;
+                    self.recompute_find(pane);
                     self.open_path(pane, target, is_dir, cx);
                 } else {
                     cx.notify();
@@ -10054,6 +10069,10 @@ impl Shuffle {
         let remote = self.panes[pane].tabs[tab].remote.clone();
         let mut new = Tab::new(dir);
         new.remote = remote;
+        new.entry_filter = self.panes[pane].tabs[tab].entry_filter;
+        new.view = self.panes[pane].tabs[tab].view;
+        new.sort_key = self.panes[pane].tabs[tab].sort_key;
+        new.sort_asc = self.panes[pane].tabs[tab].sort_asc;
         let p = self.pane_mut(pane);
         p.tabs.insert(tab + 1, new);
         p.active = tab + 1;
@@ -10178,18 +10197,32 @@ impl Shuffle {
 
     // ----- selection -----
 
-    /// The paths shown in `pane`, in display order (respecting the find filter).
+    /// The root column shares the sorted/text-filtered list; deeper columns
+    /// retain the tab's type filter while browsing down the folder chain.
+    fn visible_column_entries(&self, pane: usize, dir: &Path) -> Vec<Entry> {
+        let tab = self.tab(pane);
+        if dir == tab.current_dir {
+            tab.visible_entries().cloned().collect()
+        } else {
+            column_entries(dir).into_iter()
+                .filter(|entry| tab.entry_filter.accepts(entry.is_dir))
+                .collect()
+        }
+    }
+
+    /// The paths shown in the focused list or column, in display order.
     fn display_paths(&self, pane: usize) -> Vec<PathBuf> {
         let tab = self.tab(pane);
-        let dir = &tab.current_dir;
-        if tab.find_query.is_some() {
-            tab.find_results
-                .iter()
-                .map(|&i| dir.join(&tab.entries[i].name))
-                .collect()
-        } else {
-            tab.entries.iter().map(|e| dir.join(&e.name)).collect()
+        if tab.view == ViewMode::Columns {
+            let dir = if tab.col_active == 0 {
+                &tab.current_dir
+            } else {
+                tab.col_chain.get(tab.col_active - 1).unwrap_or(&tab.current_dir)
+            };
+            return self.visible_column_entries(pane, dir).iter()
+                .map(|entry| dir.join(&entry.name)).collect();
         }
+        tab.visible_entries().map(|entry| tab.current_dir.join(&entry.name)).collect()
     }
 
     /// Make `path` the inspector focus and load its preview/info.
@@ -10298,7 +10331,7 @@ impl Shuffle {
                 None => return,
             }
         };
-        let paths: Vec<PathBuf> = column_entries(&dir)
+        let paths: Vec<PathBuf> = self.visible_column_entries(pane, &dir)
             .iter()
             .map(|e| dir.join(&e.name))
             .collect();
@@ -10525,14 +10558,14 @@ impl Shuffle {
         let i1 = (c1 / ROW_H).floor() as i64;
         // Row 0 is the ".." entry when present; offset to display indices.
         let has_parent =
-            self.tab(pane).find_query.is_none() && prefs().show_parent && self.tab(pane).current_dir.parent().is_some();
+            !self.tab(pane).is_filtered() && prefs().show_parent && self.tab(pane).current_dir.parent().is_some();
         let off = i64::from(has_parent);
         // Only touch the covered rows — cloning every path in the directory per
         // mouse-move made marquee drags crawl in large folders.
         let mut sel = HashSet::new();
         {
             let tab = self.tab(pane);
-            let find = tab.find_query.is_some();
+            let find = tab.is_filtered();
             let len = if find {
                 tab.find_results.len()
             } else {
@@ -10631,7 +10664,7 @@ impl Shuffle {
                 return Some((pane, None));
             }
             let row = row as usize;
-            let find_active = tab.find_query.is_some();
+            let find_active = tab.is_filtered();
             let has_parent =
                 !find_active && prefs().show_parent && tab.current_dir.parent().is_some();
             let count = if find_active {
@@ -10848,7 +10881,7 @@ impl Shuffle {
         // Keep the row/cell visible (List uses a ".." offset; Icons rows of N).
         let view = self.tab(pane).view;
         let offset = usize::from(
-            self.tab(pane).find_query.is_none()
+            !self.tab(pane).is_filtered()
                 && prefs().show_parent
                 && self.tab(pane).current_dir.parent().is_some(),
         );
@@ -10890,7 +10923,7 @@ impl Shuffle {
 
         // Up / down within column k.
         let dir = dirs[k].clone();
-        let entries = column_entries(&dir);
+        let entries = self.visible_column_entries(pane, &dir);
         if entries.is_empty() {
             return;
         }
@@ -10910,7 +10943,7 @@ impl Shuffle {
     /// Select entry `idx` in column `k` of the Column view (keyboard-driven).
     fn column_set(&mut self, pane: usize, k: usize, dirs: &[PathBuf], idx: usize, cx: &mut Context<Self>) {
         let dir = dirs[k].clone();
-        let entries = column_entries(&dir);
+        let entries = self.visible_column_entries(pane, &dir);
         let Some(e) = entries.get(idx) else { return };
         let target = dir.join(&e.name);
         let is_dir = e.is_dir;
@@ -11124,7 +11157,7 @@ impl Shuffle {
                 .border_l_1().border_color(rgb(t.border))
                 .child(div().text_size(px(30.0)).text_color(rgb(t.accent)).child("◧"))
                 .child(div().font_weight(FontWeight::MEDIUM).child("A closer look"))
-                .child(div().text_xs().text_color(rgb(t.text_muted)).child("Select a file to see its preview and details."))
+                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child("Select a file to see its preview and details."))
                 .into_any_element());
         };
 
@@ -11228,7 +11261,7 @@ impl Shuffle {
                                     .py_0p5()
                                     .rounded_full()
                                     .bg(rgba(0x000000aa))
-                                    .text_xs()
+                                    .text_size(px(UI_SMALL_FONT_SIZE))
                                     .child(pager_btn("pdf-prev", "‹", page > 0).on_click(
                                         cx.listener(move |this, _: &ClickEvent, _, cx| {
                                             if this.preview_page > 0 {
@@ -11292,7 +11325,7 @@ impl Shuffle {
             } else {
                 col = col.child(
                     div()
-                        .text_xs()
+                        .text_size(px(UI_SMALL_FONT_SIZE))
                         .text_color(rgb(t.text_dim))
                         .child("Loading…"),
                 );
@@ -11487,7 +11520,7 @@ impl Shuffle {
                 .iter()
                 .map(|l| {
                     div()
-                        .text_xs()
+                        .text_size(px(UI_SMALL_FONT_SIZE))
                         .text_color(rgb(t.text_muted))
                         .child(l.clone())
                         .into_any_element()
@@ -11605,7 +11638,7 @@ impl Shuffle {
                 div()
                     .flex_none()
                     .text_color(rgb(t.text_muted))
-                    .text_xs()
+                    .text_size(px(UI_SMALL_FONT_SIZE))
                     .child(if content_pending {
                         "searching…".to_string()
                     } else {
@@ -11641,7 +11674,7 @@ impl Shuffle {
                 .shadow_lg()
                 .text_color(rgb(t.text_muted))
                 .hover(|s| s.text_color(rgb(t.text)).border_color(rgb(t.accent)))
-                .child(div().flex_none().text_xs().child("🔍"))
+                .child(div().flex_none().text_size(px(UI_SMALL_FONT_SIZE)).child("🔍"))
                 .child(div().flex_none().child("Filter"))
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.active_pane = pane;
@@ -11664,7 +11697,7 @@ impl Shuffle {
             // Warm icons for the active tab of every visible pane.
             for pane in &self.panes {
                 let tab = pane.active_tab();
-                for entry in &tab.entries {
+                for entry in tab.visible_entries() {
                     if entry.is_dir {
                         has_dir = true;
                         continue;
@@ -11894,7 +11927,7 @@ impl Shuffle {
                     .items_center()
                     .gap_1()
                     .cursor_pointer()
-                    .text_xs()
+                    .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(t.text_dim))
                     .hover(|s| s.text_color(rgb(t.text)))
                     .child(div().w(px(10.0)).child(arrow.to_string()))
@@ -12281,7 +12314,7 @@ impl Shuffle {
                                 .items_center()
                                 .gap_1()
                                 .cursor_pointer()
-                                .text_xs()
+                                .text_size(px(UI_SMALL_FONT_SIZE))
                                 .text_color(rgb(theme().text_dim))
                                 .hover(|s| s.text_color(rgb(theme().text)))
                                 .child(div().w(px(10.0)).child(arrow.to_string()))
@@ -12698,7 +12731,7 @@ impl Shuffle {
             .bg(rgb(t.surface))
             .hover(|s| s.bg(rgb(t.hover)))
             .child(cur_glyph)
-            .child(div().text_xs().text_color(rgb(t.text_dim)).child("▾"))
+            .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_dim)).child("▾"))
             .tooltip(tip(format!("View: {cur_name}")))
             .on_mouse_down(
                 MouseButton::Left,
@@ -13211,6 +13244,7 @@ impl Shuffle {
             .child(self.render_tab_strip(pane, cx))
             // Path bar: back/forward arrows + breadcrumb + view/sort toolbar.
             .child(self.render_path_bar(pane, cx))
+            .child(self.render_entry_filter(pane, cx))
             // Body plus the always-present bottom-right filter affordance,
             // overlaid in a shared relative container so it covers every view.
             .child(
@@ -13231,7 +13265,7 @@ impl Shuffle {
         let tab = self.tab(pane);
         // In find mode the list shows the filtered results (no ".." row);
         // otherwise the full directory with a leading ".." when there's a parent.
-        let find_active = tab.find_query.is_some();
+        let find_active = tab.is_filtered();
         let has_parent = !find_active && prefs().show_parent && tab.current_dir.parent().is_some();
         let item_count = if find_active {
             tab.find_results.len()
@@ -13365,7 +13399,7 @@ impl Shuffle {
                     cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                         let widths = this.fitted_widths(pane);
                         let tab = this.tab(pane);
-                        let find_active = tab.find_query.is_some();
+                        let find_active = tab.is_filtered();
                         let has_parent = !find_active && prefs().show_parent && tab.current_dir.parent().is_some();
                         let base_dir = tab.current_dir.clone();
                         let mut items: Vec<AnyElement> = Vec::with_capacity(range.len());
@@ -13381,7 +13415,6 @@ impl Shuffle {
                                         "..",
                                         true,
                                         0,
-                                        None,        // no size for the ".." row
                                         None,
                                         true,        // ".." has no metadata to load
                                         row_key,
@@ -13446,17 +13479,6 @@ impl Shuffle {
                             let entry_loaded = entry.loaded;
                             let target = base_dir.join(&name);
                             let cloud = this.cloud_state(&target, is_dir);
-                            // Folder sizes: look up the cached total, kicking off
-                            // a background sum on first sight (List view only).
-                            let folder_size = if is_dir && tab.remote.is_none() {
-                                let fs = folder_size_lookup(&target);
-                                if fs.is_none() {
-                                    this.ensure_folder_size(target.clone(), cx);
-                                }
-                                fs
-                            } else {
-                                None
-                            };
                             let ctx_target = target.clone();
                             let drop_target = target.clone();
                             let hover_target = target.clone();
@@ -13480,7 +13502,6 @@ impl Shuffle {
                                     &name,
                                     is_dir,
                                     entry_size,
-                                    folder_size,
                                     modified,
                                     entry_loaded,
                                     row_key,
@@ -13578,7 +13599,7 @@ impl Shuffle {
         let width = self.pane_list_width(pane).max(240.0);
         let cell_w = 108.0_f32;
         let cols = ((width / cell_w).floor() as usize).max(1);
-        let n = if tab.find_query.is_some() {
+        let n = if tab.is_filtered() {
             tab.find_results.len()
         } else {
             tab.entries.len()
@@ -13603,7 +13624,7 @@ impl Shuffle {
                     rows,
                     cx.processor(move |this, range: std::ops::Range<usize>, _w, cx| {
                         let tab = this.tab(pane);
-                        let find_active = tab.find_query.is_some();
+                        let find_active = tab.is_filtered();
                         let base_dir = tab.current_dir.clone();
                         let n = if find_active {
                             tab.find_results.len()
@@ -13656,7 +13677,7 @@ impl Shuffle {
 
         let mut cols: Vec<AnyElement> = Vec::new();
         for (i, dir) in dirs.iter().enumerate() {
-            let entries = column_entries(dir);
+            let entries = self.visible_column_entries(pane, dir);
             let next_dir = dirs.get(i + 1).cloned();
             let mut rows: Vec<AnyElement> = Vec::new();
             for e in &entries {
@@ -13732,7 +13753,7 @@ impl Shuffle {
 
         // Filmstrip (capped for very large directories).
         let mut strip: Vec<AnyElement> = Vec::new();
-        for entry in tab.entries.iter().take(400) {
+        for entry in tab.visible_entries().take(400) {
             let name = entry.name.clone();
             let is_dir = entry.is_dir;
             let target = pane_dir.join(&name);
@@ -13754,7 +13775,7 @@ impl Shuffle {
                     .when(selected, |s| s.bg(rgb(t.selected)))
                     .hover(|s| s.bg(rgb(t.hover)))
                     .child(cloud_badged_icon(icon_element_sized(&target, is_dir, 44.0), cloud, 16.0))
-                    .child(div().w_full().truncate().text_xs().text_color(rgb(t.text_muted)).child(name))
+                    .child(div().w_full().truncate().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(name))
                     .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                         let mods = ev.modifiers();
                         if mods.platform {
@@ -13916,7 +13937,7 @@ impl Shuffle {
             .flex_none()
             .px_3()
             .py_1()
-            .text_xs()
+            .text_size(px(UI_SMALL_FONT_SIZE))
             .text_color(rgb(theme().text_dim))
             .border_b_1()
             .border_color(rgb(theme().border))
@@ -14021,7 +14042,7 @@ impl Render for Shuffle {
             .size_full()
             .bg(rgb(t.bg))
             .text_color(rgb(t.text))
-            .text_sm()
+            .text_size(px(UI_FONT_SIZE))
             // Focusable so it receives key events (Cmd+P, palette typing).
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
@@ -15522,7 +15543,7 @@ fn nav_item(
     base = if collapsed {
         base.mx_1().px_0().py_1().justify_center()
     } else {
-        base.mx_2().px_3().py_2().gap_2()
+        base.mx_2().px_3().py_1p5().gap_2()
     };
     let base = if active {
         base.bg(rgb(t.selected))
@@ -15573,8 +15594,6 @@ fn file_row(
     name: &str,
     is_dir: bool,
     size: u64,
-    // For folders: the recursively-summed size once computed (else None → "--").
-    folder_size: Option<u64>,
     modified: Option<SystemTime>,
     loaded: bool,
     key: usize,
@@ -15732,11 +15751,7 @@ fn file_row(
                 .child(if !loaded {
                     "--".to_string()
                 } else if is_dir {
-                    // Folder size once summed; sentinel/none → "--".
-                    match folder_size {
-                        Some(s) if s != u64::MAX => format_size(false, s),
-                        _ => "--".to_string(),
-                    }
+                    "--".to_string()
                 } else {
                     format_size(is_dir, size)
                 }),
@@ -15817,7 +15832,7 @@ fn icon_cell(
             div()
                 .w_full()
                 .truncate()
-                .text_xs()
+                .text_size(px(UI_SMALL_FONT_SIZE))
                 .text_color(rgb(if is_dir { t.accent } else { t.text }))
                 .child(name),
         )
@@ -16181,7 +16196,7 @@ fn fps_overlay() -> AnyElement {
         .py_1()
         .rounded_md()
         .bg(rgba(0x000000aa))
-        .text_xs()
+        .text_size(px(UI_SMALL_FONT_SIZE))
         .text_color(color)
         .child(format!("{fps} fps"))
         .with_animation(
@@ -16255,46 +16270,6 @@ fn read_subdirs(dir: &Path) -> (Vec<PathBuf>, Option<SystemTime>) {
     });
     let mtime = fs::metadata(dir).ok().and_then(|m| m.modified().ok());
     (out, mtime)
-}
-
-/// Recursively-summed folder sizes for List view, computed off-thread and
-/// cached (a folder can hold millions of files; we never walk on the render
-/// thread). `u64::MAX` is a sentinel: the folder blew past the entry cap, so we
-/// show "--" rather than a wrong number.
-static FOLDER_SIZE: OnceLock<Mutex<HashMap<PathBuf, u64>>> = OnceLock::new();
-static FOLDER_SIZE_PENDING: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
-/// Stop summing a folder past this many entries (bounds cost on huge trees like
-/// `/` or a home with node_modules); such folders show "--".
-const FOLDER_SIZE_CAP: usize = 400_000;
-
-fn folder_size_lookup(path: &Path) -> Option<u64> {
-    FOLDER_SIZE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap()
-        .get(path)
-        .copied()
-}
-
-/// Total bytes of all files under `dir` (jwalk, parallel, symlinks not
-/// followed). Returns `u64::MAX` if the tree exceeds [`FOLDER_SIZE_CAP`].
-fn dir_total_size(dir: &Path) -> u64 {
-    let mut total: u64 = 0;
-    let mut count: usize = 0;
-    for entry in jwalk::WalkDir::new(dir).skip_hidden(false) {
-        count += 1;
-        if count > FOLDER_SIZE_CAP {
-            return u64::MAX;
-        }
-        if let Ok(e) = entry {
-            if let Ok(m) = e.metadata() {
-                if m.is_file() {
-                    total += m.len();
-                }
-            }
-        }
-    }
-    total
 }
 
 /// `stat` results for sidebar rows (bookmarks, group members, favorites),
@@ -19891,6 +19866,61 @@ fn open_main_window(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn type_filter_combines_with_search_sort_and_directory_reloads() {
+        let dir = scratch("type-filter");
+        fs::create_dir(dir.join("Reports")).unwrap();
+        fs::create_dir(dir.join("Assets")).unwrap();
+        fs::write(dir.join("report.txt"), "report").unwrap();
+        fs::write(dir.join("photo.jpg"), "photo").unwrap();
+        std::os::unix::fs::symlink("Reports", dir.join("Report link")).unwrap();
+        let mut tab = Tab::new(dir.clone());
+        let names = |tab: &Tab| tab.visible_entries().map(|e| e.name.clone()).collect::<Vec<_>>();
+        assert_eq!(tab.visible_count(), 5);
+
+        tab.selection.insert(dir.join("report.txt"));
+        tab.anchor = Some(dir.join("report.txt"));
+        tab.col_chain.push(dir.join("Reports"));
+        tab.set_entry_filter(EntryFilter::Folders);
+        assert_eq!(names(&tab), ["Assets", "Report link", "Reports"]);
+        assert!(tab.selection.is_empty() && tab.anchor.is_none() && tab.col_chain.is_empty());
+
+        tab.find_query = Some("report".into());
+        tab.recompute_results();
+        assert_eq!(tab.visible_count(), 2);
+        assert!(tab.visible_entries().all(|e| e.is_dir));
+        tab.set_entry_filter(EntryFilter::Files);
+        assert_eq!(names(&tab), ["report.txt"]);
+        // Closing text search keeps the type filter.
+        tab.find_query = None;
+        tab.recompute_results();
+        assert_eq!(names(&tab), ["photo.jpg", "report.txt"]);
+
+        tab.sort_key = SortKey::Name;
+        tab.sort_asc = false;
+        sort_entries(&mut tab.entries, tab.sort_key, tab.sort_asc);
+        tab.recompute_results();
+        assert_eq!(names(&tab), ["report.txt", "photo.jpg"]);
+        fs::write(dir.join("z.txt"), "new").unwrap();
+        tab.entries = read_entries_fast(&dir);
+        sort_entries(&mut tab.entries, tab.sort_key, tab.sort_asc);
+        tab.recompute_results();
+        assert_eq!(names(&tab), ["z.txt", "report.txt", "photo.jpg"]);
+        tab.find_query = Some("kind:folder".into());
+        tab.recompute_results();
+        assert_eq!(tab.visible_count(), 0);
+        tab.find_query = None;
+        tab.set_entry_filter(EntryFilter::All);
+        assert_eq!(tab.visible_count(), 6);
+        assert!(!tab.is_filtered());
+        // Another tab has its own default and results.
+        let other = Tab::new(dir.clone());
+        tab.set_entry_filter(EntryFilter::Files);
+        assert_eq!(other.entry_filter, EntryFilter::All);
+        assert_eq!(other.visible_count(), 6);
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("shuffle-test-{name}-{}", std::process::id()));

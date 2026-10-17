@@ -23,3 +23,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - The first preview was launched with `../../work/qa-profile`. The user began
   browsing in that window. Preserve its settings/workspaces if switching the
   running app to its normal profile; it may now contain user-created state.
+- User feedback: no automatic recursive folder-size calculations while browsing.
+  Main text is 12 logical px/pt, small labels 11, file rows 26 px. Keep it compact.
+- All/Folders/Files visibility is independent for each tab and persists in sessions
+  and workspaces. Keep every view, selection and keyboard navigation consistent
+  with the visible results; tint the top bar while a type filter is active.

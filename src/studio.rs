@@ -3,6 +3,97 @@ use super::*;
 use crate::workspaces::{Layout, Library, SavedPane, SavedTab};
 
 impl Shuffle {
+    fn set_entry_filter(&mut self, pane: usize, filter: EntryFilter, cx: &mut Context<Self>) {
+        self.active_pane = pane;
+        self.term_focused = false;
+        if self.tab(pane).entry_filter == filter {
+            cx.notify();
+            return;
+        }
+        self.tab_mut(pane).set_entry_filter(filter);
+        self.rename = None;
+        self.context_menu = None;
+        self.sort_menu = None;
+        self.marquee = None;
+        self.drag_candidate = None;
+        self.hovered = None;
+        self.drop_hover = None;
+        self.preview_page = 0;
+        self.save_session();
+        self.prewarm_icons(cx);
+        cx.notify();
+    }
+
+    pub(super) fn render_entry_filter(&self, pane: usize, cx: &Context<Self>) -> AnyElement {
+        let t = theme();
+        let tab = self.tab(pane);
+        let filtered = tab.entry_filter != EntryFilter::All;
+        let mut buttons = Vec::new();
+        for (index, filter) in [EntryFilter::All, EntryFilter::Folders, EntryFilter::Files]
+            .into_iter()
+            .enumerate()
+        {
+            let selected = tab.entry_filter == filter;
+            buttons.push(
+                div()
+                    .id(("entry-filter", pane * 3 + index))
+                    .h(px(24.0))
+                    .px_3()
+                    .rounded_md()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .font_weight(if selected {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .text_color(rgb(if selected { t.accent } else { t.text_muted }))
+                    .when(selected, |s| s.bg(rgb(t.bg)).shadow_sm())
+                    .hover(|s| s.bg(rgb(t.hover)))
+                    .child(filter.label())
+                    .tooltip(tip(format!(
+                        "Show {} in this tab",
+                        filter.description().to_lowercase()
+                    )))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.set_entry_filter(pane, filter, cx);
+                    }))
+                    .into_any_element(),
+            );
+        }
+        let count = tab.visible_count();
+        div()
+            .flex_none()
+            .h(px(36.0))
+            .px_3()
+            .flex()
+            .items_center()
+            .gap_2()
+            .border_b_1()
+            .border_color(rgb(if filtered { t.accent } else { t.border }))
+            .bg(rgb(if filtered { filter_tint(t) } else { t.sidebar }))
+            .text_size(px(UI_SMALL_FONT_SIZE))
+            .text_color(rgb(t.text_muted))
+            .child("Show")
+            .child(
+                div()
+                    .flex()
+                    .p(px(2.0))
+                    .rounded_lg()
+                    .bg(rgb(t.surface))
+                    .children(buttons),
+            )
+            .child(div().flex_1())
+            .child(div().truncate().child(if tab.is_filtered() {
+                format!("{count} of {} items", tab.entries.len())
+            } else {
+                format!("{count} items")
+            }))
+            .into_any_element()
+    }
+
     pub(super) fn capture_layout(&self) -> Layout {
         let mut panes = Vec::new();
         let mut active_pane = 0;
@@ -19,6 +110,7 @@ impl Shuffle {
                         view: view_mode_key(tab.view).into(),
                         sort: sort_key_name(tab.sort_key).into(),
                         ascending: tab.sort_asc,
+                        filter: tab.entry_filter,
                     });
                 }
             }
@@ -53,6 +145,9 @@ impl Shuffle {
                         tab.view = view_mode_from_key(&saved.view).unwrap_or(ViewMode::List);
                         tab.sort_key = sort_key_from_name(&saved.sort).unwrap_or(SortKey::None);
                         tab.sort_asc = saved.ascending;
+                        tab.entry_filter = saved.filter;
+                        sort_entries(&mut tab.entries, tab.sort_key, tab.sort_asc);
+                        tab.recompute_results();
                         tab
                     })
                     .collect(),
@@ -251,6 +346,9 @@ impl Shuffle {
             let mut pane = Pane::new(self.active_tab().current_dir.clone());
             pane.tabs[0].remote = self.active_tab().remote.clone();
             pane.tabs[0].view = self.active_tab().view;
+            pane.tabs[0].entry_filter = self.active_tab().entry_filter;
+            pane.tabs[0].sort_key = self.active_tab().sort_key;
+            pane.tabs[0].sort_asc = self.active_tab().sort_asc;
             self.panes.push(pane);
             self.active_pane = 1;
             self.split_ratio = 0.5;
@@ -276,6 +374,9 @@ impl Shuffle {
 
     pub(super) fn render_studio_toolbar(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
+        let filter = self.active_tab().entry_filter;
+        let filtered = filter != EntryFilter::All;
+        let tint = filter_tint(t);
         let workspace = self.active_workspace.and_then(|id| {
             self.workspaces
                 .items
@@ -291,9 +392,9 @@ impl Shuffle {
             .h(px(TITLEBAR_H))
             .pl(px(88.0))
             .pr_4()
-            .bg(rgb(t.sidebar))
+            .bg(rgb(if filtered { tint } else { t.sidebar }))
             .border_b_1()
-            .border_color(rgb(t.border))
+            .border_color(rgb(if filtered { t.accent } else { t.border }))
             .child(
                 div()
                     .flex()
@@ -310,11 +411,13 @@ impl Shuffle {
                         div()
                             .text_size(px(10.0))
                             .text_color(rgb(t.text_muted))
-                            .child(
+                            .child(if filtered {
+                                format!("{} · Filter active", filter.description())
+                            } else {
                                 workspace
                                     .map(|w| w.name.clone())
-                                    .unwrap_or_else(|| "Your files. Your flow.".into()),
-                            ),
+                                    .unwrap_or_else(|| "Your files. Your flow.".into())
+                            }),
                     ),
             )
             .child(div().flex_1())
@@ -335,7 +438,12 @@ impl Shuffle {
                     .cursor_pointer()
                     .hover(|s| s.border_color(rgb(t.accent)))
                     .child("⌕")
-                    .child(div().flex_1().text_xs().child("Search files and commands"))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(UI_SMALL_FONT_SIZE))
+                            .child("Search files and commands"),
+                    )
                     .child(div().text_size(px(10.0)).child("⌘P"))
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.toggle_palette(window, cx)
@@ -404,7 +512,7 @@ impl Shuffle {
                     .rounded_lg()
                     .border_1()
                     .border_color(rgb(t.border))
-                    .text_xs()
+                    .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(t.text_muted))
                     .child("Save a set of folders and tabs. Return to your project in one click.")
                     .into_any_element(),
@@ -508,7 +616,7 @@ impl Shuffle {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Save your workspace"),
                     )
-                    .child(div().text_sm().text_color(rgb(t.text_muted)).child(
+                    .child(div().text_size(px(UI_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
                         "Keep local folders, tabs, view modes and your split layout together.",
                     ))
                     .child(
@@ -538,7 +646,7 @@ impl Shuffle {
                     )
                     .children(self.workspace_dialog_error.as_ref().map(|error| {
                         div()
-                            .text_xs()
+                            .text_size(px(UI_SMALL_FONT_SIZE))
                             .text_color(rgb(0xd14b57))
                             .child(error.clone())
                     }))
@@ -549,7 +657,7 @@ impl Shuffle {
                             .justify_between()
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_size(px(UI_SMALL_FONT_SIZE))
                                     .text_color(rgb(t.text_muted))
                                     .child("↵ Save    Esc Cancel"),
                             )
@@ -583,15 +691,20 @@ impl Shuffle {
     pub(super) fn render_studio_status(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
         let tab = self.active_tab();
-        let count = if tab.find_query.is_some() {
+        let count = if tab.is_filtered() {
             tab.find_results.len()
         } else {
             tab.entries.len()
         };
-        let label = if tab.selection.is_empty() {
-            format!("{count} items")
+        let count_label = if tab.is_filtered() {
+            format!("{count} of {} items", tab.entries.len())
         } else {
-            format!("{} selected · {count} items", tab.selection.len())
+            format!("{count} items")
+        };
+        let label = if tab.selection.is_empty() {
+            count_label
+        } else {
+            format!("{} selected · {count_label}", tab.selection.len())
         };
         div()
             .flex_none()
@@ -645,6 +758,14 @@ impl Shuffle {
     }
 }
 
+/// A restrained accent wash that works with both light and dark palettes.
+fn filter_tint(t: Theme) -> u32 {
+    let blend = |shift: u32| {
+        ((((t.sidebar >> shift) & 0xff) * 7 + ((t.accent >> shift) & 0xff)) / 8) << shift
+    };
+    blend(16) | blend(8) | blend(0)
+}
+
 fn studio_button(
     id: &'static str,
     label: &'static str,
@@ -659,7 +780,7 @@ fn studio_button(
         .flex()
         .items_center()
         .justify_center()
-        .text_xs()
+        .text_size(px(UI_SMALL_FONT_SIZE))
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
         .bg(rgb(if accented { t.accent } else { t.surface }))
