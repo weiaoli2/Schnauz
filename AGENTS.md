@@ -8,6 +8,10 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - `src/theme.rs`: themes; `src/studio.rs`: custom chrome and project UI;
   `src/projects.rs`: typed persistence; `src/main.rs`: existing file manager.
 - Retain the original MIT LICENSE and attribution.
+- Schnauz credits: design and product direction by Oliver Weber, implementation
+  of Schnauz adaptations by Codex; original Shuffle code by Jaime Guzman.
+  Keep `CREDITS.txt`, the source header and README consistent, and ship the
+  credits alongside the unchanged upstream and third-party license notices.
 - App identity: Schnauz, `local.schnauz.app`. Never enable the
   original Shuffle self-updater or publish to its GitHub repository.
 - For a normal build run `./build.sh`; for a faster development build use

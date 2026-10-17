@@ -1,12 +1,12 @@
-//! Shuffle — a fast, snappy file manager for Apple Silicon Macs.
+//! Schnauz — a personal Mac file manager based on Shuffle.
 //!
-//! Milestone 2: a left sidebar of shortcuts.
-//! - Recent: directories visited recently (tracked + persisted, most-recent first).
-//! - Bookmarks: user-pinned directories (the "+" pins the current folder).
-//! - Favorites: Applications, Pictures, Documents, Downloads.
-//! - Locations: Macintosh HD (/) and the current user's home directory.
-//! Clicking any item navigates the main listing. The active location is
-//! highlighted. State lives in ~/Library/Application Support/Schnauz/.
+//! Design and product direction: Oliver Weber.
+//! Implementation of Schnauz adaptations: Codex.
+//! Original codebase: Shuffle by Jaime Guzman (WizenPainter), MIT license.
+//! Original copyright: Copyright (c) 2026 Jaime Guzman.
+//! See LICENSE and CREDITS.txt for attribution and license notices.
+//!
+//! Settings, projects and saved tabs live in ~/Library/Application Support/Schnauz/.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};

@@ -3,6 +3,10 @@
 A personal Mac file manager based on [Shuffle](https://github.com/WizenPainter/shuffle).
 This is an independent local version, with its own application identity and settings.
 
+Design and product direction: **Oliver Weber**. Implementation of the Schnauz
+adaptations: **Codex**. Original codebase: **Shuffle by Jaime Guzman (MIT)**.
+See [CREDITS.txt](CREDITS.txt) for the full attribution.
+
 ## First version
 
 - Studio Light and Studio Dark appearances, an indigo accent, and compact 12 pt lists.

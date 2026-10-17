@@ -1,0 +1,17 @@
+Schnauz
+
+Design and product direction: Oliver Weber
+Implementation of Schnauz adaptations: Codex
+
+Original codebase: Shuffle
+Original author: Jaime Guzman (WizenPainter)
+Original copyright: Copyright (c) 2026 Jaime Guzman
+Original license: MIT
+Upstream: https://github.com/WizenPainter/shuffle
+
+The original copyright and MIT license are preserved in LICENSE and included
+in the app as Licenses/Shuffle-MIT.txt. These credits describe the Schnauz
+adaptation; they do not replace the original codebase's attribution.
+
+Third-party components retain their own author and license notices under
+vendor/ and in the app's Licenses folder.
