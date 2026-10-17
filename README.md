@@ -24,6 +24,9 @@ with a suggested USD 2.50 amount; the user completes any payment on PayPal.
 
 - Studio Light and Studio Dark appearances, an indigo accent, and compact 12 pt lists.
 - Folder totals are not calculated automatically; the size column shows file sizes only.
+- One click selects a file or folder; double-click opens it. Click the sole selected
+  item's name again to rename it inline in List, Icons or search results. The
+  short delay follows your Mac's double-click setting. Enter saves, Escape cancels.
 - Applications display their native icons and are labeled **Application**. Click to
   select, double-click to launch, or right-click **Show Package Contents** to browse inside.
   App bundles appear under **Files**, while **Folders** shows ordinary directories.

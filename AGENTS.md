@@ -48,6 +48,13 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Main text is 12 logical px/pt, small labels 11, file rows 26 px. Keep it compact.
 - Tabs have visible outlines and rounded top corners. Folder names use the same
   primary text color as files; their icons distinguish them.
+- In file panes, one click selects files/folders and double-click opens them.
+  Clicking the name of the sole selected item again starts inline rename after
+  the macOS double-click interval. Cancel pending rename at the next pointer/key
+  interaction, scroll, navigation, or drag; never let it intercept double-click
+  opening or modified selection. List, Icons and search results share the editor.
+  Keep an active edit intact when its name is clicked. The special parent row
+  remains a navigation shortcut and cannot be renamed.
 - The collapsed sidebar contains only its expand button. Do not render section
   actions, plus buttons, shortcuts or placeholders until it is expanded.
   The former compact icon-rail layouts and helper options are removed; keep

@@ -105,6 +105,7 @@ mod volumes;
 mod cloud_locations;
 mod cloud_actions;
 mod nextcloud;
+mod rename_ui;
 use settings::*;
 use previews::*;
 use cache::Cache;
@@ -1508,6 +1509,11 @@ struct Shuffle {
     native_menu_pending: bool,
     /// In-progress inline rename, if any.
     rename: Option<Rename>,
+    /// Cancelled on the next pointer/key interaction, before double-click opens.
+    pending_click_rename: Option<gpui::Task<()>>,
+    /// A name click or native drag consumed this gesture; still bubble mouse-up
+    /// so the root clears drag and marquee state. Reset on the next press.
+    suppress_entry_click: bool,
     /// Open "Sort By" dropdown: (pane, x, y) in window coords.
     sort_menu: Option<(usize, f32, f32)>,
     /// Pending "move to Trash" confirmation: (pane, paths).
@@ -1843,6 +1849,8 @@ impl Shuffle {
             context_menu: None,
             native_menu_pending: false,
             rename: None,
+            pending_click_rename: None,
+            suppress_entry_click: false,
             sort_menu: None,
             confirm_delete: None,
             next_load_gen: 0,
@@ -3149,6 +3157,7 @@ impl Shuffle {
 
     /// Begin renaming `path`: the row's name becomes an editable field.
     fn begin_rename(&mut self, pane: usize, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_click_rename = None;
         self.active_pane = pane;
         let text = path
             .file_name()
@@ -3245,7 +3254,11 @@ impl Shuffle {
                         if tab.anchor.as_deref() == Some(r.path.as_path()) {
                             tab.anchor = Some(dest);
                         }
-                        self.refresh_pane(r.pane, cx);
+                        if self.search_in_pane(r.pane) {
+                            self.refresh_file_search_preserving_selection(cx);
+                        } else {
+                            self.refresh_pane(r.pane, cx);
+                        }
                     }
                 }
             }
@@ -6571,6 +6584,7 @@ impl Shuffle {
     /// Navigate a pane into `dir` if it is a directory. New navigation truncates
     /// any forward history, then appends `dir` as the new tip.
     fn navigate_in(&mut self, pane: usize, dir: PathBuf, cx: &mut Context<Self>) {
+        self.pending_click_rename = None;
         if self.search_in_pane(pane) { self.close_palette(cx); }
         if dir == self.tab(pane).current_dir {
             return;
@@ -7135,6 +7149,7 @@ impl Shuffle {
     /// fade-out is due — without it the thumb would linger until the next
     /// unrelated repaint.
     fn mark_scrolled(&mut self, pane: usize, cx: &mut Context<Self>) {
+        self.pending_click_rename = None;
         {
             let tab = self.tab_mut(pane);
             tab.last_scroll = Instant::now();
@@ -7528,24 +7543,34 @@ impl Shuffle {
         pane: usize,
         path: PathBuf,
         is_dir: bool,
+        name_click: bool,
         ev: &ClickEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.space_map.is_some() { self.close_space_map(window, cx); }
-        if self.marquee_click_suppressed() {
+        if self.suppress_entry_click || self.marquee_click_suppressed() {
             return;
         }
+        self.pending_click_rename = None;
+        window.focus(&self.focus);
         self.active_pane = pane;
         let mods = ev.modifiers();
+        if name_click && !mods.modified()
+            && self.rename.as_ref().is_some_and(|r| r.pane == pane && r.path == path)
+        {
+            return; // Clicking inside the active editor keeps the edit intact.
+        }
         if mods.platform {
             self.toggle_entry(pane, path, cx);
         } else if mods.shift {
             self.range_select(pane, path, cx);
-        } else if is_dir && (self.tab(pane).remote.is_some() || !is_app_bundle(&path, is_dir)) {
-            self.navigate_in(pane, path, cx);
         } else if ev.click_count() >= 2 {
             self.open_path(pane, path, is_dir, cx);
+        } else if name_click && !mods.modified() && self.tab(pane).selection.len() == 1
+            && self.tab(pane).selection.contains(&path)
+        {
+            self.schedule_click_rename(pane, path, window, cx);
         } else {
             self.select_entry(pane, path, cx);
         }
@@ -7861,6 +7886,8 @@ impl Shuffle {
             return; // still within the click slop; not a drag yet
         }
         self.drag_candidate = None;
+        self.pending_click_rename = None;
+        self.suppress_entry_click = true;
         self.marquee = None;
 
         // Drag the whole selection if the pressed item is part of it; otherwise
@@ -9809,6 +9836,7 @@ impl Shuffle {
                                                 this.navigate_in(pane, parent.clone(), cx);
                                             }
                                         }),
+                                        |_: &ClickEvent, _, _| {}, // Let the parent name click bubble.
                                         // ".." → background (New Folder/File) menu.
                                         cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                                             let (x, y) = (
@@ -9854,11 +9882,8 @@ impl Shuffle {
                             let hover_target = target.clone();
                             let is_selected = tab.selection.contains(&target);
                             let ctx_active = this.is_ctx_target(&target);
-                            let rename_text = this
-                                .rename
-                                .as_ref()
-                                .filter(|r| r.path == target)
-                                .map(|r| (r.text.clone(), r.cursor, r.anchor, this.rename_error().is_some()));
+                            let rename_text = this.rename_text(pane, &target);
+                            let name_target = target.clone();
                             // Don't drag the row while it's being renamed.
                             let drag_target = if rename_text.is_some() {
                                 None
@@ -9880,9 +9905,11 @@ impl Shuffle {
                                     this.drop_hover == Some((pane, Some(ix))),
                                     rename_text,       // editable name when renaming
                                     cx.listener(move |this, ev: &ClickEvent, window, cx| {
-                                        // Cmd/Shift extend the selection; otherwise
-                                        // folders open and files select / double-open.
-                                        this.click_entry(pane, target.clone(), is_dir, ev, window, cx);
+                                        this.click_entry(pane, target.clone(), is_dir, false, ev, window, cx);
+                                    }),
+                                    cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                                        this.click_entry(pane, name_target.clone(), is_dir, true, ev, window, cx);
+                                        this.suppress_entry_click = true;
                                     }),
                                     cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                                         let (x, y) = (
@@ -9902,7 +9929,7 @@ impl Shuffle {
                                         // Drop onto a folder → move (or upload) the file(s) into it.
                                         this.drop_files(pane, drop_target.clone(), drag.paths().to_vec(), cx);
                                     }),
-                                    cx.listener(move |this, ev: &MouseDownEvent, _, _cx| {
+                                    cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                                         // Arm a file drag, but DON'T stop propagation:
                                         // the row's own click handler is an ANCESTOR of
                                         // the name cell this press lands on, and gpui
@@ -9916,6 +9943,8 @@ impl Shuffle {
                                                 f64::from(ev.position.y) as f32,
                                             );
                                             this.drag_candidate = Some((pane, dp.clone(), (x, y)));
+                                        } else {
+                                            cx.stop_propagation();
                                         }
                                     }),
                                     cx.listener(move |this, on: &bool, _, _| {
@@ -10014,7 +10043,8 @@ impl Shuffle {
                                 let target = base_dir.join(&name);
                                 let selected = tab.selection.contains(&target);
                                 let ctx_active = this.is_ctx_target(&target);
-                                cells.push(icon_cell(pane, name, target, is_dir, selected, ctx_active, cell_w, cx));
+                                let edit = this.rename_text(pane, &target);
+                                cells.push(icon_cell(pane, name, target, is_dir, selected, ctx_active, cell_w, edit, cx));
                             }
                             out.push(div().flex().w_full().px_2().children(cells).into_any_element());
                         }
@@ -10160,6 +10190,16 @@ impl Render for Shuffle {
             .text_size(px(UI_FONT_SIZE))
             // Focusable so it receives key events (Cmd+P, palette typing).
             .track_focus(&self.focus)
+            .capture_any_mouse_down(cx.listener(|this, _, _, _| {
+                this.pending_click_rename = None;
+                this.suppress_entry_click = false;
+            }))
+            .capture_key_down(cx.listener(|this, _, _, _| {
+                this.pending_click_rename = None;
+            }))
+            .on_scroll_wheel(cx.listener(|this, _: &ScrollWheelEvent, _, _| {
+                this.pending_click_rename = None;
+            }))
             .on_key_down(cx.listener(Self::on_key))
             .on_mouse_down(MouseButton::Left, cx.listener(|this, _: &MouseDownEvent, window, cx| {
                 if this.space_map.is_some() { this.close_space_map(window, cx); }
@@ -11468,8 +11508,9 @@ fn file_row(
     // When Some, this row is being renamed: the name shows as an editable field
     // with (text, cursor char-index, selection-anchor char-index, invalid).
     // Invalid names render the field in red (the pane shows the reason).
-    rename_text: Option<(String, usize, Option<usize>, bool)>,
+    rename_text: Option<rename_ui::EditText>,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_name_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_right: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     on_drop_file: impl Fn(&ExternalPaths, &mut Window, &mut App) + 'static,
     // Left-press handler: records a drag candidate + stops marquee propagation.
@@ -11479,58 +11520,9 @@ fn file_row(
 ) -> impl IntoElement {
     let t = theme();
     let name = &entry.name;
-    // The name element: an editable field while renaming, else the label.
-    let name_el: AnyElement = match &rename_text {
-        Some((txt, cursor, anchor, invalid)) => {
-            let edge = if *invalid { RENAME_ERR_COLOR } else { t.accent };
-            let field = div()
-                .flex_1()
-                .min_w_0()
-                .px_1()
-                .rounded_sm()
-                .bg(rgb(t.bg))
-                .border_1()
-                .border_color(rgb(edge))
-                .text_color(rgb(if *invalid { RENAME_ERR_COLOR } else { t.text }))
-                .flex()
-                .items_center();
-            let n = txt.chars().count();
-            let cursor = (*cursor).min(n);
-            let sel = anchor
-                .filter(|&a| a != cursor)
-                .map(|a| (a.min(cursor), a.max(cursor)));
-            if let Some((lo, hi)) = sel {
-                // Highlighted selection between the plain head and tail.
-                let (bl, bh) = (char_byte(txt, lo), char_byte(txt, hi));
-                field
-                    .child(div().flex_none().child(txt[..bl].to_string()))
-                    .child(
-                        div()
-                            .flex_none()
-                            .bg(Theme::alpha(edge, 0x66))
-                            .rounded_sm()
-                            .child(txt[bl..bh].to_string()),
-                    )
-                    .child(div().flex_none().child(txt[bh..].to_string()))
-                    .into_any_element()
-            } else {
-                // Static caret at the cursor position.
-                let b = char_byte(txt, cursor);
-                field
-                    .child(div().flex_none().child(txt[..b].to_string()))
-                    .child(div().flex_none().w(px(1.5)).h(px(14.0)).bg(rgb(t.text)))
-                    .child(div().flex_none().child(txt[b..].to_string()))
-                    .into_any_element()
-            }
-        }
-        None => div()
-            .flex_1()
-            .min_w_0()
-            .truncate()
-            .text_color(rgb(t.text))
-            .child(name.to_string())
-            .into_any_element(),
-    };
+    let name_el = div().id(("entry-name", key)).flex_1().min_w_0().flex()
+        .child(rename_ui::entry_name(name, rename_text))
+        .on_click(on_name_click);
 
     let name_cell = div()
         .flex_none().w(px(widths.width(Column::Name))).flex().items_center().gap_2().pr_2()
@@ -11566,10 +11558,13 @@ fn icon_cell(
     selected: bool,
     ctx_active: bool,
     cell_w: f32,
+    edit: Option<rename_ui::EditText>,
     cx: &Context<Shuffle>,
 ) -> AnyElement {
     let t = theme();
     let is_folder = is_browsable_folder(&target, is_dir);
+    let editing = edit.is_some();
+    let name_t = target.clone();
     let press_t = target.clone();
     let drop_t = target.clone();
     let ctx_t = target.clone();
@@ -11612,7 +11607,9 @@ fn icon_cell(
                     f64::from(ev.position.x) as f32,
                     f64::from(ev.position.y) as f32,
                 );
-                this.drag_candidate = Some((pane, press_t.clone(), (x, y)));
+                if !editing {
+                    this.drag_candidate = Some((pane, press_t.clone(), (x, y)));
+                }
                 cx.stop_propagation();
             }),
         )
@@ -11625,14 +11622,19 @@ fn icon_cell(
         )
         .child(
             div()
+                .id("icon-name")
                 .w_full()
-                .truncate()
+                .min_w_0()
+                .flex()
                 .text_size(px(UI_SMALL_FONT_SIZE))
-                .text_color(rgb(t.text))
-                .child(name),
+                .child(rename_ui::entry_name(&name, edit))
+                .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                    this.click_entry(pane, name_t.clone(), is_dir, true, ev, window, cx);
+                    this.suppress_entry_click = true;
+                })),
         )
         .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
-            this.click_entry(pane, click_t.clone(), is_dir, ev, window, cx);
+            this.click_entry(pane, click_t.clone(), is_dir, false, ev, window, cx);
         }))
         .on_mouse_down(
             MouseButton::Right,

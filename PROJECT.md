@@ -72,6 +72,7 @@ the server account/repository and current review status before proceeding.
 | Global drive capacity and cloud paths/menus | `src/volumes.rs`, `volumectl.swift`, `src/cloud_locations.rs`, `src/cloud_actions.rs` |
 | Direct Nextcloud accounts, links, sharing and locks | `src/nextcloud.rs`, `native/nextcloud/Core.swift`, `native/nextcloud/main.swift` |
 | Saved folder views and list columns | `src/folder_views.rs`, `src/list_ui.rs` |
+| Inline name editor and click-to-rename timing | `src/rename_ui.rs`, click dispatch in `src/main.rs` and `src/search_ui.rs` |
 | Preview layout and media | `src/preview_panel.rs`, `src/previews.rs`, `src/video_preview.rs` |
 | Terminal and SSH following | `src/studio_terminal.rs`, `src/ssh_sync.rs`, `src/terminal-shell/` |
 | Remote directory names and listings | `src/remote_listing.rs` |

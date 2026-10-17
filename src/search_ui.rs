@@ -373,6 +373,36 @@ impl Shuffle {
             .into_any_element()
     }
 
+    pub(super) fn click_search_entry(
+        &mut self,
+        row: usize,
+        name_click: bool,
+        ev: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.suppress_entry_click { return; }
+        let Some(item) = self.palette_items.get(row) else {
+            return;
+        };
+        let Action::Open(path, is_dir) = item.action.clone();
+        let pane = self.file_search.pane;
+        if name_click && !ev.modifiers().modified() && self.rename_text(pane, &path).is_some() {
+            return;
+        }
+        self.selected = row;
+        self.file_search.editing = false;
+        self.file_search.restore_selection = None;
+        window.focus(&self.focus);
+        // Keep the established search behavior: opening ends the search first.
+        if ev.click_count() >= 2 && !ev.modifiers().modified() {
+            self.pending_click_rename = None;
+            self.open_search_result(cx);
+        } else {
+            self.click_entry(pane, path, is_dir, name_click, ev, window, cx);
+        }
+    }
+
     pub(super) fn select_search_result(&mut self, row: usize, cx: &mut Context<Self>) {
         self.file_search.restore_selection = None;
         let Some(item) = self.palette_items.get(row) else {
@@ -576,18 +606,15 @@ impl Shuffle {
                             .when(selected,|s|s.bg(rgb(t.selected))).hover(|s|s.bg(rgb(t.hover)))
                             .child(div().flex_none().w(px(cell_width)).min_w_0().flex().items_center().gap_2()
                                 .child(div().flex_none().child(icon_element(path,*is_dir)))
-                                .child(div().flex_1().min_w_0().truncate().child(item.title.clone())))
+                                .child(div().id(("search-entry-name",i)).flex_1().min_w_0().flex()
+                                    .child(rename_ui::entry_name(&item.title,this.rename_text(pane,path)))
+                                    .on_click(cx.listener(move|this,ev:&ClickEvent,window,cx| {
+                                        this.click_search_entry(i,true,ev,window,cx);
+                                        this.suppress_entry_click = true;
+                                    }))))
                             .child(div().flex_none().w(px(cell_width)).min_w_0().truncate().text_color(rgb(t.text_muted)).child(location))
                             .on_click(cx.listener(move|this,ev:&ClickEvent,window,cx| {
-                                window.focus(&this.focus);
-                                let item = this.palette_items.get(i).map(|item| match &item.action {Action::Open(path,_)=>path.clone()});
-                                this.selected = i; this.file_search.editing = false; this.file_search.restore_selection = None;
-                                if ev.click_count() >= 2 { this.open_search_result(cx); }
-                                else if let Some(path) = item {
-                                    if ev.modifiers().platform { this.toggle_entry(pane,path,cx); }
-                                    else if ev.modifiers().shift { this.range_select(pane,path,cx); }
-                                    else { this.select_search_result(i,cx); }
-                                }
+                                this.click_search_entry(i,false,ev,window,cx);
                             }))
                             .on_mouse_down(MouseButton::Right,cx.listener(move|this,ev:&MouseDownEvent,window,cx| {
                                 window.focus(&this.focus);
@@ -596,7 +623,7 @@ impl Shuffle {
                             })))
                     }).collect()
                 })).size_full().track_scroll(scroll)
-                    .on_scroll_wheel(cx.listener(|_,_:&ScrollWheelEvent,_,cx|cx.notify())))
+                    .on_scroll_wheel(cx.listener(|this,_:&ScrollWheelEvent,_,cx| {this.pending_click_rename=None;cx.notify();})))
                 .children(static_scrollbar_thumb(&base)));
         } else {
             panel = panel.child(
