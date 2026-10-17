@@ -7180,7 +7180,7 @@ impl Shuffle {
 
     /// The List-view column widths as laid out in this pane right now.
     fn fitted_widths(&self, pane: usize) -> ColumnWidths {
-        let measured = PANE_W.with(|w|w.borrow()[pane.min(1)]);
+        let measured = browser_width(pane);
         let vw = if measured > 0. { measured } else { f32::from(self.tab(pane).h_scroll.bounds().size.width) };
         // Rows are padded px_3 on both sides.
         self.widths.fit(vw - 24.0)
@@ -10523,13 +10523,13 @@ impl Shuffle {
         if self.panes.len() < 2 {
             return;
         }
-        let content_w = (self.pane_list_width(0) + self.pane_list_width(1)).max(1.0);
+        let content_w = (pane_width(0) + pane_width(1)).max(1.0);
         let delta = (x - start_x) / content_w;
         self.split_ratio = (start_ratio + delta).clamp(0.2, 0.8);
         cx.notify();
     }
 
-    /// The tab strip atop a pane: draggable tab chips + a "+" button.
+    /// Bordered tabs sit against the path bar, with a "+" button alongside.
     fn render_tab_strip(&self, pane: usize, cx: &Context<Self>) -> impl IntoElement {
         let t = theme();
         let p = self.pane(pane);
@@ -10551,13 +10551,16 @@ impl Shuffle {
                     .items_center()
                     .gap_1()
                     .px_2()
-                    .h(px(TAB_H - 10.0))
+                    .h(px(TAB_H - 4.0))
                     .max_w(px(180.0))
-                    .rounded_md()
+                    .rounded_t_md()
+                    .border_1()
+                    .border_color(rgb(if active { t.border_strong } else { t.border }))
+                    .when(active, |s| s.border_b_0())
                     .cursor_pointer()
                     .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
-                    .bg(if active { rgb(t.selected) } else { rgba(0x00000000) })
-                    .hover(|s| s.bg(rgb(t.hover)))
+                    .bg(if active { rgb(t.bg) } else { rgb(t.sidebar) })
+                    .when(!active, |s| s.hover(|s| s.bg(rgb(t.hover))))
                     .active(|s| s.bg(rgb(t.selected)))
                     // Drag this tab (live floating preview).
                     .on_drag(drag, move |_, _, _, cx| {
@@ -10613,7 +10616,7 @@ impl Shuffle {
         div()
             .flex_none()
             .flex()
-            .items_center()
+            .items_end()
             .gap_1()
             .px_1()
             .h(px(TAB_H))
@@ -10633,6 +10636,7 @@ impl Shuffle {
                     .flex_none()
                     .w(px(22.0))
                     .h(px(22.0))
+                    .mb(px(4.0))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -10664,13 +10668,65 @@ impl Shuffle {
             ViewMode::Gallery => self.render_gallery_body(pane, cx),
         }};
 
+        let browser_owner = cx.entity().downgrade();
+        let browser = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            // The file viewport can be narrower than its full-width headers.
+            .child(
+                gpui::canvas(
+                    move |bounds, window, _| {
+                        let width = f32::from(bounds.size.width);
+                        let changed = BROWSER_W.with(|w| {
+                            let mut widths = w.borrow_mut();
+                            let old = widths[pane.min(1)];
+                            widths[pane.min(1)] = width;
+                            (old - width).abs() > 0.5
+                        });
+                        if changed {
+                            window.on_next_frame(move |_, cx| {
+                                browser_owner.update(cx, |_, cx| cx.notify()).ok();
+                            });
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .child(body)
+                    .children(self.rename_error_pill(pane))
+                    .when(!searching, |body| body.child(self.render_filter_box(pane, cx)))
+                    .children(self.render_copy_feedback(pane)),
+            )
+            .children(self.render_terminal_panel(pane, cx));
+        let mut body_row = div().flex().flex_1().min_h_0().min_w_0().child(browser);
+        // Keep the shared selection preview on the far right, below every
+        // navigation/filter row. Inspect retains its separate full-height map.
+        if pane + 1 == self.panes.len() && self.space_map.is_none() {
+            if let Some(inspector) = self.render_inspector(cx) {
+                body_row = body_row.child(self.render_preview_panel(inspector, pane, cx));
+            }
+        }
+
         div()
             .relative()
             .flex()
             .flex_col()
             .min_w_0()
             .h_full()
-            // Measure the pane each frame (the toolbar compacts when narrow).
+            // Measure the full pane for its toolbar and split divider.
             .child(
                 gpui::canvas(
                     move |bounds, window, _| {
@@ -10681,8 +10737,7 @@ impl Shuffle {
                             widths[pane.min(1)] = width;
                             (old-width).abs() > 0.5
                         });
-                        // Re-render for any width change so headers and rows
-                        // agree after view changes, splits and preview resizing.
+                        // Re-render when the toolbar or preview bounds change.
                         if changed {
                             window.on_next_frame(move |_, cx| {
                                 weak.update(cx, |_, cx| cx.notify()).ok();
@@ -10720,21 +10775,7 @@ impl Shuffle {
             // Path bar: back/forward arrows + breadcrumb + view/sort toolbar.
             .child(self.render_path_bar(pane, cx))
             .child(self.render_entry_filter(pane, cx))
-            // Body plus the always-present bottom-right filter affordance,
-            // overlaid in a shared relative container so it covers every view.
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .child(body)
-                    .children(self.rename_error_pill(pane))
-                    .when(!searching, |body| body.child(self.render_filter_box(pane, cx)))
-                    .children(self.render_copy_feedback(pane)),
-            )
-            .children(self.render_terminal_panel(pane, cx))
+            .child(body_row)
     }
 
     /// The List view body: clickable column header + virtualized rows.
@@ -11469,7 +11510,7 @@ impl Render for Shuffle {
         self.ensure_column_metadata(cx);
         // Kick off any pending waterfall folder reads before rendering the tree.
         self.ensure_waterfall_loaded(cx);
-        // Main row: sidebar | content (canvas) | optional inspector.
+        // Main row: sidebar | content (including preview) | optional size map.
         let mut main_row = div()
             .flex()
             .flex_1()
@@ -11477,9 +11518,6 @@ impl Render for Shuffle {
             .child(self.render_sidebar(cx))
             .child(self.render_content(cx));
         if let Some(map) = self.render_space_map(cx) { main_row = main_row.child(map); }
-        else if let Some(inspector) = self.render_inspector(cx) {
-            main_row = main_row.child(self.render_preview_panel(inspector, f32::from(window.viewport_size().width), cx));
-        }
 
         let mut root = div()
             .relative()
@@ -11560,7 +11598,7 @@ impl Render for Shuffle {
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 let x = f64::from(ev.position.x) as f32;
                 let y = f64::from(ev.position.y) as f32;
-                this.resize_preview(x, f32::from(window.viewport_size().width), cx);
+                this.resize_preview(x, cx);
                 // A press-then-move on a file row becomes a native OS drag (so
                 // files can be dropped into Finder or any other app).
                 this.maybe_start_os_drag(x, y, window, cx);
@@ -13004,7 +13042,6 @@ fn file_row(
 ) -> impl IntoElement {
     let t = theme();
     let kind = kind_label(name, is_dir);
-    let name_color = if is_browsable_folder(Path::new(name), is_dir) { t.accent } else { t.text };
     let meta_color = rgb(t.text_muted);
     // The name element: an editable field while renaming, else the label.
     let name_el: AnyElement = match &rename_text {
@@ -13054,7 +13091,7 @@ fn file_row(
             .flex_1()
             .min_w_0()
             .truncate()
-            .text_color(rgb(name_color))
+            .text_color(rgb(t.text))
             .child(name.to_string())
             .into_any_element(),
     };
@@ -13215,7 +13252,7 @@ fn icon_cell(
                 .w_full()
                 .truncate()
                 .text_size(px(UI_SMALL_FONT_SIZE))
-                .text_color(rgb(if is_folder { t.accent } else { t.text }))
+                .text_color(rgb(t.text))
                 .child(name),
         )
         .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
@@ -13275,7 +13312,7 @@ fn column_row(
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_color(rgb(if is_folder { t.accent } else { t.text }))
+                .text_color(rgb(t.text))
                 .child(name.to_string()),
         )
         .when(is_folder, |r| {
@@ -14504,12 +14541,18 @@ fn ns_view_ptr(window: &Window) -> Option<*mut std::ffi::c_void> {
 }
 
 thread_local! {
-    /// Each pane's width as of the last paint (0 = not yet measured).
+    /// Full header width, including any preview (0 = not yet measured).
     static PANE_W: RefCell<[f32; 2]> = const { RefCell::new([0.0; 2]) };
+    /// File viewport width, excluding the preview.
+    static BROWSER_W: RefCell<[f32; 2]> = const { RefCell::new([0.0; 2]) };
 }
 
 fn pane_width(pane: usize) -> f32 {
     PANE_W.with(|w| w.borrow()[pane.min(1)])
+}
+
+fn browser_width(pane: usize) -> f32 {
+    BROWSER_W.with(|w| w.borrow()[pane.min(1)])
 }
 
 thread_local! {

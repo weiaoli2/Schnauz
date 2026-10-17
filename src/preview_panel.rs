@@ -2,19 +2,23 @@
 use super::*;
 
 pub(super) struct Drag {
+    pane: usize,
     start_x: f32,
     start_width: f32,
     width: f32,
 }
 
-fn bounded_width(requested: f32, window_width: f32) -> f32 {
-    requested.clamp(220., (window_width - 480.).clamp(220., 1200.))
+fn bounded_width(requested: f32, pane_width: f32) -> f32 {
+    // Keep room for files even in a narrow split. The preferred width is
+    // retained so the preview grows back when more space becomes available.
+    let max = (pane_width - 220.).clamp(0., 1200.);
+    requested.clamp(220_f32.min(max), max)
 }
 
 impl Shuffle {
-    pub(super) fn resize_preview(&mut self, x: f32, window_width: f32, cx: &mut Context<Self>) {
+    pub(super) fn resize_preview(&mut self, x: f32, cx: &mut Context<Self>) {
         if let Some(drag) = &mut self.preview_resize {
-            drag.width = bounded_width(drag.start_width + drag.start_x - x, window_width);
+            drag.width = bounded_width(drag.start_width + drag.start_x - x, pane_width(drag.pane));
             cx.notify();
         }
     }
@@ -31,14 +35,14 @@ impl Shuffle {
     pub(super) fn render_preview_panel(
         &self,
         content: AnyElement,
-        window_width: f32,
+        pane: usize,
         cx: &Context<Self>,
     ) -> AnyElement {
         let width = bounded_width(
             self.preview_resize
                 .as_ref()
                 .map_or(prefs().preview_width as f32, |d| d.width),
-            window_width,
+            pane_width(pane),
         );
         div()
             .relative()
@@ -46,6 +50,10 @@ impl Shuffle {
             .w(px(width))
             .h_full()
             .min_h_0()
+            .overflow_hidden()
+            // The preview can show a selection from the other split pane.
+            // Interacting with it must not activate this pane and replace it.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(content)
             .child(
                 div()
@@ -71,6 +79,7 @@ impl Shuffle {
                                 apply_prefs(next, cx);
                             } else {
                                 this.preview_resize = Some(Drag {
+                                    pane,
                                     start_x: f32::from(ev.position.x),
                                     start_width: width,
                                     width,
@@ -92,8 +101,11 @@ mod tests {
     fn preview_width_keeps_room_for_browser_and_honors_drag_limits() {
         assert_eq!(bounded_width(420., 1280.), 420.);
         assert_eq!(bounded_width(100., 1280.), 220.);
-        assert_eq!(bounded_width(1000., 1280.), 800.);
-        assert_eq!(bounded_width(420., 700.), 220.);
+        assert_eq!(bounded_width(1200., 1280.), 1060.);
+        assert_eq!(bounded_width(420., 700.), 420.);
+        assert_eq!(bounded_width(420., 500.), 280.);
+        assert_eq!(bounded_width(420., 350.), 130.);
+        assert_eq!(bounded_width(420., 200.), 0.);
         assert_eq!(bounded_width(5000., 3000.), 1200.);
     }
 }

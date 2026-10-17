@@ -40,6 +40,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   replace live state with QA fixtures or leave a testing view active for the user.
 - User feedback: no automatic recursive folder-size calculations while browsing.
   Main text is 12 logical px/pt, small labels 11, file rows 26 px. Keep it compact.
+- Tabs have visible outlines and rounded top corners. Folder names use the same
+  primary text color as files; their icons distinguish them.
 - All/Folders/Files visibility is independent for each tab and persists in sessions
   and projects. Keep every view, selection and keyboard navigation consistent
   with the visible results; tint the top bar while a type filter is active.
@@ -68,6 +70,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   readable native text in a scrollable panel, with bounded reads for large files.
 - The preview's left edge resizes both text and visual previews. Remember width
   after the drag, retain room for browsing, and double-click to reset to 420 pt.
+  Start the preview below the tab, path/icon and type-filter rows so those headers
+  retain their full width. Measure file viewports separately from header widths.
 - New Text File asks for a name before creating anything, appends .txt, and uses
   create_new so existing data cannot be overwritten. Copy feedback names items in-pane.
 
