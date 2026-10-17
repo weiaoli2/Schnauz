@@ -447,6 +447,10 @@ fn set_dock_icon(png: &[u8]) {
 /// The pack image overriding the icon for `key` (a file extension, FOLDER_KEY,
 /// or FILE_KEY), if the active pack provides one.
 fn pack_icon_path(key: &str) -> Option<PathBuf> {
+    // An application always keeps its own native icon, including with icon packs.
+    if key.starts_with(APP_ICON_PREFIX) {
+        return None;
+    }
     let pack = icon_pack()?;
     let name = if key == FOLDER_KEY {
         "folder"
@@ -3001,6 +3005,7 @@ struct ScrollDrag {
 /// Reserved cache keys for the shared generic folder and file icons.
 const FOLDER_KEY: &str = "\u{0}folder";
 const FILE_KEY: &str = "\u{0}file";
+const APP_ICON_PREFIX: &str = "\u{0}app:";
 
 /// What activating a command-palette item does.
 /// One entry in the palette's ⌘K actions panel.
@@ -3217,6 +3222,27 @@ struct Entry {
     loaded: bool,
 }
 
+impl Entry {
+    /// App bundles retain directory semantics for file operations, but are
+    /// presented as applications in the browser and its file/folder filters.
+    fn is_folder(&self) -> bool {
+        is_browsable_folder(Path::new(&self.name), self.is_dir)
+    }
+}
+
+fn has_app_extension(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+}
+
+fn is_app_bundle(path: &Path, is_dir: bool) -> bool {
+    is_dir && has_app_extension(path)
+}
+
+fn is_browsable_folder(path: &Path, is_dir: bool) -> bool {
+    is_dir && !is_app_bundle(path, is_dir)
+}
+
 /// A file's cloud-storage materialization state. Detected from the kernel's
 /// `SF_DATALESS` flag, which Finder itself uses — set on iCloud and File
 /// Provider (Dropbox, Google Drive, OneDrive, …) placeholders whose bytes live
@@ -3375,7 +3401,7 @@ impl Tab {
         let q = tab.find_query.as_deref().unwrap_or("").trim();
         if q.is_empty() {
             tab.find_results = tab.entries.iter().enumerate()
-                .filter_map(|(i, entry)| tab.entry_filter.accepts(entry.is_dir).then_some(i))
+                .filter_map(|(i, entry)| tab.entry_filter.accepts(entry.is_folder()).then_some(i))
                 .collect();
             return;
         }
@@ -3404,7 +3430,7 @@ impl Tab {
 
         let mut scored: Vec<(i32, usize)> = Vec::new();
         for (i, e) in tab.entries.iter().enumerate() {
-            if !tab.entry_filter.accepts(e.is_dir) {
+            if !tab.entry_filter.accepts(e.is_folder()) {
                 continue;
             }
             if !fq.matches_entry(&e.name, e.is_dir, e.size, e.modified) {
@@ -3431,7 +3457,7 @@ impl Tab {
             let entries = &tab.entries;
             scored.sort_by(|a, b| {
                 b.0.cmp(&a.0)
-                    .then_with(|| entries[b.1].is_dir.cmp(&entries[a.1].is_dir))
+                    .then_with(|| entries[b.1].is_folder().cmp(&entries[a.1].is_folder()))
                     .then_with(|| {
                         entries[a.1].name.to_lowercase().cmp(&entries[b.1].name.to_lowercase())
                     })
@@ -4512,7 +4538,7 @@ impl Shuffle {
     fn open_path(&mut self, pane: usize, path: PathBuf, is_dir: bool, cx: &mut Context<Self>) {
         // App bundles are directories, but double-clicking one should *launch*
         // it like Finder — browse inside via right-click → Show Package Contents.
-        let is_app = is_dir && path.extension().is_some_and(|e| e == "app");
+        let is_app = self.tab(pane).remote.is_none() && is_app_bundle(&path, is_dir);
         if is_dir && !is_app {
             self.navigate_in(pane, path, cx);
         } else if !is_app && self.tab(pane).remote.is_some() {
@@ -6234,7 +6260,7 @@ impl Shuffle {
                         this.extract_archive(pane, p.clone(), cx);
                     }));
                 }
-                if is_dir && path.extension().is_some_and(|e| e == "app") {
+                if is_app_bundle(&path, is_dir) {
                     let p = path.clone();
                     nodes.push(mi("Show Package Contents", move |this, _, cx| {
                         this.close_context_menu(cx);
@@ -10205,7 +10231,7 @@ impl Shuffle {
             tab.visible_entries().cloned().collect()
         } else {
             column_entries(dir).into_iter()
-                .filter(|entry| tab.entry_filter.accepts(entry.is_dir))
+                .filter(|entry| tab.entry_filter.accepts(entry.is_folder()))
                 .collect()
         }
     }
@@ -10390,10 +10416,10 @@ impl Shuffle {
             self.toggle_entry(pane, path, cx);
         } else if mods.shift {
             self.range_select(pane, path, cx);
-        } else if is_dir {
+        } else if is_dir && (self.tab(pane).remote.is_some() || !is_app_bundle(&path, is_dir)) {
             self.navigate_in(pane, path, cx);
         } else if ev.click_count() >= 2 {
-            self.open_path(pane, path, false, cx);
+            self.open_path(pane, path, is_dir, cx);
         } else {
             self.select_entry(pane, path, cx);
         }
@@ -10691,7 +10717,7 @@ impl Shuffle {
                 } else {
                     row - usize::from(has_parent)
                 };
-                tab.entries.get(ix).is_some_and(|e| e.is_dir)
+                tab.entries.get(ix).is_some_and(|e| e.is_folder())
             };
             return Some((pane, is_folder.then_some(row)));
         }
@@ -10801,7 +10827,7 @@ impl Shuffle {
             self.range_select_column(pane, col_index, target, cx);
             return;
         }
-        if is_dir {
+        if is_dir && (self.tab(pane).remote.is_some() || !is_app_bundle(&target, is_dir)) {
             if ev.click_count() >= 2 {
                 // Double-click drills in as the new root.
                 self.navigate_in(pane, target, cx);
@@ -10823,7 +10849,7 @@ impl Shuffle {
                 tab.selection.insert(target.clone());
             }
             if ev.click_count() >= 2 {
-                self.open_path(pane, target, false, cx);
+                self.open_path(pane, target, is_dir, cx);
             } else {
                 cx.notify();
                 self.focus_entry(pane, target, cx);
@@ -10950,7 +10976,7 @@ impl Shuffle {
         {
             let tab = self.tab_mut(pane);
             tab.col_chain.truncate(k);
-            if is_dir {
+            if is_browsable_folder(&target, is_dir) {
                 tab.col_chain.push(target.clone());
             }
             tab.col_active = k;
@@ -11698,7 +11724,7 @@ impl Shuffle {
             for pane in &self.panes {
                 let tab = pane.active_tab();
                 for entry in tab.visible_entries() {
-                    if entry.is_dir {
+                    if entry.is_folder() {
                         has_dir = true;
                         continue;
                     }
@@ -13509,7 +13535,7 @@ impl Shuffle {
                                     ctx_active,
                                     widths,
                                     icon,
-                                    is_dir,            // folders accept drops
+                                    entry.is_folder(), // ordinary folders accept drops
                                     this.drop_hover == Some((pane, Some(ix))),
                                     rename_text,       // editable name when renaming
                                     cx.listener(move |this, ev: &ClickEvent, _, cx| {
@@ -15623,7 +15649,7 @@ fn file_row(
 ) -> impl IntoElement {
     let t = theme();
     let kind = kind_label(name, is_dir);
-    let name_color = if is_dir { t.accent } else { t.text };
+    let name_color = if is_browsable_folder(Path::new(name), is_dir) { t.accent } else { t.text };
     let meta_color = rgb(t.text_muted);
     // The name element: an editable field while renaming, else the label.
     let name_el: AnyElement = match &rename_text {
@@ -15775,6 +15801,7 @@ fn icon_cell(
     cx: &Context<Shuffle>,
 ) -> AnyElement {
     let t = theme();
+    let is_folder = is_browsable_folder(&target, is_dir);
     let press_t = target.clone();
     let drop_t = target.clone();
     let ctx_t = target.clone();
@@ -15833,7 +15860,7 @@ fn icon_cell(
                 .w_full()
                 .truncate()
                 .text_size(px(UI_SMALL_FONT_SIZE))
-                .text_color(rgb(if is_dir { t.accent } else { t.text }))
+                .text_color(rgb(if is_folder { t.accent } else { t.text }))
                 .child(name),
         )
         .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
@@ -15850,7 +15877,7 @@ fn icon_cell(
                 cx.stop_propagation();
             }),
         );
-    if is_dir {
+    if is_folder {
         cell = cell
             .drag_over::<ExternalPaths>(|s, _, _, _| s.bg(rgb(theme().selected)))
             .on_drop(cx.listener(move |this, d: &ExternalPaths, _, cx| {
@@ -15872,6 +15899,7 @@ fn column_row(
     cx: &Context<Shuffle>,
 ) -> AnyElement {
     let t = theme();
+    let is_folder = is_browsable_folder(&target, is_dir);
     let icon = icon_element(&target, is_dir);
     let click_t = target.clone();
     let ctx_t = target.clone();
@@ -15892,10 +15920,10 @@ fn column_row(
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_color(rgb(if is_dir { t.accent } else { t.text }))
+                .text_color(rgb(if is_folder { t.accent } else { t.text }))
                 .child(name.to_string()),
         )
-        .when(is_dir, |r| {
+        .when(is_folder, |r| {
             r.child(div().flex_none().text_color(rgb(t.text_dim)).child("›"))
         })
         .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
@@ -15917,6 +15945,9 @@ fn column_row(
 
 /// A human-readable kind label for a file (e.g. "Microsoft Excel", "DWG File").
 fn kind_label(name: &str, is_dir: bool) -> String {
+    if is_app_bundle(Path::new(name), is_dir) {
+        return "Application".to_string();
+    }
     if is_dir {
         return "Directory".to_string();
     }
@@ -15959,8 +15990,8 @@ fn kind_label(name: &str, is_dir: bool) -> String {
 }
 
 /// Build the icon element for an entry: a real macOS file-type icon when we can
-/// fetch one, otherwise an emoji fallback. Directories always use the folder
-/// emoji (per design — folder icon stays as-is for now).
+/// fetch one, otherwise a generic fallback. Applications use their own icon;
+/// ordinary folders share the generic folder icon.
 fn icon_element(path: &Path, is_dir: bool) -> AnyElement {
     icon_element_sized(path, is_dir, 16.0)
 }
@@ -16013,7 +16044,8 @@ fn icon_element_sized(path: &Path, is_dir: bool, size: f32) -> AnyElement {
     // shared generic folder icon (built synchronously at startup, so no emoji
     // placeholder). Files use their type-specific icon once the background
     // pre-warm has it, otherwise the shared generic file icon.
-    let handle = if is_dir {
+    let is_folder = is_browsable_folder(path, is_dir);
+    let handle = if is_folder {
         lookup_cached(FOLDER_KEY)
     } else {
         lookup_icon(path).or_else(|| lookup_cached(FILE_KEY))
@@ -16026,18 +16058,21 @@ fn icon_element_sized(path: &Path, is_dir: bool, size: f32) -> AnyElement {
     }
     // Last resort only if the base icons couldn't be built.
     div()
-        .child(if is_dir { "📁" } else { "📄" })
+        .child(if is_folder { "📁" } else { "📄" })
         .into_any_element()
 }
 
 thread_local! {
-    // Cache macOS icons by lowercase extension so we hit AppKit once per type,
-    // not once per file. `None` records "couldn't build one" to avoid retrying.
+    // Documents share an extension icon; apps use a separate key for each path.
+    // `None` records "couldn't build one" to avoid retrying.
     static ICON_CACHE: RefCell<HashMap<String, Option<Arc<RenderImage>>>> =
         RefCell::new(HashMap::new());
 }
 
 fn icon_key(path: &Path) -> Option<String> {
+    if has_app_extension(path) {
+        return Some(format!("{APP_ICON_PREFIX}{}", path.to_string_lossy()));
+    }
     let key = path
         .extension()
         .and_then(|e| e.to_str())
@@ -16054,7 +16089,7 @@ fn lookup_cached(key: &str) -> Option<Arc<RenderImage>> {
     ICON_CACHE.with(|cache| cache.borrow().get(key).cloned().flatten())
 }
 
-/// Read a previously-built file icon from the cache (keyed by extension). Never
+/// Read a previously-built icon (keyed by app path or document extension). Never
 /// builds, so it's safe to call every frame from `render`.
 fn lookup_icon(path: &Path) -> Option<Arc<RenderImage>> {
     let key = icon_key(path)?;
@@ -17580,7 +17615,7 @@ fn color_label(c: image::ColorType) -> String {
 
 /// Returns a short code-signature status for apps/executables, else `None`.
 fn code_signature(path: &Path, is_dir: bool) -> Option<String> {
-    let is_app = path.extension().and_then(|e| e.to_str()) == Some("app");
+    let is_app = is_app_bundle(path, is_dir);
     if !is_app && is_dir {
         return None;
     }
@@ -17689,7 +17724,7 @@ fn read_entries_fast(dir: &Path) -> Vec<Entry> {
 /// The default ordering (folders first, then case-insensitive by name). Uses
 /// `sort_by_cached_key` so each name is lowercased once, not on every compare.
 fn sort_default(entries: &mut [Entry]) {
-    entries.sort_by_cached_key(|e| (!e.is_dir, e.name.to_lowercase()));
+    entries.sort_by_cached_key(|e| (!e.is_folder(), e.name.to_lowercase()));
 }
 
 thread_local! {
@@ -17889,7 +17924,7 @@ impl KindClass {
             .map(|e| e.to_lowercase());
         let ext = ext.as_deref();
         match self {
-            KindClass::Folder => is_dir,
+            KindClass::Folder => is_browsable_folder(Path::new(name), is_dir),
             KindClass::App => ext == Some("app"),
             // Every remaining category is file-only.
             _ if is_dir => false,
@@ -19866,6 +19901,47 @@ fn open_main_window(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn application_bundles_keep_distinct_icons_and_file_visibility() {
+        let dir = scratch("app-bundles");
+        fs::create_dir(dir.join("Utilities")).unwrap();
+        fs::create_dir_all(dir.join("Alpha.app/Contents")).unwrap();
+        fs::create_dir_all(dir.join("Beta.APP/Contents")).unwrap();
+        fs::write(dir.join("notes.txt"), "notes").unwrap();
+        let mut tab = Tab::new(dir.clone());
+        let names = |tab: &Tab| tab.visible_entries().map(|e| e.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&tab), ["Utilities", "Alpha.app", "Beta.APP", "notes.txt"]);
+        for entries in [read_entries_fast(&dir), read_entries(&dir)] {
+            for entry in entries.iter().filter(|e| has_app_extension(Path::new(&e.name))) {
+                assert!(entry.is_dir, "copy and move must retain the whole bundle");
+                assert!(!entry.is_folder());
+                assert_eq!(kind_label(&entry.name, entry.is_dir), "Application");
+                assert!(!KindClass::Folder.matches(&entry.name, entry.is_dir));
+                assert!(KindClass::App.matches(&entry.name, entry.is_dir));
+            }
+        }
+        tab.set_entry_filter(EntryFilter::Folders);
+        assert_eq!(names(&tab), ["Utilities"]);
+        tab.set_entry_filter(EntryFilter::Files);
+        assert_eq!(names(&tab), ["Alpha.app", "Beta.APP", "notes.txt"]);
+        tab.find_query = Some("kind:app".into());
+        tab.recompute_results();
+        assert_eq!(names(&tab), ["Alpha.app", "Beta.APP"]);
+
+        let alpha = dir.join("Alpha.app");
+        let beta = dir.join("Beta.APP");
+        assert!(is_app_bundle(&alpha, true));
+        assert!(!is_browsable_folder(&alpha, true));
+        assert!(is_browsable_folder(&dir.join("Utilities"), true));
+        assert!(!is_app_bundle(&alpha, false));
+        let alpha_key = icon_key(&alpha).unwrap();
+        assert_ne!(alpha_key, icon_key(&beta).unwrap());
+        assert_ne!(alpha_key, icon_key(&dir.join("Other/Alpha.app")).unwrap());
+        assert_eq!(icon_key(&dir.join("a.txt")), icon_key(&dir.join("b.TXT")));
+        assert!(pack_icon_path(&alpha_key).is_none());
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn type_filter_combines_with_search_sort_and_directory_reloads() {

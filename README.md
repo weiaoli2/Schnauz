@@ -7,6 +7,9 @@ This is an independent local version, with its own application identity and sett
 
 - Studio Light and Studio Dark appearances, an indigo accent, and compact 12 pt lists.
 - Folder totals are not calculated automatically; the size column shows file sizes only.
+- Applications display their native icons and are labeled **Application**. Click to
+  select, double-click to launch, or right-click **Show Package Contents** to browse inside.
+  App bundles appear under **Files**, while **Folders** shows ordinary directories.
 - **All · Folders · Files** controls for every tab. Active filters tint the top bar,
   show the visible item count, and are remembered in sessions and saved workspaces.
 - Search, split/join panes, preview and workspace controls in the toolbar.

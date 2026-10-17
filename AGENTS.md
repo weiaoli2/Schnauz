@@ -28,3 +28,6 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - All/Folders/Files visibility is independent for each tab and persists in sessions
   and workspaces. Keep every view, selection and keyboard navigation consistent
   with the visible results; tint the top bar while a type filter is active.
+- App bundles keep physical directory semantics for file operations, but display
+  as applications with native icons cached per app path. Single-click selects,
+  double-click launches, and Show Package Contents explicitly browses the bundle.
