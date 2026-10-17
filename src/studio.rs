@@ -398,7 +398,7 @@ impl Shuffle {
                 self.project_dialog = None;
                 self.project_dialog_error = None;
                 self.collapsed_sections.remove("PROJECTS");
-                self.collapsed_sections.remove("PROJECT FAVORITES");
+                self.collapsed_sections.remove("LOCATIONS");
                 self.set_notice(format!("Created project ‘{}’", name.trim()), cx);
             }
             Err(error) => {
@@ -728,7 +728,7 @@ impl Shuffle {
                 .hover(|s| s.bg(rgb(t.hover)))
                 .child("⌂")
                 .child("Personal")
-                .tooltip(tip("Your general browsing tabs and favorites"))
+                .tooltip(tip("Your general browsing tabs and locations"))
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     window.focus(&this.focus);
                     this.restore_personal(cx);
@@ -767,10 +767,10 @@ impl Shuffle {
                             .child(project.layout.tab_count().to_string()),
                     )
                     .tooltip(tip(format!(
-                        "{} · {} tab(s) · {} favorite(s)\nChanges are remembered automatically",
+                        "{} · {} tab(s) · {} location(s)\nChanges are remembered automatically",
                         project.name,
                         project.layout.tab_count(),
-                        project.favorites.len()
+                        project.sidebar.locations.len()
                     )))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         window.focus(&this.focus);
@@ -836,7 +836,7 @@ impl Shuffle {
                             .child("Create a project"),
                     )
                     .child(div().text_size(px(UI_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
-                        "A dedicated set of favorites, tabs and split panes. Changes are remembered automatically.",
+                        "Your own locations, tabs and split panes. Changes are remembered automatically.",
                     ))
                     .child(
                         div()

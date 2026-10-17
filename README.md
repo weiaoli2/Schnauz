@@ -40,7 +40,7 @@ with a suggested USD 2.50 amount; the user completes any payment on PayPal.
   in-memory ancestor lookups and background atomic writes. No directory scan or
   per-folder settings files. **Use inherited / default view** removes that folder's
   rule. Applying a tree rule replaces existing child overrides.
-- Projects with separate favorites, tabs, view modes, sorting and split layouts. Changes are remembered automatically.
+- Projects with separate locations, tabs, view modes, sorting and split layouts. Changes are remembered automatically.
 - A preview panel and footer with item counts, current path and appearance control.
 - The clickable path ends at the current folder. Long paths clip from the left,
   and hovering shows the complete path.
@@ -103,10 +103,13 @@ The map starts below the path and filter bars. Selecting outside it closes it;
 navigation from inside its graphic keeps it open.
 
 Click **New project** or press **⌘⇧S** to create a project from the current tabs.
-Click a project in the sidebar to switch to its own favorites, tagged items, locations, cloud folders, servers and last layout.
-Use **+** beside **Project favorites** to pin the current folder; right-click a
-favorite to remove it. **Personal** keeps a separate set of general browsing tabs
-and favorites. New projects start with empty **Locations**, **Cloud**, **Servers**
+Click a project in the sidebar to switch to its own tagged items, locations, cloud folders, servers and last layout.
+**Locations** is the single place for project shortcuts. Use its **+** to add a
+folder, or right-click a file/folder and choose **Add to Locations**. The separate
+Favorites section and its code are removed; existing favorites move into Locations
+without duplicates, including files and currently unavailable paths.
+**Personal** keeps its own browsing tabs and locations.
+New projects start with empty **Locations**, **Cloud**, **Servers**
 and **Tagged Items**. Add folders with **+**; servers can also include explicit
 network-folder shortcuts. **Recents** has been removed, including history tracking.
 The little **Tag** toolbar button adds/removes selected local files and folders
@@ -120,6 +123,26 @@ Finder tags or file metadata. Existing saved workspaces are imported automatical
 their original settings file is preserved. Legacy saved servers migrate once to
 **Personal**; passwords remain in the macOS Keychain. Removing a project connection
 keeps shared host credentials available for other projects.
+
+**Devices** stays above the scrolling project sections and is shared by every
+project. Each mounted local drive shows a compact free-space label: green below
+80% used, yellow at 80–90%, red above 90%. Change those thresholds in **Settings →
+General → Sidebar**. Capacity refreshes in the background every 30 seconds and
+never scans folders. Collapsing the sidebar leaves only its reopen button.
+
+Inside Nextcloud, iCloud Drive and other macOS CloudStorage folders, the path bar
+shows a blue provider badge followed by the cloud-relative folder path. The badge
+stays visible even when the path is long; click it to open the cloud root. Hover
+or edit the path to see the full filesystem location.
+
+Cloud files, folders and shortcuts have a provider submenu. Downloads and iCloud
+space controls run directly. **Nextcloud actions in Finder…** selects the item
+in Finder for Nextcloud's own sharing, locking and automatic-space menus.
+Those Finder extension actions are not exposed as a reusable menu for other file
+managers; a separate direct Nextcloud connection is still under discussion.
+See [Apple's Finder Sync guide](https://developer.apple.com/library/archive/documentation/General/Conceptual/ExtensibilityPG/Finder.html)
+and [Nextcloud's File Provider guide](https://docs.nextcloud.com/server/stable/user_manual/en/desktop/macosfileprovider.html).
+Opening a cloud menu never recursively scans a folder.
 
 Project changes save automatically. Live terminal sessions survive project
 switches while the app stays open; terminals start fresh after quitting the app.
@@ -202,7 +225,9 @@ disposable test folders.
 
 - `src/theme.rs`: palette and live theming
 - `src/studio.rs`: custom toolbar, footer and project controls
-- `src/projects.rs`: project layouts, favorites, migration and validation
+- `src/projects.rs`: project layouts, locations, migration and validation
+- `src/volumes.rs`, `volumectl.swift`: global drive capacity and colour badges
+- `src/cloud_locations.rs`, `src/cloud_actions.rs`: cloud identity, paths and provider menus
 - `src/entry_filter.rs`: per-tab folder/file visibility
 - `src/clipboard_path.rs`: pasted-path interpretation
 - `src/new_text_file.rs`: named text-file creation without overwriting

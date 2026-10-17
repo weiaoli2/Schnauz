@@ -127,8 +127,6 @@ pub(crate) struct Project {
     pub name: String,
     pub layout: Layout,
     #[serde(default)]
-    pub favorites: Vec<PathBuf>,
-    #[serde(default)]
     pub sidebar: Sidebar,
 }
 
@@ -140,8 +138,6 @@ pub(crate) struct Library {
     pub active: Option<u64>,
     #[serde(default)]
     pub personal_layout: Option<Layout>,
-    #[serde(default)]
-    pub personal_favorites: Vec<PathBuf>,
     #[serde(default)]
     pub personal_sidebar: Sidebar,
     #[serde(default)]
@@ -155,7 +151,6 @@ impl Default for Library {
             items: Vec::new(),
             active: None,
             personal_layout: None,
-            personal_favorites: Vec::new(),
             personal_sidebar: Sidebar::default(),
             sidebar_migrated: false,
         }
@@ -169,7 +164,17 @@ impl Library {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(error) => return Err(error),
         };
-        let mut library: Self = serde_json::from_slice(&bytes)
+        let mut stored: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if let Some(root) = stored.as_object_mut() {
+            merge_old_favorites(root, "personal_favorites", "personal_sidebar")?;
+            if let Some(items) = root.get_mut("items").and_then(|v| v.as_array_mut()) {
+                for project in items.iter_mut().filter_map(|v| v.as_object_mut()) {
+                    merge_old_favorites(project, "favorites", "sidebar")?;
+                }
+            }
+        }
+        let mut library: Self = serde_json::from_value(stored)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let mut ids = HashSet::new();
         let mut names = HashSet::new();
@@ -197,7 +202,11 @@ impl Library {
             return Self::load(path);
         }
         let mut library = Self::load(legacy)?;
-        library.personal_favorites = favorites;
+        for path in favorites {
+            library
+                .personal_sidebar
+                .set_path(Section::Locations, path, true);
+        }
         Ok(library)
     }
 
@@ -232,28 +241,6 @@ impl Library {
                 .find(|p| p.id == id)
                 .map(|p| &mut p.sidebar),
             None => Some(&mut self.personal_sidebar),
-        }
-    }
-
-    pub fn favorites(&self) -> &[PathBuf] {
-        self.active
-            .and_then(|id| self.items.iter().find(|p| p.id == id))
-            .map(|p| p.favorites.as_slice())
-            .unwrap_or(&self.personal_favorites)
-    }
-
-    pub fn set_favorite(&mut self, path: PathBuf, pinned: bool) {
-        let favorites = self
-            .active
-            .and_then(|id| self.items.iter_mut().find(|p| p.id == id))
-            .map(|p| &mut p.favorites)
-            .unwrap_or(&mut self.personal_favorites);
-        if pinned {
-            if !favorites.contains(&path) {
-                favorites.push(path);
-            }
-        } else {
-            favorites.retain(|p| p != &path);
         }
     }
 
@@ -300,7 +287,6 @@ impl Library {
             id,
             name,
             layout,
-            favorites: Vec::new(),
             sidebar: Sidebar::default(),
         });
         Ok(id)
@@ -311,6 +297,35 @@ impl Library {
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         atomic_write(path, &bytes)
     }
+}
+
+/// Read-only compatibility for existing settings. New saves contain Locations
+/// only; files, unavailable paths and ordering are preserved without duplicates.
+fn merge_old_favorites(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    old: &str,
+    target: &str,
+) -> io::Result<()> {
+    let Some(value) = object.remove(old) else {
+        return Ok(());
+    };
+    let decode = |error| io::Error::new(io::ErrorKind::InvalidData, error);
+    let paths: Vec<PathBuf> = serde_json::from_value(value).map_err(decode)?;
+    let mut sidebar: Sidebar = serde_json::from_value(
+        object
+            .get(target)
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+    )
+    .map_err(decode)?;
+    for path in paths {
+        sidebar.set_path(Section::Locations, path, true);
+    }
+    object.insert(
+        target.into(),
+        serde_json::to_value(sidebar).map_err(decode)?,
+    );
+    Ok(())
 }
 
 fn valid_name(name: &str) -> Result<String, String> {
@@ -460,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn projects_isolate_favorites_and_remember_each_layout_after_restart() {
+    fn projects_isolate_locations_and_remember_each_layout_after_restart() {
         let scratch = Scratch::new();
         let make_layout = |name: &str| Layout {
             panes: vec![SavedPane {
@@ -472,29 +487,42 @@ mod tests {
         };
         let mut library = Library::default();
         library.remember_layout(make_layout("personal"));
-        library.set_favorite(scratch.0.join("personal pin"), true);
+        library
+            .sidebar_mut()
+            .set_path(Section::Locations, scratch.0.join("personal pin"), true);
         let a = library.create("Design", make_layout("design")).unwrap();
         let b = library.create("Writing", make_layout("writing")).unwrap();
         library.active = Some(a);
-        assert!(library.favorites().is_empty());
+        assert!(library.sidebar().locations.as_slice().is_empty());
         let pin = scratch.0.join("素材\nnotes");
-        library.set_favorite(pin.clone(), true);
-        library.set_favorite(pin.clone(), true);
+        library
+            .sidebar_mut()
+            .set_path(Section::Locations, pin.clone(), true);
+        library
+            .sidebar_mut()
+            .set_path(Section::Locations, pin.clone(), true);
         library.remember_layout(make_layout("design new folder"));
         library.active = Some(b);
-        assert!(library.favorites().is_empty());
-        library.set_favorite(scratch.0.join("writing pin"), true);
+        assert!(library.sidebar().locations.as_slice().is_empty());
+        library
+            .sidebar_mut()
+            .set_path(Section::Locations, scratch.0.join("writing pin"), true);
         library.active = Some(a);
-        assert_eq!(library.favorites(), &[pin.clone()]);
+        assert_eq!(library.sidebar().locations.as_slice(), &[pin.clone()]);
         let path = scratch.0.join("projects.json");
         library.save(&path).unwrap();
         let mut restored = Library::load(&path).unwrap();
         assert_eq!(restored, library);
         assert_eq!(restored.items[0].layout, make_layout("design new folder"));
-        restored.set_favorite(pin, false);
-        assert!(restored.favorites().is_empty());
+        restored
+            .sidebar_mut()
+            .set_path(Section::Locations, pin, false);
+        assert!(restored.sidebar().locations.as_slice().is_empty());
         restored.active = None;
-        assert_eq!(restored.favorites(), &[scratch.0.join("personal pin")]);
+        assert_eq!(
+            restored.sidebar().locations.as_slice(),
+            &[scratch.0.join("personal pin")]
+        );
         assert_eq!(restored.personal_layout, Some(make_layout("personal")));
     }
 
@@ -596,6 +624,45 @@ mod tests {
     }
 
     #[test]
+    fn merges_old_favorites_into_locations_once_without_losing_files_or_missing_paths() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("projects.json");
+        let layout = Layout {
+            panes: vec![SavedPane {
+                tabs: vec![tab(scratch.0.clone())],
+                active: 0,
+            }],
+            active_pane: 0,
+            split_ratio: 0.5,
+        };
+        let mut library = Library::default();
+        let id = library.create("Design", layout).unwrap();
+        library.active = Some(id);
+        let existing = scratch.0.join("existing folder");
+        let file = scratch.0.join("notes.txt");
+        let missing = scratch.0.join("unavailable volume");
+        library.sidebar_mut().locations.push(existing.clone());
+        library.sidebar_mut().cloud.push(scratch.0.join("cloud"));
+        let mut old = serde_json::to_value(&library).unwrap();
+        old["personal_favorites"] = serde_json::json!([file]);
+        old["items"][0]["favorites"] = serde_json::json!([existing, file, missing, file]);
+        let original = serde_json::to_vec(&old).unwrap();
+        fs::write(&path, &original).unwrap();
+        let restored = Library::load(&path).unwrap();
+        assert_eq!(
+            restored.sidebar().locations,
+            [existing, file.clone(), missing]
+        );
+        assert_eq!(restored.personal_sidebar.locations, [file]);
+        assert_eq!(restored.sidebar().cloud, library.sidebar().cloud);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        restored.save(&path).unwrap();
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("favorites"));
+        assert_eq!(Library::load(&path).unwrap(), restored);
+    }
+
+    #[test]
     fn migrates_legacy_workspaces_without_modifying_original_or_reimporting_pins() {
         let scratch = Scratch::new();
         let legacy = scratch.0.join("workspaces.json");
@@ -605,13 +672,15 @@ mod tests {
         let pin = scratch.0.join("old bookmark");
         let mut library = Library::load_migrating(&path, &legacy, vec![pin.clone()]).unwrap();
         assert_eq!(library.items[0].name, "Existing");
-        assert!(library.items[0].favorites.is_empty());
-        assert_eq!(library.favorites(), &[pin.clone()]);
-        library.set_favorite(pin, false);
+        assert!(library.items[0].sidebar.locations.is_empty());
+        assert_eq!(library.sidebar().locations.as_slice(), &[pin.clone()]);
+        library
+            .sidebar_mut()
+            .set_path(Section::Locations, pin, false);
         library.save(&path).unwrap();
         let restored =
             Library::load_migrating(&path, &legacy, vec![scratch.0.join("stale")]).unwrap();
-        assert!(restored.favorites().is_empty());
+        assert!(restored.sidebar().locations.as_slice().is_empty());
         assert_eq!(fs::read(legacy).unwrap(), bytes);
         assert!(library
             .create("Personal", library.items[0].layout.clone())

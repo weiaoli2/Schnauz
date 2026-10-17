@@ -44,6 +44,30 @@ pub(super) fn tab_sections(tab: usize) -> &'static [&'static str] {
 }
 
 impl Settings {
+    fn drive_threshold_row(&self, critical: bool, cx: &Context<Self>) -> AnyElement {
+        let p = prefs();
+        let value = if critical { p.drive_critical } else { p.drive_warning };
+        let mut controls = div().flex_none().flex().items_center().gap_2();
+        for (index, delta, label) in [(0usize, -1i16, "−"), (1, 1, "+")] {
+            controls = controls.child(div().id((if critical { "drive-red" } else { "drive-yellow" }, index))
+                .px_2().py_1().rounded_md().cursor_pointer().bg(rgb(theme().surface))
+                .hover(|d| d.bg(rgb(theme().hover))).child(label)
+                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                    let mut p = prefs();
+                    if critical {
+                        p.drive_critical = (i16::from(p.drive_critical) + delta).clamp(i16::from(p.drive_warning) + 1, 99) as u8;
+                    } else {
+                        p.drive_warning = (i16::from(p.drive_warning) + delta).clamp(1, i16::from(p.drive_critical) - 1) as u8;
+                    }
+                    apply_prefs(p, cx); cx.notify();
+                })));
+        }
+        div().flex().items_center().justify_between().gap_4()
+            .child(div().flex_1().child(if critical { "Red above" } else { "Yellow from" }))
+            .child(div().text_color(rgb(if critical { 0xc23a35 } else { 0x9a6700 })).child(format!("{value}% used")))
+            .child(controls).into_any_element()
+    }
+
     fn new(cx: &mut Context<Self>) -> Self {
         // Repaint when the shared update-check state changes (the check runs
         // async; the main window may also drive it).
@@ -575,8 +599,10 @@ impl Settings {
             ),
             settings_section(
                 "Sidebar",
-                None,
+                Some("Devices appear above Projects. Their labels show free space; colours reflect used capacity."),
                 vec![
+                    self.drive_threshold_row(false, cx),
+                    self.drive_threshold_row(true, cx),
                     toggle_row(
                         "tg-groups",
                         "Sidebar groups",

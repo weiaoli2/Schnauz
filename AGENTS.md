@@ -84,16 +84,38 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   with the shell owning the PTY and no child jobs. Keep the panel open and file
   browser focused. Never restart automatically after a foreground app exits.
 
-- Projects replace the old workspace UI. Each owns its favorites, tagged items,
+- Projects replace the old workspace UI. Each owns its tagged items,
   Locations, Cloud, saved servers/network folders and autosaved local layout.
   New project sidebars start empty; Personal has its own profile. Recents and
-  automatic cloud/volume discovery are removed. The Tag icon adds/removes local
+  automatic cloud-folder discovery are removed. Locations is the single shortcut
+  list; Favorites and its controls/model are removed. Merge legacy project and
+  Personal favorites into Locations on load, deduplicating without dropping files
+  or unavailable paths. Preserve legacy files; new saves contain Locations only.
+  The Tag icon adds/removes local
   selection from Tagged Items; clicking a tagged file reveals it. Sidebar folders
   offer View in… with All projects first, then checkable individual projects;
   update destinations without switching. All affects existing projects only.
   Central projects.json stores profiles; migrate legacy servers once to Personal,
   preserve original legacy files and shared Keychain credentials. Migrate legacy workspaces
   and bookmarks without modifying their original files. Keep live PTYs when switching.
+- Devices is a global fixed section above the scrolling Projects/Locations area,
+  independent of the selected project. Show mounted local startup/external drives
+  with compact free-space labels. Use filesystem capacity, refreshed off-thread
+  every 30 seconds; never calculate folder sizes. Default colours are green below
+  80% used, yellow at 80–90%, red above 90%; thresholds are saved in Settings →
+  General → Sidebar. A collapsed sidebar still contains only its reopen button.
+- Cloud paths under macOS CloudStorage and iCloud Drive use a persistent white-on-blue
+  rounded provider badge followed by the path relative to that cloud root. The
+  badge stays visible when ancestor crumbs are clipped. Preserve the full actual
+  path for editing, tooltips and file operations; never apply local cloud identity
+  to remote SSH paths. Clicking the badge goes to that provider root.
+- Cloud context menus identify the provider on files, folders, backgrounds and
+  sidebar shortcuts. Downloads and iCloud free-space operations are native;
+  Nextcloud-specific sharing, locks and automatic-space policies currently use
+  an explicitly labeled Finder handoff. macOS does not expose those extension
+  menus to other file managers. A separate direct Nextcloud connection is under
+  discussion; do not present its actions as implemented. Never recursively scan
+  a folder while constructing a cloud menu; gather action targets in a worker.
 - Hidden items (dot names and macOS UF_HIDDEN) are hidden by default; the per-tab eye
   toggle applies in every view and combines with type/text filters.
 - Hide the inspector without an actual previewable single selection. Show text as

@@ -101,6 +101,9 @@ mod settings;
 mod about;
 mod video_preview;
 mod system_dates;
+mod volumes;
+mod cloud_locations;
+mod cloud_actions;
 use settings::*;
 use previews::*;
 use cache::Cache;
@@ -122,6 +125,9 @@ struct Prefs {
     show_parent: bool,
     /// Collapse the left sidebar to its expand button.
     sidebar_collapsed: bool,
+    /// Percentage used: yellow begins at warning, red above critical.
+    drive_warning: u8,
+    drive_critical: u8,
     /// How many Recents to show in the sidebar (0 hides the section).
     /// Give the command palette (Cmd+P) its own Up/Down query history.
     palette_history: bool,
@@ -155,6 +161,8 @@ impl Default for Prefs {
             info: true,
             show_parent: false,
             sidebar_collapsed: false,
+            drive_warning: 80,
+            drive_critical: 90,
             palette_history: false,
             groups_enabled: false,
             show_filter_button: true,
@@ -180,6 +188,8 @@ thread_local! {
         info: true,
         show_parent: false,
         sidebar_collapsed: false,
+        drive_warning: 80,
+        drive_critical: 90,
         palette_history: false,
         groups_enabled: false,
         show_filter_button: true,
@@ -1040,8 +1050,6 @@ enum SidebarTarget {
     ProjectPath(projects::Section, PathBuf),
     /// Empty sidebar space → offer "New Group".
     Empty,
-    /// A pinned bookmark path → offer "Remove Bookmark".
-    Bookmark(PathBuf),
     /// A group's header (by index) → offer "Delete Group".
     GroupHeader(usize),
     /// A member of a group: (group index, path) → offer "Remove from Group".
@@ -1437,6 +1445,7 @@ impl Render for TabDragPreview {
 
 /// The root view: a workspace of one or two side-by-side panes.
 struct Shuffle {
+    volumes: Vec<volumes::Volume>,
     panes: Vec<Pane>,
     active_pane: usize,
     /// Left pane's width fraction when two panes are shown (0.2..0.8).
@@ -1612,6 +1621,8 @@ enum UpdateStatus {
 
 impl Shuffle {
     fn new(dir: PathBuf, cx: &mut Context<Self>) -> Self {
+        // A background snapshot, independent of project switching.
+        Self::watch_volumes_start(cx);
         cx.on_app_quit(|this, _| {
             this.save_session();
             let job = this.folder_views.write_job();
@@ -1786,6 +1797,7 @@ impl Shuffle {
         cx.set_global(SftpServersGlobal(servers));
         Self {
             panes: vec![Pane::new(dir)],
+            volumes: Vec::new(),
             active_pane: 0,
             split_ratio: 0.5,
             divider_drag: None,
@@ -3636,40 +3648,7 @@ impl Shuffle {
     /// file or a folder (downloads its online-only descendants). Runs the
     /// `cloudctl` helper per file in the background; badges show ↻ meanwhile.
     fn cloud_download(&mut self, pane: usize, path: PathBuf, cx: &mut Context<Self>) {
-        self.close_context_menu(cx);
-        let Some(tool) = cloudctl_path() else { return };
-        // Gather the online-only files to fetch (the file itself, or a folder's
-        // dataless descendants — capped so a giant tree can't spawn thousands).
-        let targets = collect_cloud_files(&path, /* want_dataless */ true, 2000);
-        if targets.is_empty() {
-            return;
-        }
-        for t in &targets {
-            self.cloud_busy.insert(t.clone());
-        }
-        cx.notify();
-        let dir = self.tab(pane).current_dir.clone();
-        cx.spawn(async move |this, cx| {
-            let done = targets.clone();
-            cx.background_spawn(async move {
-                for f in &targets {
-                    let _ = Command::new(&tool).arg("download").arg(f).status();
-                }
-            })
-            .await;
-            let _ = this.update(cx, |this, cx| {
-                for f in &done {
-                    this.cloud_busy.remove(f);
-                }
-                // Re-read the folder so freshly-materialized files lose the badge.
-                if this.tab(pane).current_dir == dir {
-                    this.refresh_pane(pane, cx);
-                } else {
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+        self.start_cloud_file_operation(pane, path, true, cx);
     }
 
     /// "Sync Now" for a cloud folder: start the provider's sync app if it's
@@ -3821,48 +3800,7 @@ impl Shuffle {
     /// only (third-party eviction is driven by the provider's own app). `path`
     /// may be a file or a folder (evicts its materialized descendants).
     fn cloud_evict(&mut self, pane: usize, path: PathBuf, cx: &mut Context<Self>) {
-        self.close_context_menu(cx);
-        let Some(tool) = cloudctl_path() else { return };
-        let targets = collect_cloud_files(&path, /* want_dataless */ false, 5000);
-        if targets.is_empty() {
-            return;
-        }
-        for t in &targets {
-            self.cloud_busy.insert(t.clone());
-        }
-        cx.notify();
-        let dir = self.tab(pane).current_dir.clone();
-        cx.spawn(async move |this, cx| {
-            let all = targets.clone();
-            let err = cx
-                .background_spawn(async move {
-                    let mut last_err = None;
-                    for f in &targets {
-                        let out = Command::new(&tool).arg("evict").arg(f).output();
-                        if let Ok(o) = out {
-                            if !o.status.success() {
-                                last_err = Some(String::from_utf8_lossy(&o.stderr).trim().to_string());
-                            }
-                        }
-                    }
-                    last_err
-                })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                for f in &all {
-                    this.cloud_busy.remove(f);
-                }
-                if let Some(e) = err.filter(|e| !e.is_empty()) {
-                    this.remote_error = Some(e);
-                }
-                if this.tab(pane).current_dir == dir {
-                    this.refresh_pane(pane, cx);
-                } else {
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+        self.start_cloud_file_operation(pane, path, false, cx);
     }
 
     /// Set the file as the desktop picture on every display (Service).
@@ -3954,33 +3892,7 @@ impl Shuffle {
 
             // --- cloud + type-specific (single target only) ---
             if !many {
-                // Cloud storage: download-on-demand / free up space. Offered for
-                // files/folders in a cloud store, when the helper is present.
-                if let (Some(kind), true) = (cloud_kind(&path), cloudctl_path().is_some()) {
-                    if is_dir {
-                        let p = path.clone();
-                        nodes.push(mi("Sync Now", move |this, _, cx| {
-                            this.cloud_sync(pane, p.clone(), cx);
-                        }));
-                    }
-                    let has_online = collect_cloud_files(&path, true, 1).len() == 1;
-                    let has_local = collect_cloud_files(&path, false, 1).len() == 1;
-                    if has_online {
-                        let label = if is_dir { "Download Contents" } else { "Download Now" };
-                        let p = path.clone();
-                        nodes.push(mi(label, move |this, _, cx| {
-                            this.cloud_download(pane, p.clone(), cx);
-                        }));
-                    }
-                    // Eviction is iCloud-only here (third-party is provider-driven).
-                    if has_local && kind == CloudKind::ICloud {
-                        let label = if is_dir { "Free Up Space in Folder" } else { "Free Up Space" };
-                        let p = path.clone();
-                        nodes.push(mi(label, move |this, _, cx| {
-                            this.cloud_evict(pane, p.clone(), cx);
-                        }));
-                    }
-                }
+                if let Some(menu) = self.cloud_menu(pane, &path, is_dir) { nodes.push(menu); }
                 // Type-specific actions, Finder-style: archives extract in
                 // place, app bundles reveal their contents.
                 if archive_suffix(&path).is_some() {
@@ -4139,15 +4051,11 @@ impl Shuffle {
                     let _ = Command::new("open").arg("-R").arg(&p).spawn();
                 }));
                 let p = path.clone();
-                let already = self.projects.favorites().iter().any(|b| b == &p);
-                let label = if already { "Remove from Favorites" } else { "Add to Favorites" };
+                let already = self.projects.sidebar().locations.contains(&p);
+                let label = if already { "Remove from Locations" } else { "Add to Locations" };
                 nodes.push(mi(label, move |this, _, cx| {
                     this.close_context_menu(cx);
-                    if already {
-                        this.remove_bookmark(&p, cx);
-                    } else {
-                        this.bookmark_path(p.clone(), cx);
-                    }
+                    this.set_project_path(projects::Section::Locations, p.clone(), !already, cx);
                 }));
                 // "Add to Group ▸" (only when groups are enabled and exist).
                 if prefs().groups_enabled && !self.groups.is_empty() {
@@ -4198,12 +4106,8 @@ impl Shuffle {
         // Background of a cloud folder: ask the provider to sync it.
         if on_background {
             let dir = self.tab(pane).current_dir.clone();
-            if cloud_kind(&dir).is_some() && cloudctl_path().is_some() {
-                let label = format!("Sync Now with {}", cloud_provider_name(&dir));
-                nodes.push(mi(label, move |this, _, cx| {
-                    this.cloud_sync(pane, dir.clone(), cx);
-                }));
-                push_menu_sep(&mut nodes);
+            if let Some(menu) = self.cloud_menu(pane, &dir, true) {
+                nodes.push(menu); push_menu_sep(&mut nodes);
             }
         }
         nodes.push(mi("New Folder", move |this, window, cx| {
@@ -5184,12 +5088,17 @@ impl Shuffle {
         let groups_on = prefs().groups_enabled;
         let mut items: Vec<MenuNode> = Vec::new();
         let folder = match &target {
-            SidebarTarget::Bookmark(p) | SidebarTarget::ProjectPath(_,p) | SidebarTarget::GroupMember(_,p) => Some(p.clone()),
+            SidebarTarget::ProjectPath(_,p) | SidebarTarget::GroupMember(_,p) => Some(p.clone()),
             SidebarTarget::Empty => Some(self.active_tab().current_dir.clone()).filter(|_| self.active_tab().remote.is_none()),
             SidebarTarget::Tab(p,t) => self.panes.get(*p).and_then(|p|p.tabs.get(*t)).filter(|t|t.remote.is_none()).map(|t|t.current_dir.clone()),
             SidebarTarget::NavBar(p) => Some(self.tab(*p)).filter(|t|t.remote.is_none()).map(|t|t.current_dir.clone()),
             _ => None,
         };
+        if let Some(path) = &folder {
+            if let Some(menu) = self.cloud_menu(self.active_pane, path, cached_is_dir(path)) {
+                items.push(menu); items.push(MenuNode::Sep);
+            }
+        }
         if let Some(folder) = folder.filter(|p|p.is_dir()) {
             let section = match &target { SidebarTarget::ProjectPath(section, _) => *section, _ => projects::Section::Locations };
             items.push(self.project_visibility_menu(section, folder.clone()));
@@ -5220,14 +5129,6 @@ impl Shuffle {
                         }),
                     );
                 }
-            }
-            SidebarTarget::Bookmark(p) => {
-                items.push(
-                    mi("Remove from Favorites", move |this, _, cx| {
-                        this.close_sidebar_menu(cx);
-                        this.remove_bookmark(&p, cx);
-                    }),
-                );
             }
             SidebarTarget::GroupHeader(idx) => {
                 if groups_on {
@@ -8460,22 +8361,6 @@ impl Shuffle {
         }).detach();
     }
 
-    /// Pin the current directory to bookmarks (no-op if already pinned).
-    fn add_bookmark(&mut self, cx: &mut Context<Self>) {
-        let dir = self.active_tab().current_dir.clone();
-        self.bookmark_path(dir, cx);
-    }
-
-    /// Pin an arbitrary path (file or folder) to the Bookmarks section.
-    fn bookmark_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let mut candidate = self.projects.clone();
-        candidate.set_favorite(path, true);
-        match self.persist_library(candidate) {
-            Ok(()) => cx.notify(),
-            Err(error) => self.set_notice(error, cx),
-        }
-    }
-
     /// Whether `path` is the target of the currently-open right-click menu
     /// (so its row can keep the hovered look while the menu is up).
     fn is_ctx_target(&self, path: &Path) -> bool {
@@ -8483,16 +8368,6 @@ impl Shuffle {
             .as_ref()
             .and_then(|m| m.target.as_ref())
             .is_some_and(|(p, _)| p.as_path() == path)
-    }
-
-    /// Remove a bookmark (from the right-click "Remove Bookmark" action).
-    fn remove_bookmark(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let mut candidate = self.projects.clone();
-        candidate.set_favorite(path.to_path_buf(), false);
-        match self.persist_library(candidate) {
-            Ok(()) => cx.notify(),
-            Err(error) => self.set_notice(error, cx),
-        }
     }
 
     // ----- sidebar groups -----
@@ -8612,7 +8487,7 @@ impl Shuffle {
     }
 
     /// A collapsible section header: a ▾/▸ arrow + title that toggles the
-    /// section, plus an optional trailing element (e.g. the Bookmarks "+").
+    /// section, plus an optional trailing element (e.g. the Locations "+").
     fn section_header_el(
         &self,
         title: &'static str,
@@ -8933,35 +8808,13 @@ impl Shuffle {
         let current = self.active_tab().current_dir.clone();
         let current = current.as_path();
         let mut key = 0usize;
+        self.push_volumes(&mut items, cx);
+        let fixed = items;
+        let mut items = Vec::new();
         self.push_project_sidebar(&mut items, cx);
 
         self.project_folder_section(&mut items, &mut key, "LOCATIONS", projects::Section::Locations, cx);
         self.project_tagged_section(&mut items, &mut key, cx);
-
-        // --- Bookmarks (with a "+" to pin the current folder) ---
-        let plus = div()
-            .id("add-bookmark")
-            .cursor_pointer()
-            .px_1()
-            .text_color(rgb(theme().text_dim))
-            .hover(|s| s.text_color(rgb(theme().text)))
-            .child("+")
-            .tooltip(tip("Pin current folder"))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.add_bookmark(cx);
-            }))
-            .into_any_element();
-        let title = if self.projects.active.is_some() { "PROJECT FAVORITES" } else { "MY FAVORITES" };
-        items.push(self.section_header_el(title, Some(plus), cx));
-        if !self.collapsed_sections.contains(title) {
-            if self.projects.favorites().is_empty() {
-                items.push(empty_hint("Click + to pin a folder").into_any_element());
-            } else {
-                for p in self.projects.favorites() {
-                    push_bookmark_nav(&mut items, cx, &mut key, p.clone(), current);
-                }
-            }
-        }
 
         // --- Groups (user-defined; only when the feature is enabled) ---
         if prefs().groups_enabled {
@@ -9103,7 +8956,7 @@ impl Shuffle {
         }
 
         let groups_on = prefs().groups_enabled;
-        sidebar
+        let sections = div().id("sidebar-sections").flex_1().min_h_0().flex().flex_col()
             .overflow_y_scroll()
             // Right-click empty sidebar space → "New Group" (when enabled).
             .when(groups_on, |d| {
@@ -9118,7 +8971,8 @@ impl Shuffle {
                     }),
                 )
             })
-            .children(items)
+            .children(items);
+        sidebar.children(fixed).child(sections)
     }
 
     /// The top bar for a pane: back/forward arrows then either the clickable
@@ -9226,37 +9080,49 @@ impl Shuffle {
 
         let tab = self.tab(pane);
         let current_dir = tab.current_dir.clone();
-
-        // A remote tab's root is the server, not the local disk.
-        let root_label = match &tab.remote {
-            Some(s) => s.name.clone(),
-            None => "Macintosh HD".to_string(),
-        };
-        let mut segs: Vec<AnyElement> = Vec::new();
-        let mut acc = PathBuf::new();
-        let mut idx = 0usize;
-        for comp in current_dir.components() {
-            let (label, full) = match comp {
-                Component::RootDir => {
-                    acc.push("/");
-                    (root_label.clone(), acc.clone())
-                }
-                Component::Normal(s) => {
-                    acc.push(s);
-                    (s.to_string_lossy().into_owned(), acc.clone())
-                }
-                _ => continue,
+        let (badge, segs) = if let Some((badge, crumbs)) = self.cloud_breadcrumbs(pane, cx) {
+            (Some(badge), crumbs)
+        } else {
+            // A remote tab's root is the server, not the local disk.
+            let root_label = match &tab.remote {
+                Some(s) => s.name.clone(),
+                None => "Macintosh HD".to_string(),
             };
-            if idx > 0 {
-                segs.push(breadcrumb_sep());
+            let mut segs: Vec<AnyElement> = Vec::new();
+            let mut acc = PathBuf::new();
+            let mut idx = 0usize;
+            for comp in current_dir.components() {
+                let (label, full) = match comp {
+                    Component::RootDir => {
+                        acc.push("/");
+                        (root_label.clone(), acc.clone())
+                    }
+                    Component::Normal(s) => {
+                        acc.push(s);
+                        (s.to_string_lossy().into_owned(), acc.clone())
+                    }
+                    _ => continue,
+                };
+                if idx > 0 {
+                    segs.push(breadcrumb_sep());
+                }
+                // Palette-on-click only for the crumb of the CURRENT dir, and only
+                // on local tabs (Reveal in Finder etc. make no sense for a remote
+                // path — there the crumb keeps its refresh/navigate behavior).
+                let is_current = full == current_dir && tab.remote.is_none();
+                segs.push(breadcrumb_seg(
+                    pane * 4096 + idx,
+                    pane,
+                    label,
+                    full,
+                    true,
+                    is_current,
+                    cx,
+                ));
+                idx += 1;
             }
-            // Palette-on-click only for the crumb of the CURRENT dir, and only
-            // on local tabs (Reveal in Finder etc. make no sense for a remote
-            // path — there the crumb keeps its refresh/navigate behavior).
-            let is_current = full == current_dir && tab.remote.is_none();
-            segs.push(breadcrumb_seg(pane * 4096 + idx, pane, label, full, true, is_current, cx));
-            idx += 1;
-        }
+            (None, segs)
+        };
 
         div()
             .id(("breadcrumb", pane))
@@ -9270,26 +9136,36 @@ impl Shuffle {
             .overflow_hidden()
             .h(px(22.0))
             .tooltip(tip(current_dir.to_string_lossy().into_owned()))
+            .children(badge)
             .child(
                 div()
-                    .flex_none()
-                    .min_w_full()
-                    .flex()
-                    .items_center()
-                    .whitespace_nowrap()
+                    .flex_1()
+                    .min_w_0()
                     .h_full()
-                    .children(segs)
-                    // With a short path, spare room remains clickable to edit.
+                    .flex()
+                    .justify_end()
+                    .overflow_hidden()
                     .child(
                         div()
-                            .id(("path-edit-zone", pane))
-                            .flex_1()
+                            .flex_none()
+                            .min_w_full()
+                            .flex()
+                            .items_center()
+                            .whitespace_nowrap()
                             .h_full()
-                            .min_w_0()
-                            .cursor_text()
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.begin_path_edit(pane, window, cx)
-                            })),
+                            .children(segs)
+                            // With a short path, spare room remains clickable to edit.
+                            .child(
+                                div()
+                                    .id(("path-edit-zone", pane))
+                                    .flex_1()
+                                    .h_full()
+                                    .min_w_0()
+                                    .cursor_text()
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.begin_path_edit(pane, window, cx)
+                                    })),
+                            ),
                     ),
             )
     }
@@ -10464,51 +10340,6 @@ impl Render for Shuffle {
         }
         root
     }
-}
-
-/// A bookmark, which may be a file or a folder:
-/// folders navigate, files open in their default app, and the icon reflects the
-/// file type.
-fn push_bookmark_nav(
-    items: &mut Vec<AnyElement>,
-    cx: &Context<Shuffle>,
-    key: &mut usize,
-    target: PathBuf,
-    current: &Path,
-) {
-    *key += 1;
-    let is_dir = cached_is_dir(&target);
-    let active = is_dir && target.as_path() == current;
-    let label = path_label(&target);
-    let path_str = display_path(&target);
-    let tooltip = if path_str == label {
-        format!("{label}\n{path_str}")
-    } else {
-        path_str
-    };
-    let nav_target = target.clone();
-    let right_target = target.clone();
-    let item = nav_item(
-        label,
-        tooltip,
-        icon_element(&target, is_dir),
-        *key,
-        active,
-        cx.listener(move |this, _: &ClickEvent, _, cx| {
-            this.unsync_ssh_browser(this.active_pane, cx);
-            if nav_target.is_dir() {
-                this.navigate_to(nav_target.clone(), cx);
-            } else {
-                let _ = Command::new("open").arg(&nav_target).spawn();
-            }
-        }),
-        cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-            let (x, y) = (f64::from(ev.position.x) as f32, f64::from(ev.position.y) as f32);
-            this.open_sidebar_menu(x, y, SidebarTarget::Bookmark(right_target.clone()), cx);
-            cx.stop_propagation();
-        }),
-    );
-    items.push(item.into_any_element());
 }
 
 /// A group member row: click opens/navigates, right-click offers "Remove from
@@ -12100,9 +11931,9 @@ fn read_subdirs(dir: &Path) -> (Vec<PathBuf>, Option<SystemTime>) {
     (out, mtime)
 }
 
-/// `stat` results for sidebar rows (bookmarks, group members, favorites),
+/// `stat` results for sidebar locations, tags and group members,
 /// cached so `render` never touches the filesystem per frame — a single dead
-/// network bookmark would otherwise freeze every repaint. Stale entries are
+/// network shortcut would otherwise freeze every repaint. Stale entries are
 /// re-checked on a background thread.
 static DIR_STAT: OnceLock<Mutex<HashMap<PathBuf, (bool, Instant)>>> = OnceLock::new();
 static DIR_STAT_SCANNING: AtomicBool = AtomicBool::new(false);
@@ -14055,6 +13886,7 @@ fn save_prefs(p: &Prefs) {
             p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.palette_history, p.groups_enabled, p.show_filter_button, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured, p.waterfall, p.palette_opacity
         );
         body.push_str(&format!("preview_width={}\n",p.preview_width));
+        body.push_str(&format!("drive_warning={}\ndrive_critical={}\n", p.drive_warning, p.drive_critical));
         let _ = fs::write(&file, body);
     }
 }
@@ -14181,6 +14013,8 @@ fn load_prefs() -> Prefs {
                     "info" => p.info = on,
                     "show_parent" => p.show_parent = on,
                     "sidebar_collapsed" => p.sidebar_collapsed = on,
+                    "drive_warning" => if let Ok(value) = v.trim().parse::<u8>() { p.drive_warning = value.clamp(1,98); },
+                    "drive_critical" => if let Ok(value) = v.trim().parse::<u8>() { p.drive_critical = value.clamp(2,99); },
 
                     "palette_history" => p.palette_history = on,
                     "groups_enabled" => p.groups_enabled = on,
@@ -14200,6 +14034,7 @@ fn load_prefs() -> Prefs {
             }
         }
     }
+    if p.drive_critical <= p.drive_warning { p.drive_critical = p.drive_warning + 1; }
     p
 }
 

@@ -44,6 +44,7 @@ func providerApp(for url: URL) -> (String, [String])? {
     case "OneDrive": return ("OneDrive", ["com.microsoft.OneDrive-mac", "com.microsoft.OneDrive"])
     case "GoogleDrive": return ("Google Drive", ["com.google.drivefs"])
     case "Box": return ("Box", ["com.box.desktop"])
+    case "Nextcloud": return ("Nextcloud", ["com.nextcloud.desktopclient"])
     default: return nil
     }
 }

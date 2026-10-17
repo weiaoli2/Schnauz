@@ -25,7 +25,7 @@ cp vendor/gpui-terminal/LICENSE-MIT "$APP/Contents/Resources/Licenses/gpui-termi
 cp vendor/gpui-terminal/LICENSE-APACHE "$APP/Contents/Resources/Licenses/gpui-terminal-Apache-2.0.txt"
 cp vendor/licenses/*.txt "$APP/Contents/Resources/Licenses/"
 mkdir -p "$TARGET/swift-module-cache"
-for helper in removebg cloudctl; do
+for helper in removebg cloudctl volumectl; do
     xcrun swiftc -module-cache-path "$TARGET/swift-module-cache" -O "$helper.swift" -o "$APP/Contents/MacOS/$helper"
     codesign --force --sign - "$APP/Contents/MacOS/$helper"
 done

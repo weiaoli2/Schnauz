@@ -69,6 +69,7 @@ the server account/repository and current review status before proceeding.
 | Browser, navigation and file operations | `src/main.rs` |
 | Project persistence and switching | `src/projects.rs`, `src/studio.rs` |
 | Project folders, tags and connections | `src/project_sidebar.rs` |
+| Global drive capacity and cloud paths/menus | `src/volumes.rs`, `volumectl.swift`, `src/cloud_locations.rs`, `src/cloud_actions.rs` |
 | Saved folder views and list columns | `src/folder_views.rs`, `src/list_ui.rs` |
 | Preview layout and media | `src/preview_panel.rs`, `src/previews.rs`, `src/video_preview.rs` |
 | Terminal and SSH following | `src/studio_terminal.rs`, `src/ssh_sync.rs`, `src/terminal-shell/` |
@@ -77,7 +78,13 @@ the server account/repository and current review status before proceeding.
 
 Keep browsing fast: no automatic recursive size scans or home indexing. The
 collapsed sidebar contains only its reopen button; obsolete compact-rail controls
-are removed from the source. Local terminal directory changes are allowed only
+are removed from the source. Devices stays above Projects with background capacity
+updates and adjustable 80/90%-used colour thresholds. Locations replaces Favorites;
+legacy shortcuts merge without duplicates. Cloud paths have a persistent blue
+provider badge and relative breadcrumbs. Nextcloud's provider-specific sharing,
+locking and storage-policy menus currently have an explicitly labeled Finder
+handoff; a direct connection is an open design choice, not implemented yet.
+Local terminal directory changes are allowed only
 at an idle prompt. SSH follows **terminal → browser only**; never send directory
 commands into a remote session. Unsync returns to local browsing without ending SSH.
 

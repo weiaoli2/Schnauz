@@ -23,6 +23,7 @@ pub(super) enum Icon {
     Project,
     Settings,
     Storage,
+    Drive,
 }
 
 thread_local! { static APPLE_SHARE: RefCell<HashMap<[u32; 4], Arc<RenderImage>>> = RefCell::new(HashMap::new()); }
@@ -135,6 +136,12 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
                             rect!(x, y, 5, 5);
                         }
                     }
+                }
+                Icon::Drive => {
+                    line!(2,12;5,4;15,4;18,12);
+                    rect!(2, 12, 16, 5);
+                    line!(5,14.5;6,14.5);
+                    line!(9,14.5;10,14.5);
                 }
                 Icon::Search => {
                     circle!(8.5, 8.5, 5.5);
