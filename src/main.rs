@@ -80,6 +80,8 @@ mod studio;
 mod clipboard_path;
 mod studio_terminal;
 mod ssh_sync;
+mod remote_listing;
+use remote_listing::parse as parse_sftp_ls;
 mod file_search;
 mod search_ui;
 mod space_map;
@@ -118,7 +120,7 @@ struct Prefs {
     info: bool,
     /// Show the leading ".." row that goes up one level.
     show_parent: bool,
-    /// Collapse the left sidebar to an icon-only rail.
+    /// Collapse the left sidebar to its expand button.
     sidebar_collapsed: bool,
     /// How many Recents to show in the sidebar (0 hides the section).
     /// Give the command palette (Cmd+P) its own Up/Down query history.
@@ -844,7 +846,7 @@ const PALETTE_ROW_H: f32 = 26.0;
 const PALETTE_MAX_ROWS: usize = 7;
 /// Sidebar width; also the left edge of the content/canvas area.
 const SIDEBAR_W: f32 = 232.0;
-/// Sidebar width when collapsed to an icon-only rail.
+/// Sidebar width when collapsed to the expand button only.
 const SIDEBAR_COLLAPSED_W: f32 = 52.0;
 /// Height of the custom titlebar strip (the OS titlebar is transparent, so this
 /// colored bar sits behind the traffic lights).
@@ -1389,8 +1391,7 @@ struct TabDrag {
     tab: usize,
 }
 
-/// A small floating tooltip (used by the collapsed sidebar to show a row's
-/// name/path on hover).
+/// A small floating tooltip for toolbar actions and file paths.
 struct TooltipView {
     text: String,
 }
@@ -8651,8 +8652,6 @@ impl Shuffle {
         row.into_any_element()
     }
 
-    /// Push a collapsible section header (expanded sidebar) or a divider
-    /// (icon-only rail). Returns whether the section's items should be rendered.
     /// Ensure a folder's subfolders are loaded into the waterfall cache. Reads
     /// the directory off the main thread; when it lands, the tree re-renders.
     fn ensure_waterfall_children(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
@@ -8874,27 +8873,20 @@ impl Shuffle {
         }
     }
 
+    /// Push a section header and report whether its items are expanded.
     fn begin_section(
         &self,
         items: &mut Vec<AnyElement>,
         title: &'static str,
-        sidebar_collapsed: bool,
         cx: &Context<Self>,
     ) -> bool {
-        if sidebar_collapsed {
-            push_divider(items);
-            return true;
-        }
         items.push(self.section_header_el(title, None, cx));
         !self.collapsed_sections.contains(title)
     }
 
     fn render_sidebar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let current = self.active_tab().current_dir.clone();
-        let current = current.as_path();
         let collapsed = prefs().sidebar_collapsed;
         let mut items: Vec<AnyElement> = Vec::new();
-        let mut key = 0usize;
 
         // --- Collapse / expand toggle (always present) ---
         let chevron = if collapsed { "»" } else { "«" };
@@ -8922,59 +8914,51 @@ impl Shuffle {
                 .into_any_element(),
         );
 
-        self.push_project_sidebar(&mut items, collapsed, cx);
+        let sidebar = div()
+            .id("sidebar")
+            .flex_none()
+            .w(px(if collapsed { SIDEBAR_COLLAPSED_W } else { SIDEBAR_W }))
+            .h_full()
+            .flex()
+            .flex_col()
+            .pb_3()
+            .bg(rgb(theme().sidebar))
+            .border_r_1()
+            .border_color(rgb(theme().border));
+        // Section content is constructed only for the expanded sidebar.
+        if collapsed {
+            return sidebar.children(items);
+        }
 
-        self.project_folder_section(&mut items, &mut key, "LOCATIONS", projects::Section::Locations, collapsed, cx);
-        self.project_tagged_section(&mut items, &mut key, collapsed, cx);
+        let current = self.active_tab().current_dir.clone();
+        let current = current.as_path();
+        let mut key = 0usize;
+        self.push_project_sidebar(&mut items, cx);
+
+        self.project_folder_section(&mut items, &mut key, "LOCATIONS", projects::Section::Locations, cx);
+        self.project_tagged_section(&mut items, &mut key, cx);
 
         // --- Bookmarks (with a "+" to pin the current folder) ---
-        let show_bookmarks = if collapsed {
-            push_divider(&mut items);
-            items.push(
-                div()
-                    .id("add-bookmark")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .mx_1()
-                    .py_1()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .text_color(rgb(theme().text_dim))
-                    .hover(|s| s.bg(rgb(theme().hover)).text_color(rgb(theme().text)))
-                    .child("+")
-                    .tooltip(tip("Pin current folder"))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.add_bookmark(cx);
-                    }))
-                    .into_any_element(),
-            );
-            true
-        } else {
-            let plus = div()
-                .id("add-bookmark")
-                .cursor_pointer()
-                .px_1()
-                .text_color(rgb(theme().text_dim))
-                .hover(|s| s.text_color(rgb(theme().text)))
-                .child("+")
-                .tooltip(tip("Pin current folder"))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.add_bookmark(cx);
-                }))
-                .into_any_element();
-            let title = if self.projects.active.is_some() { "PROJECT FAVORITES" } else { "MY FAVORITES" };
-            items.push(self.section_header_el(title, Some(plus), cx));
-            !self.collapsed_sections.contains(title)
-        };
-        if show_bookmarks {
+        let plus = div()
+            .id("add-bookmark")
+            .cursor_pointer()
+            .px_1()
+            .text_color(rgb(theme().text_dim))
+            .hover(|s| s.text_color(rgb(theme().text)))
+            .child("+")
+            .tooltip(tip("Pin current folder"))
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.add_bookmark(cx);
+            }))
+            .into_any_element();
+        let title = if self.projects.active.is_some() { "PROJECT FAVORITES" } else { "MY FAVORITES" };
+        items.push(self.section_header_el(title, Some(plus), cx));
+        if !self.collapsed_sections.contains(title) {
             if self.projects.favorites().is_empty() {
-                if !collapsed {
-                    items.push(empty_hint("Click + to pin a folder").into_any_element());
-                }
+                items.push(empty_hint("Click + to pin a folder").into_any_element());
             } else {
                 for p in self.projects.favorites() {
-                    push_bookmark_nav(&mut items, cx, &mut key, p.clone(), current, collapsed);
+                    push_bookmark_nav(&mut items, cx, &mut key, p.clone(), current);
                 }
             }
         }
@@ -8982,13 +8966,6 @@ impl Shuffle {
         // --- Groups (user-defined; only when the feature is enabled) ---
         if prefs().groups_enabled {
             for (gidx, g) in self.groups.iter().enumerate() {
-                if collapsed {
-                    push_divider(&mut items);
-                    for p in &g.paths {
-                        push_group_member(&mut items, cx, &mut key, gidx, p.clone(), current, true);
-                    }
-                    continue;
-                }
                 let ckey = format!("group:{}", g.name);
                 let is_col = self.collapsed_sections.contains(&ckey);
                 let arrow = if is_col { "▸" } else { "▾" };
@@ -9040,19 +9017,19 @@ impl Shuffle {
                         items.push(empty_hint("Right-click a file to add it").into_any_element());
                     } else {
                         for p in &g.paths {
-                            push_group_member(&mut items, cx, &mut key, gidx, p.clone(), current, false);
+                            push_group_member(&mut items, cx, &mut key, gidx, p.clone(), current);
                         }
                     }
                 }
             }
         }
 
-        self.project_folder_section(&mut items, &mut key, "CLOUD", projects::Section::Cloud, collapsed, cx);
+        self.project_folder_section(&mut items, &mut key, "CLOUD", projects::Section::Cloud, cx);
 
         // Saved connections and explicit network-folder shortcuts belong to this project.
-        if self.begin_section(&mut items, "SERVERS", collapsed, cx) {
+        if self.begin_section(&mut items, "SERVERS", cx) {
             for path in &self.projects.sidebar().server_folders {
-                self.project_path_row(&mut items, &mut key, path, projects::Section::ServerFolders, collapsed, cx);
+                self.project_path_row(&mut items, &mut key, path, projects::Section::ServerFolders, cx);
             }
             // Saved SFTP servers — click to connect and browse remotely.
             for server in sftp_servers() {
@@ -9067,17 +9044,13 @@ impl Shuffle {
                     .rounded_md()
                     .cursor_pointer()
                     .text_color(rgb(theme().text_muted))
-                    .hover(|s| s.bg(rgb(theme().hover)).text_color(rgb(theme().text)));
-                let row = if collapsed {
-                    row.mx_1().py_1().justify_center().child("🖧")
-                } else {
-                    row.mx_2()
-                        .px_2()
-                        .py_1()
-                        .gap_2()
-                        .child(div().w(px(16.0)).flex().justify_center().child("🖧"))
-                        .child(div().min_w_0().truncate().child(label))
-                };
+                    .hover(|s| s.bg(rgb(theme().hover)).text_color(rgb(theme().text)))
+                    .mx_2()
+                    .px_2()
+                    .py_1()
+                    .gap_2()
+                    .child(div().w(px(16.0)).flex().justify_center().child("🖧"))
+                    .child(div().min_w_0().truncate().child(label));
                 let s2 = server.clone();
                 items.push(
                     row.tooltip(tip(tip_text))
@@ -9098,10 +9071,8 @@ impl Shuffle {
                         .into_any_element(),
                 );
             }
-            if !collapsed {
-                items.push(div().id("add-server-folder").mx_2().px_2().py_1().cursor_pointer().text_color(rgb(theme().text_muted))
-                    .child("+ Add network folder…").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.choose_project_folder(projects::Section::ServerFolders, cx))).into_any_element());
-            }
+            items.push(div().id("add-server-folder").mx_2().px_2().py_1().cursor_pointer().text_color(rgb(theme().text_muted))
+                .child("+ Add network folder…").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.choose_project_folder(projects::Section::ServerFolders, cx))).into_any_element());
             // "Connect to Server…" action row.
             let base = div()
                 .id("connect-server")
@@ -9110,17 +9081,13 @@ impl Shuffle {
                 .rounded_md()
                 .cursor_pointer()
                 .text_color(rgb(theme().text_muted))
-                .hover(|s| s.bg(rgb(theme().hover)).text_color(rgb(theme().text)));
-            let base = if collapsed {
-                base.mx_1().py_1().justify_center().child("🌐")
-            } else {
-                base.mx_2()
-                    .px_2()
-                    .py_1()
-                    .gap_2()
-                    .child(div().w(px(16.0)).flex().justify_center().child("🌐"))
-                    .child("Connect to Server…")
-            };
+                .hover(|s| s.bg(rgb(theme().hover)).text_color(rgb(theme().text)))
+                .mx_2()
+                .px_2()
+                .py_1()
+                .gap_2()
+                .child(div().w(px(16.0)).flex().justify_center().child("🌐"))
+                .child("Connect to Server…");
             items.push(
                 base.tooltip(tip("Connect to Server…"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -9131,23 +9098,13 @@ impl Shuffle {
         }
 
         // --- Waterfall: an inline, expandable folder tree of the active dir ---
-        if prefs().waterfall && !collapsed && self.active_tab().remote.is_none() {
+        if prefs().waterfall && self.active_tab().remote.is_none() {
             self.render_waterfall(&mut items, &mut key, current, cx);
         }
 
         let groups_on = prefs().groups_enabled;
-        div()
-            .id("sidebar")
-            .flex_none()
-            .w(px(if collapsed { SIDEBAR_COLLAPSED_W } else { SIDEBAR_W }))
-            .h_full()
+        sidebar
             .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .pb_3()
-            .bg(rgb(theme().sidebar))
-            .border_r_1()
-            .border_color(rgb(theme().border))
             // Right-click empty sidebar space → "New Group" (when enabled).
             .when(groups_on, |d| {
                 d.on_mouse_down(
@@ -10518,14 +10475,13 @@ fn push_bookmark_nav(
     key: &mut usize,
     target: PathBuf,
     current: &Path,
-    collapsed: bool,
 ) {
     *key += 1;
     let is_dir = cached_is_dir(&target);
     let active = is_dir && target.as_path() == current;
     let label = path_label(&target);
     let path_str = display_path(&target);
-    let tooltip = if collapsed || path_str == label {
+    let tooltip = if path_str == label {
         format!("{label}\n{path_str}")
     } else {
         path_str
@@ -10538,7 +10494,6 @@ fn push_bookmark_nav(
         icon_element(&target, is_dir),
         *key,
         active,
-        collapsed,
         cx.listener(move |this, _: &ClickEvent, _, cx| {
             this.unsync_ssh_browser(this.active_pane, cx);
             if nav_target.is_dir() {
@@ -10558,7 +10513,6 @@ fn push_bookmark_nav(
 
 /// A group member row: click opens/navigates, right-click offers "Remove from
 /// Group". `gidx` is the owning group's index.
-#[allow(clippy::too_many_arguments)]
 fn push_group_member(
     items: &mut Vec<AnyElement>,
     cx: &Context<Shuffle>,
@@ -10566,14 +10520,13 @@ fn push_group_member(
     gidx: usize,
     target: PathBuf,
     current: &Path,
-    collapsed: bool,
 ) {
     *key += 1;
     let is_dir = cached_is_dir(&target);
     let active = is_dir && target.as_path() == current;
     let label = path_label(&target);
     let path_str = display_path(&target);
-    let tooltip = if collapsed || path_str == label {
+    let tooltip = if path_str == label {
         format!("{label}\n{path_str}")
     } else {
         path_str
@@ -10586,7 +10539,6 @@ fn push_group_member(
         icon_element(&target, is_dir),
         *key,
         active,
-        collapsed,
         cx.listener(move |this, _: &ClickEvent, _, cx| {
             this.unsync_ssh_browser(this.active_pane, cx);
             if nav_target.is_dir() {
@@ -10607,18 +10559,6 @@ fn push_group_member(
         }),
     );
     items.push(item.into_any_element());
-}
-
-/// A 1px separator used between sections in the collapsed rail.
-fn push_divider(items: &mut Vec<AnyElement>) {
-    items.push(
-        div()
-            .mx_2()
-            .my_1()
-            .h(px(1.0))
-            .bg(rgb(theme().border))
-            .into_any_element(),
-    );
 }
 
 /// A path shown with the home directory abbreviated to `~`.
@@ -11606,44 +11546,33 @@ fn trash_path(path: &Path) -> Option<PathBuf> {
     Some(out.and_then(|u| u.path()).map(|p| PathBuf::from(p.to_string())).unwrap_or_default())
 }
 
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn nav_item(
     label: String,
     tooltip: String,
     icon: AnyElement,
     key: usize,
     active: bool,
-    collapsed: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_right: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let t = theme();
-    let mut base = div()
+    let base = div()
         .id(("nav", key))
         .flex()
         .items_center()
         .rounded_md()
         .cursor_pointer()
-        .text_color(rgb(if active { t.text } else { t.text_muted }));
-    base = if collapsed {
-        base.mx_1().px_0().py_1().justify_center()
-    } else {
-        base.mx_2().px_3().py_1p5().gap_2()
-    };
+        .text_color(rgb(if active { t.text } else { t.text_muted }))
+        .mx_2().px_3().py_1p5().gap_2();
     let base = if active {
         base.bg(rgb(t.selected))
     } else {
         base.hover(|s| s.bg(rgb(t.hover)))
             .active(|s| s.bg(rgb(t.selected)))
     };
-    let base = base.child(icon);
-    let base = if collapsed {
-        base
-    } else {
-        base.child(div().min_w_0().overflow_hidden().child(label))
-    };
-    base.tooltip(tip(tooltip))
+    base.child(icon)
+        .child(div().min_w_0().overflow_hidden().child(label))
+        .tooltip(tip(tooltip))
         .on_click(on_click)
         .on_mouse_down(MouseButton::Right, on_right)
 }
@@ -12718,7 +12647,7 @@ fn sftp_path_arg(path: &str) -> Result<String, String> {
 
 /// List a remote directory, returning entries parsed from sftp's `ls -l`.
 fn sftp_list(server: &SftpServer, path: &str, use_system: bool) -> Result<Vec<Entry>, String> {
-    let script = format!("ls -la {}", sftp_path_arg(path)?);
+    let script = remote_listing::list_command(path)?;
     let out = sftp_batch(server, &script, use_system)?;
     Ok(parse_sftp_ls(&out))
 }
@@ -12763,56 +12692,6 @@ fn sftp_delete(server: &SftpServer, path: &str, use_system: bool) -> Result<(), 
 /// Create an empty remote file via ssh `touch`.
 fn sftp_touch(server: &SftpServer, path: &str, use_system: bool) -> Result<(), String> {
     ssh_exec(server, &format!("touch {}", shell_quote(path)), use_system).map(|_| ())
-}
-
-/// Parse sftp `ls -l` output into entries. Lines look like:
-/// `drwxr-xr-x  2 1000 1000  4096 Jul 30 10:00 name` — 8 fixed fields + name.
-/// The format is produced by the sftp client itself, so it's consistent across
-/// remote operating systems.
-fn parse_sftp_ls(out: &str) -> Vec<Entry> {
-    let mut entries = Vec::new();
-    for line in out.lines() {
-        let line = line.trim_end();
-        // Skip the echoed command ("sftp> ls …") and blank lines.
-        if line.is_empty() || line.starts_with("sftp>") {
-            continue;
-        }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 9 {
-            continue;
-        }
-        let perms = parts[0];
-        // A permissions field starts with a type char (d/-/l/…); skip anything
-        // that isn't a long-listing line (e.g. stray output).
-        let first = perms.chars().next().unwrap_or(' ');
-        if !matches!(first, 'd' | '-' | 'l' | 'c' | 'b' | 'p' | 's') || perms.len() < 10 {
-            continue;
-        }
-        let is_dir = first == 'd';
-        let size = parts[4].parse::<u64>().unwrap_or(0);
-        let mut name = parts[8..].join(" ");
-        // Symlinks list as "name -> target"; keep just the name.
-        if first == 'l' {
-            if let Some((n, _)) = name.split_once(" -> ") {
-                name = n.to_string();
-            }
-        }
-        if name == "." || name == ".." || name.is_empty() {
-            continue;
-        }
-        entries.push(Entry {
-            name,
-            is_dir,
-            size,
-            modified: None,
-            created: None,
-                mode: None,
-            loaded: true,
-            hidden_flag: false,
-        });
-    }
-    sort_default(&mut entries);
-    entries
 }
 
 /// Load saved servers.
@@ -14360,7 +14239,10 @@ fn main() {
                       drwxr-xr-x    2 1000     1000         4096 Jul 30 10:00 .\n\
                       drwxr-xr-x    9 1000     1000         4096 Jul 30 10:00 ..\n\
                       sftp> ls -la /home/user";
-        for e in parse_sftp_ls(sample) {
+        let fixture = args
+            .get(2)
+            .map(|path| fs::read_to_string(path).expect("Cannot read SFTP listing fixture"));
+        for e in parse_sftp_ls(fixture.as_deref().unwrap_or(sample)) {
             eprintln!("  {:<14} dir={} size={}", e.name, e.is_dir, e.size);
         }
         return;

@@ -671,13 +671,9 @@ impl Shuffle {
     pub(super) fn push_project_sidebar(
         &self,
         items: &mut Vec<AnyElement>,
-        collapsed: bool,
         cx: &Context<Self>,
     ) {
         let t = theme();
-        if collapsed {
-            return;
-        }
         let add =
             div()
                 .id("project-add")

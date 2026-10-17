@@ -150,37 +150,32 @@ impl Shuffle {
         key: &mut usize,
         title: &'static str,
         section: Section,
-        collapsed: bool,
         cx: &Context<Self>,
     ) {
-        if !collapsed {
-            let add = div()
-                .id(SharedString::from(format!("project-add-{title}")))
-                .px_1()
-                .cursor_pointer()
-                .child(toolbar_icons::ui_icon(
-                    Icon::Plus,
-                    13.,
-                    rgb(theme().text_muted),
-                ))
-                .tooltip(tip("Add folders to this project"))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.choose_project_folder(section, cx)
-                }))
-                .into_any_element();
-            items.push(self.section_header_el(title, Some(add), cx));
-            if self.collapsed_sections.contains(title) {
-                return;
-            }
-        } else {
-            push_divider(items);
+        let add = div()
+            .id(SharedString::from(format!("project-add-{title}")))
+            .px_1()
+            .cursor_pointer()
+            .child(toolbar_icons::ui_icon(
+                Icon::Plus,
+                13.,
+                rgb(theme().text_muted),
+            ))
+            .tooltip(tip("Add folders to this project"))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.choose_project_folder(section, cx)
+            }))
+            .into_any_element();
+        items.push(self.section_header_el(title, Some(add), cx));
+        if self.collapsed_sections.contains(title) {
+            return;
         }
         let paths = self.projects.sidebar().paths(section);
-        if paths.is_empty() && !collapsed {
+        if paths.is_empty() {
             items.push(empty_hint("Click + to add a folder").into_any_element());
         }
         for path in paths {
-            self.project_path_row(items, key, path, section, collapsed, cx);
+            self.project_path_row(items, key, path, section, cx);
         }
     }
 
@@ -188,17 +183,16 @@ impl Shuffle {
         &self,
         items: &mut Vec<AnyElement>,
         key: &mut usize,
-        collapsed: bool,
         cx: &Context<Self>,
     ) {
-        if !self.begin_section(items, "TAGGED ITEMS", collapsed, cx) {
+        if !self.begin_section(items, "TAGGED ITEMS", cx) {
             return;
         }
-        if self.projects.sidebar().tagged.is_empty() && !collapsed {
+        if self.projects.sidebar().tagged.is_empty() {
             items.push(empty_hint("Select items and click the tag icon").into_any_element());
         }
         for path in &self.projects.sidebar().tagged {
-            self.project_path_row(items, key, path, Section::Tagged, collapsed, cx);
+            self.project_path_row(items, key, path, Section::Tagged, cx);
         }
     }
 
@@ -208,7 +202,6 @@ impl Shuffle {
         key: &mut usize,
         path: &PathBuf,
         section: Section,
-        collapsed: bool,
         cx: &Context<Self>,
     ) {
         *key += 1;
@@ -226,7 +219,6 @@ impl Shuffle {
                 icon_element(&path, is_dir),
                 *key,
                 active,
-                collapsed,
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
                     window.focus(&this.focus);
                     if !nav.exists() {

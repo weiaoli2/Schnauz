@@ -45,6 +45,10 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Main text is 12 logical px/pt, small labels 11, file rows 26 px. Keep it compact.
 - Tabs have visible outlines and rounded top corners. Folder names use the same
   primary text color as files; their icons distinguish them.
+- The collapsed sidebar contains only its expand button. Do not render section
+  actions, plus buttons, shortcuts or placeholders until it is expanded.
+  The former compact icon-rail layouts and helper options are removed; keep
+  section and shortcut renderers dedicated to the expanded sidebar.
 - Only List and Icons are supported. Migrate legacy Gallery/Columns tabs to List.
   Lists have configurable, reorderable, independently resizable columns and a
   horizontal scrollbar when needed. Keep header, row and folder-drop coordinates
@@ -151,3 +155,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Schnauz project to a Todoist project; a right-hand Tasks pane shows its tasks,
   offers completion and quick-add scoped to that Todoist project, and follows
   Schnauz project switching. Optional later action: create a task from a file.
+
+- Remote listings enter the requested directory with SFTP `cd` before `ls -la`.
+  Store immediate child basenames only; drop dot/parent entries even when a client
+  prints full paths, and preserve whitespace inside filenames. Path breadcrumbs
+  follow terminal cwd reports; listing prefixes must never become child paths.
