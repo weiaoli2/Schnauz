@@ -12,7 +12,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   implementation assistance Codex; original Shuffle code Jaime Guzman.
   Keep `CREDITS.txt`, the source header and README consistent, and ship the
   credits alongside the unchanged upstream and third-party license notices.
-- About Schnauz (app menu) credits Oliver and offers optional “Coffee for Cookie”
+- About Schnauz (app menu and idle mascot click) credits Oliver and offers optional “Coffee for Cookie”
   support for his schnauzer: US$2.50 via PayPal to o@freedom-net.de. Open PayPal
   only on the user's click; keep the original Shuffle and third-party credits.
 - App identity: Schnauz, `local.schnauz.app`. Never enable the
@@ -107,8 +107,10 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   double-click opening and explicit Show in Folder. Keep type/hidden filters,
   keyboard selection and copying consistent with the displayed search results.
 - The small Schnauz mascot sits idle and runs only while search is active. Clicking
-  it stops the scan, keeps the results, and shows a short status-bar notice that
-  results may be incomplete. Clear that notice when a new search starts.
+  it while idle opens About Schnauz with Coffee for Cookie. Clicking while running
+  stops the scan, keeps the results, and shows a short status-bar notice that
+  results may be incomplete. Decide using current search state at click time.
+  Clear that notice when a new search starts.
 - Inspect… is an explicit folder-size scan, available on folder, background and
   sidebar menus. Keep automatic browsing calculations off. Preserve the right-hand
   map while navigating from its file tiles or folder headings; never open a file

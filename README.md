@@ -9,7 +9,8 @@ See [CREDITS.txt](CREDITS.txt) for the full attribution.
 
 ## About and Cookie
 
-**Schnauz → About Schnauz** shows the developer credit, original code attribution,
+**Schnauz → About Schnauz**, or clicking the sitting Schnauzer beside the app name,
+shows the developer credit, original code attribution,
 credits and bundled licenses. Optional **Coffee for Cookie · US$2.50** support opens
 PayPal for **o@freedom-net.de**; the address can also be copied. This is voluntary
 support for Oliver and his schnauzer Cookie. The button uses PayPal's documented
@@ -63,7 +64,8 @@ Results use the main file pane, with Name and Location columns. Click to select,
 preview or copy; double-click to open. **Show in Folder** or Enter reveals the
 selected item in the browser. Type/hidden filters also apply to search results.
 The small Schnauz beside the app name sits when idle and runs while searching.
-Click the running Schnauz to stop and keep results. The status bar then shows
+Click the sitting Schnauz to open **About Schnauz / Coffee for Cookie**. During a
+search the running Schnauz stops the scan and keeps results instead. The status bar then shows
 **Search stopped · Results may be incomplete** until the next search.
 Escape or **Done ×** closes search and
 restores Current Folder + File. No home-folder index is built at launch.

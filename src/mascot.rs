@@ -1,28 +1,30 @@
-//! A tiny native Schnauz mascot. Animation requests frames only during a search.
+//! The Schnauz mascot opens About while idle and stops an active search.
+//! Animation requests frames only during a search.
 use super::*;
 impl Shuffle {
     pub(super) fn render_search_mascot(&self, cx: &Context<Self>) -> AnyElement {
         let running = self.file_search.busy && self.palette_open && self.file_search.inline;
         let dog = div()
-            .id("schnauz-search-stop")
+            .id("schnauz-mascot")
             .w(px(28.))
             .h(px(28.))
             .flex_none()
             .rounded_md()
-            .when(running, |d| {
-                d.cursor_pointer()
-                    .bg(Theme::alpha(theme().accent, 0x18))
-                    .hover(|s| s.bg(Theme::alpha(theme().accent, 0x30)))
-            })
+            .cursor_pointer()
+            .hover(|s| s.bg(Theme::alpha(theme().accent, 0x30)))
+            .when(running, |d| d.bg(Theme::alpha(theme().accent, 0x18)))
             .tooltip(tip(if running {
                 "Stop search · keep the results found so far"
             } else {
-                "Schnauz is ready to search"
+                "About Schnauz · Coffee for Cookie"
             }))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if running {
+                if this.file_search.busy && this.palette_open && this.file_search.inline {
                     this.stop_file_search(cx);
+                } else {
+                    about::open_about(cx);
                 }
+                cx.stop_propagation();
             }))
             .child(
                 gpui::canvas(
