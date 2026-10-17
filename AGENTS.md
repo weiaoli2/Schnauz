@@ -110,12 +110,25 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   path for editing, tooltips and file operations; never apply local cloud identity
   to remote SSH paths. Clicking the badge goes to that provider root.
 - Cloud context menus identify the provider on files, folders, backgrounds and
-  sidebar shortcuts. Downloads and iCloud free-space operations are native;
-  Nextcloud-specific sharing, locks and automatic-space policies currently use
-  an explicitly labeled Finder handoff. macOS does not expose those extension
-  menus to other file managers. A separate direct Nextcloud connection is under
-  discussion; do not present its actions as implemented. Never recursively scan
-  a folder while constructing a cloud menu; gather action targets in a worker.
+  sidebar shortcuts. Downloads and iCloud free-space operations are native.
+  Oliver approved a direct Nextcloud connection: Settings → General → Connections,
+  or a Nextcloud item's Connect action, links a local folder to a server and remote
+  folder. Browser Login Flow v2 obtains Schnauz's own revocable app credential;
+  keep it exclusively in macOS Keychain, bound to its server/login. Never read
+  Nextcloud desktop credentials or put credentials in settings, argv or logs.
+  `src/nextcloud.rs` reads nonsecret account routing once; `native/nextcloud/`
+  handles networking, Keychain and native share/account UI through `nextcloudctl`.
+  Share options, read-only public links, user/group sharing, permissions and
+  internal links use OCS/WebDAV. Opening a menu/window never creates a share.
+  File locking requires a fresh server capability check; unlock only confirmed
+  user-owned locks belonging to the current user, never app/token/foreign locks.
+  Disconnect revokes/removes only Schnauz's credential, even if Keychain access is
+  missing or the server is offline. Preserve invalid account config files.
+  Local automatic-space policy stays explicitly labeled as a Finder handoff;
+  macOS does not expose another provider's Finder extension menu to Schnauz.
+  Never recursively scan a folder while constructing a cloud menu. Test Nextcloud
+  with URLProtocol fixtures and temporary settings, not Oliver's live server or
+  Keychain. `./test.sh` includes those native tests. Live login remains manual QA.
 - Hidden items (dot names and macOS UF_HIDDEN) are hidden by default; the per-tab eye
   toggle applies in every view and combines with type/text filters.
 - Hide the inspector without an actual previewable single selection. Show text as

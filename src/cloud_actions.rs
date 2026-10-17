@@ -2,13 +2,27 @@
 use super::*;
 
 impl Shuffle {
-    pub(super) fn cloud_menu(&self, pane: usize, path: &Path, is_dir: bool) -> Option<MenuNode> {
-        let kind = cloud_kind(path)?;
-        let provider = cloud_locations::identify(&home_dir(), path)
+    pub(super) fn cloud_menu(
+        &self,
+        pane: usize,
+        path: &Path,
+        is_dir: bool,
+        cx: &Context<Self>,
+    ) -> Option<MenuNode> {
+        let kind = cloud_kind(path);
+        let linked = nextcloud::location(path, cx);
+        if kind.is_none() && linked.is_none() {
+            return None;
+        }
+        let provider = linked
+            .or_else(|| cloud_locations::identify(&home_dir(), path))
             .map(|c| c.name)
             .unwrap_or_else(|| cloud_provider_name(path));
-        let mut items = Vec::new();
-        if cloudctl_path().is_some() {
+        let mut items = nextcloud::menu_items(path, is_dir, cx);
+        if !items.is_empty() {
+            items.push(MenuNode::Sep);
+        }
+        if kind.is_some() && cloudctl_path().is_some() {
             if is_dir {
                 let path = path.to_path_buf();
                 items.push(mi("Sync Now", move |this, _, cx| {
@@ -27,7 +41,7 @@ impl Shuffle {
                     move |this, _, cx| this.cloud_download(pane, path.clone(), cx),
                 ));
             }
-            if kind == CloudKind::ICloud && (is_dir || !cached_dataless(path)) {
+            if kind == Some(CloudKind::ICloud) && (is_dir || !cached_dataless(path)) {
                 let path = path.to_path_buf();
                 items.push(mi(
                     if is_dir {
@@ -46,7 +60,11 @@ impl Shuffle {
         // Finder owns the installed provider's sharing/locking/storage-policy
         // extension. Label this handoff explicitly rather than simulating it.
         items.push(mi(
-            format!("{provider} actions in Finder…"),
+            if provider == "Nextcloud" {
+                "Local storage policy in Finder…".into()
+            } else {
+                format!("{provider} actions in Finder…")
+            },
             move |this, _, cx| {
                 this.close_context_menu(cx);
                 let _ = Command::new("open").arg("-R").arg(&path).spawn();

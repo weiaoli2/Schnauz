@@ -104,6 +104,7 @@ mod system_dates;
 mod volumes;
 mod cloud_locations;
 mod cloud_actions;
+mod nextcloud;
 use settings::*;
 use previews::*;
 use cache::Cache;
@@ -1642,6 +1643,13 @@ impl Shuffle {
             cx.notify();
         })
         .detach();
+        cx.observe_global::<nextcloud::State>(|this, cx| {
+            if let Some(notice) = cx.global::<nextcloud::State>().notice.clone() {
+                this.set_notice(notice, cx);
+            }
+            cx.notify();
+        })
+        .detach();
         // Sync + repaint whenever the saved SFTP servers change (from Settings).
         cx.observe_global::<SftpServersGlobal>(|this, cx| {
             let servers = cx.global::<SftpServersGlobal>().0.clone();
@@ -1902,7 +1910,7 @@ impl Shuffle {
         let nodes = if self.tab(pane).remote.is_some() {
             self.menu_nodes_remote(pane, target.clone())
         } else {
-            self.menu_nodes_root(pane, target.clone())
+            self.menu_nodes_root(pane, target.clone(), cx)
         };
         self.context_menu = Some(ContextMenu {
             x,
@@ -3832,7 +3840,12 @@ impl Shuffle {
 
     /// Build the context-menu tree for a local tab. `target` is the
     /// right-clicked entry (`None` = the background of the folder).
-    fn menu_nodes_root(&self, pane: usize, target: Option<(PathBuf, bool)>) -> Vec<MenuNode> {
+    fn menu_nodes_root(
+        &self,
+        pane: usize,
+        target: Option<(PathBuf, bool)>,
+        cx: &Context<Self>,
+    ) -> Vec<MenuNode> {
         let mut nodes: Vec<MenuNode> = Vec::new();
         let paste_n = pasteboard_file_paths().len();
         let on_background = target.is_none();
@@ -3892,7 +3905,7 @@ impl Shuffle {
 
             // --- cloud + type-specific (single target only) ---
             if !many {
-                if let Some(menu) = self.cloud_menu(pane, &path, is_dir) { nodes.push(menu); }
+                if let Some(menu) = self.cloud_menu(pane, &path, is_dir, cx) { nodes.push(menu); }
                 // Type-specific actions, Finder-style: archives extract in
                 // place, app bundles reveal their contents.
                 if archive_suffix(&path).is_some() {
@@ -4106,7 +4119,7 @@ impl Shuffle {
         // Background of a cloud folder: ask the provider to sync it.
         if on_background {
             let dir = self.tab(pane).current_dir.clone();
-            if let Some(menu) = self.cloud_menu(pane, &dir, true) {
+            if let Some(menu) = self.cloud_menu(pane, &dir, true, cx) {
                 nodes.push(menu); push_menu_sep(&mut nodes);
             }
         }
@@ -5084,7 +5097,7 @@ impl Shuffle {
     }
 
     /// The sidebar right-click context menu (New Group / Remove / Delete Group).
-    fn sidebar_menu_nodes(&self, target: SidebarTarget) -> Vec<MenuNode> {
+    fn sidebar_menu_nodes(&self, target: SidebarTarget, cx: &Context<Self>) -> Vec<MenuNode> {
         let groups_on = prefs().groups_enabled;
         let mut items: Vec<MenuNode> = Vec::new();
         let folder = match &target {
@@ -5095,7 +5108,7 @@ impl Shuffle {
             _ => None,
         };
         if let Some(path) = &folder {
-            if let Some(menu) = self.cloud_menu(self.active_pane, path, cached_is_dir(path)) {
+            if let Some(menu) = self.cloud_menu(self.active_pane, path, cached_is_dir(path), cx) {
                 items.push(menu); items.push(MenuNode::Sep);
             }
         }
@@ -14339,6 +14352,7 @@ fn main() {
         let saved_prefs = load_prefs();
         set_active_prefs(saved_prefs);
         cx.set_global(PrefsGlobal(saved_prefs));
+        cx.set_global(nextcloud::State::load());
 
         // Load key bindings.
         let saved_keymap = load_keymap();

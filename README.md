@@ -136,13 +136,39 @@ stays visible even when the path is long; click it to open the cloud root. Hover
 or edit the path to see the full filesystem location.
 
 Cloud files, folders and shortcuts have a provider submenu. Downloads and iCloud
-space controls run directly. **Nextcloud actions in Finder…** selects the item
-in Finder for Nextcloud's own sharing, locking and automatic-space menus.
-Those Finder extension actions are not exposed as a reusable menu for other file
-managers; a separate direct Nextcloud connection is still under discussion.
+space controls run directly. Connect Nextcloud in **Settings → General →
+Connections → Connect folder…**, or right-click an item in a Nextcloud CloudStorage
+folder and choose **Nextcloud → Connect this folder to Nextcloud…**. Enter the
+server address and the remote folder corresponding to the selected local root
+(usually `/`), then approve Schnauz in your browser. This also supports classic
+Nextcloud sync folders outside CloudStorage. Each linked root gets the blue badge.
+
+Schnauz obtains its own app credential through
+[Nextcloud's browser login flow](https://docs.nextcloud.com/server/stable/developer_manual/client_apis/LoginFlow/index.html)
+and stores it in macOS Keychain; your desktop client's account remains independent.
+Only folder/server/account metadata goes into the central `nextcloud.json` file.
+Disconnect removes Schnauz's mapping and tries to revoke its own credential. If
+the server is unreachable, revoke it later in Nextcloud's personal Security settings.
+
+The connected **Nextcloud** submenu offers **Share options…**, **Open in browser**
+and **Copy internal link**. Share options lists existing shares; create a read-only
+public link with optional password/expiry, share with a Nextcloud user/group ID,
+change collaborator access, copy a public link or remove a selected share. Merely
+opening the window creates nothing. Advanced sharing options remain in the browser.
+**Lock file / Unlock file** requires the server's
+[Files Locking app](https://github.com/nextcloud/files_lock#capabilities-api).
+Schnauz releases only user-owned locks confirmed as belonging to your account.
+Use **Refresh server features** after enabling server capabilities.
+
+**Local storage policy in Finder…** still selects the item in Finder for
+Nextcloud's automatic freeing-up-space setting. macOS does not expose another
+provider's Finder extension menus as a reusable menu for other file managers.
 See [Apple's Finder Sync guide](https://developer.apple.com/library/archive/documentation/General/Conceptual/ExtensibilityPG/Finder.html)
 and [Nextcloud's File Provider guide](https://docs.nextcloud.com/server/stable/user_manual/en/desktop/macosfileprovider.html).
 Opening a cloud menu never recursively scans a folder.
+Account and file requests run outside the browser's render path. `./test.sh` tests
+login, paths, DAV/OCS sharing, locking and atomic settings entirely with fixtures;
+actual login and server compatibility require a manual test with your account.
 
 Project changes save automatically. Live terminal sessions survive project
 switches while the app stays open; terminals start fresh after quitting the app.

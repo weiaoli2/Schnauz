@@ -147,7 +147,7 @@ impl Shuffle {
             .collect();
             Some((x, y, nodes))
         } else if let Some((x, y, target)) = &self.sidebar_menu {
-            Some((*x, *y, self.sidebar_menu_nodes(target.clone())))
+            Some((*x, *y, self.sidebar_menu_nodes(target.clone(), cx)))
         } else {
             None
         };

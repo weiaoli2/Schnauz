@@ -49,7 +49,8 @@ impl Shuffle {
         if tab.remote.is_some() {
             return None;
         }
-        let location = identify(&home_dir(), &tab.current_dir)?;
+        let location = nextcloud::location(&tab.current_dir, cx)
+            .or_else(|| identify(&home_dir(), &tab.current_dir))?;
         let relative = tab.current_dir.strip_prefix(&location.root).ok()?;
         let root = location.root.clone();
         let badge = div()

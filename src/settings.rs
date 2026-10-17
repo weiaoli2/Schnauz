@@ -69,6 +69,8 @@ impl Settings {
     }
 
     fn new(cx: &mut Context<Self>) -> Self {
+        cx.observe_global::<nextcloud::State>(|_, cx| cx.notify())
+            .detach();
         // Repaint when the shared update-check state changes (the check runs
         // async; the main window may also drive it).
         cx.observe_global::<UpdateCheckGlobal>(|_, cx| cx.notify())
@@ -409,9 +411,9 @@ impl Settings {
             )
             .into_any_element();
 
-        // Connections (SFTP) section rows: the auth-mode choice, then the saved
-        // servers with a Remove button each, then how to add more.
+        // Nextcloud folder accounts, followed by SSH auth and saved servers.
         let mut connection_rows: Vec<AnyElement> = Vec::new();
+        connection_rows.extend(nextcloud::settings_rows(cx));
         connection_rows.push(
             toggle_row(
                 "tg-ssh-system",

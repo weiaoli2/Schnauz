@@ -70,6 +70,7 @@ the server account/repository and current review status before proceeding.
 | Project persistence and switching | `src/projects.rs`, `src/studio.rs` |
 | Project folders, tags and connections | `src/project_sidebar.rs` |
 | Global drive capacity and cloud paths/menus | `src/volumes.rs`, `volumectl.swift`, `src/cloud_locations.rs`, `src/cloud_actions.rs` |
+| Direct Nextcloud accounts, links, sharing and locks | `src/nextcloud.rs`, `native/nextcloud/Core.swift`, `native/nextcloud/main.swift` |
 | Saved folder views and list columns | `src/folder_views.rs`, `src/list_ui.rs` |
 | Preview layout and media | `src/preview_panel.rs`, `src/previews.rs`, `src/video_preview.rs` |
 | Terminal and SSH following | `src/studio_terminal.rs`, `src/ssh_sync.rs`, `src/terminal-shell/` |
@@ -81,9 +82,14 @@ collapsed sidebar contains only its reopen button; obsolete compact-rail control
 are removed from the source. Devices stays above Projects with background capacity
 updates and adjustable 80/90%-used colour thresholds. Locations replaces Favorites;
 legacy shortcuts merge without duplicates. Cloud paths have a persistent blue
-provider badge and relative breadcrumbs. Nextcloud's provider-specific sharing,
-locking and storage-policy menus currently have an explicitly labeled Finder
-handoff; a direct connection is an open design choice, not implemented yet.
+provider badge and relative breadcrumbs. The approved direct Nextcloud connection
+is implemented: Settings → General → Connections links a local folder through
+browser login, with its own credential in Keychain. Nextcloud menus offer sharing,
+internal links and server-supported file locks. Nonsecret mappings are centralized
+in `nextcloud.json`; no browsing-time network requests. Local automatic-space
+policy still uses an explicitly labeled Finder handoff. Native offline protocol
+tests run with `./test.sh`; actual account login/server interoperability awaits
+Oliver's manual test. Do not contact his live server for automated verification.
 Local terminal directory changes are allowed only
 at an idle prompt. SSH follows **terminal → browser only**; never send directory
 commands into a remote session. Unsync returns to local browsing without ending SSH.
