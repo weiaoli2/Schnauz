@@ -1,92 +1,66 @@
-<div align="center">
+# Shuffle Studio
 
-<img src="logo2%20Background%20Removed.png" width="120" alt="Shuffle logo" />
+A personal Mac file manager based on [Shuffle](https://github.com/WizenPainter/shuffle).
+This is an independent local version, with its own application identity and settings.
 
-# Shuffle
+## First version
 
-**A modern file explorer for macOS, built for speed.**
+- Studio Light and Studio Dark appearances, an indigo accent, and roomier lists.
+- Search, split/join panes, preview and workspace controls in the toolbar.
+- Named workspaces for local folders: tabs, view modes, sorting and split layout.
+- A preview panel and footer with item counts, current path and appearance control.
+- The existing native file browser, search, file operations and Mac integrations.
 
-Inspired by [File Pilot](https://filepilot.tech) on Windows: an open source,
-GPU rendered file manager focused on the best performance, the smoothest feel,
-and a deep set of power user features and customization.
+Click **Save workspace** or press **⌘⇧S** to name the current layout. Click a
+workspace in the sidebar to restore it. Right-click a saved workspace to update
+it from the current tabs or remove it. Workspaces save local folders; remote
+connections continue to work as ordinary tabs but aren't included in snapshots.
+Unavailable folders are skipped when restoring; no folders are created or removed.
 
-</div>
+| Shortcut | Action |
+|---|---|
+| ⌘P | Search files and commands |
+| ⌘⇧S | Save workspace |
+| ⌘⇧D | Split or join panes |
+| ⌘⇧I | Show or hide preview |
+| ⌘T | New tab |
+| ⌘, | Settings |
 
-## Philosophy
+## Build
 
-macOS file managers are either too limited or too slow. Shuffle is a single,
-small, native app that stays instant no matter how big the directory or how fast
-you move, and gives power users real tools instead of getting in the way.
-
-* **Fast.** GPU rendered (Metal), fully virtualized lists. A folder with 100,000
-  items scrolls as smoothly as one with 10.
-* **Smooth.** Native drag and drop, no jank, no Electron.
-* **Powerful and customizable.** The features below, plus a theme system to make
-  it yours.
-
-## Highlights
-
-* 🪟 **Dual panes / split canvas.** Drag a tab to the edge to split the window
-  into two side by side panes, each with its own tabs, history, and filter, and a
-  draggable divider resizes them.
-* 🗂️ **Tabs.** `Cmd+T` or `+`, with smooth drag to reorder and drag between panes.
-* ⚡ **Command palette (`Cmd+P`).** Millisecond fuzzy search over your home
-  directory with typo tolerance, live path browsing, and quick commands.
-* ⌨️ **Terminal mode.** An optional command bar at the bottom to move through the
-  explorer like a shell (`cd` navigates, Tab autocompletes paths and commands).
-* 👁️ **Preview and Information.** Single click a file to preview it (QuickLook:
-  images, PDFs, docs) and inspect its details in a side inspector.
-* 🔎 **In-place filter (`/`).** Instantly narrow the current folder, typo tolerant.
-* ☁️ **Cloud and servers.** Dropbox, Google Drive, OneDrive, and iCloud show up
-  automatically, alongside mounted volumes and a Connect to Server dialog.
-* 🎨 **Deep theming.** Dozens of preset palettes (Catppuccin, Dracula, Nord,
-  Gruvbox, Solarized, Tokyo Night, and bold single hue themes) plus per color
-  customization, applied live.
-
-Optional features (Terminal, Preview, Information) live in **Settings › General**
-and are off by default.
-
-## Platform support
-
-Built for **macOS**, tuned for **Apple Silicon (M series)**. It is a standard
-Metal app and runs on any modern Mac (macOS 12+). Intel builds from source.
-
-## Building from source
-
-Written in **Rust** with [GPUI](https://www.gpui.rs/) (the GPU UI framework
-behind the Zed editor).
+Requires Rust stable and Xcode with its Metal compiler. The packaged app targets
+macOS 14 or later and is built for the current Mac's processor.
 
 ```sh
-# Prerequisites: Rust (rustup), Xcode CLT, and the Metal toolchain:
-xcodebuild -downloadComponent MetalToolchain
-
-cargo run                 # debug
-cargo build --release     # optimized
-./make_app.sh && open ./Shuffle.app   # packaged .app bundle
+./build.sh
+open "Shuffle Studio.app"
 ```
 
-## Keyboard shortcuts
+For development: `STUDIO_BUILD_PROFILE=debug ./build.sh`. The app is locally
+ad-hoc signed; public distribution and Apple notarization are not configured.
+`./make_dmg.sh` packages an existing build without publishing it.
 
-| Shortcut | Action                       |
-| :------- | :--------------------------- |
-| `Cmd+P`  | Command palette / fuzzy find |
-| `/`      | Filter the current directory |
-| `Cmd+T`  | New tab                      |
-| `Cmd+W`  | Close tab                    |
-| `Cmd+,`  | Settings                     |
+```sh
+./test.sh
+```
 
-## Roadmap — you pick what's next
+Normal settings live in `~/Library/Application Support/Shuffle Studio/`.
+This prepared workspace reuses its local compiler cache in offline mode.
+If adding a new dependency, use `CARGO_NET_OFFLINE=false ./build.sh` to fetch it.
+For native UI checks, `SHUFFLE_STUDIO_CONFIG_DIR`, `SHUFFLE_STUDIO_START_DIR`
+and `SHUFFLE_STUDIO_INDEX_ROOT` can point at disposable test folders.
 
-The [roadmap](ROADMAP.md) is prioritized by community votes. Every planned
-item has a thread in
-[Ideas](https://github.com/WizenPainter/shuffle/discussions/categories/ideas) —
-open one and hit **⬆ upvote** to push it up the queue, or start a new thread
-to propose something.
+## Source
 
-## Status
+- `src/theme.rs`: palette and live theming
+- `src/studio.rs`: custom toolbar, footer and workspace controls
+- `src/workspaces.rs`: JSON workspace storage and validation
+- `src/main.rs`: the existing GPUI file browser and file operations
+- `scripts/generate_icon.swift`: editable native icon artwork
 
-Early but usable, under active development. Contributions and ideas welcome.
+The original snapshot is tagged `studio-starting-point`; the working branch is
+`studio`. The `upstream` remote is retained for provenance. This app does not
+check for or install original Shuffle updates.
 
-## License
-
-[MIT](LICENSE) © Jaime Guzman
+Based on Shuffle by Jaime Guzman, under the [MIT license](LICENSE).
+The original README is preserved in [README.upstream.md](README.upstream.md).

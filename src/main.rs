@@ -6,7 +6,7 @@
 //! - Favorites: Applications, Pictures, Documents, Downloads.
 //! - Locations: Macintosh HD (/) and the current user's home directory.
 //! Clicking any item navigates the main listing. The active location is
-//! highlighted. State lives in ~/Library/Application Support/Shuffle/.
+//! highlighted. State lives in ~/Library/Application Support/Shuffle Studio/.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -63,280 +63,18 @@ actions!(
         GoApplications,
         GoComputer,
         FocusSearch,
+        SaveWorkspace,
+        ToggleStudioSplit,
+        ToggleInspector,
     ]
 );
 
 // ----- theming ---------------------------------------------------------------
 
-/// A complete color theme. Every field is a 0xRRGGBB color.
-#[derive(Clone, Copy, PartialEq)]
-struct Theme {
-    bg: u32,            // app background
-    sidebar: u32,       // sidebar background
-    surface: u32,       // elevated surfaces (menus, panels, active nav)
-    hover: u32,         // row / item hover background (the "mouseover" color)
-    selected: u32,      // selected / highlighted background
-    border: u32,        // hairline borders
-    border_strong: u32, // stronger dividers
-    text: u32,          // primary text
-    text_muted: u32,    // secondary text (kind / date / size)
-    text_dim: u32,      // section headers, placeholders
-    accent: u32,        // folders, carets, active highlights
-}
-
-impl Theme {
-    /// A translucent variant of a base color, for floating panels. `a` is 0..=255.
-    fn alpha(color: u32, a: u32) -> Rgba {
-        rgba((color << 8) | (a & 0xff))
-    }
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        PRESETS[0].1
-    }
-}
-
-/// Clamp a channel value to 0..=255.
-const fn clamp8(x: u32) -> u32 {
-    if x > 0xff {
-        0xff
-    } else {
-        x
-    }
-}
-
-/// Scale every channel of an 0xRRGGBB color by `num/den` (lighten if >1, darken
-/// if <1), clamping each channel. Used to derive coherent shades from one base.
-const fn scale(c: u32, num: u32, den: u32) -> u32 {
-    let r = clamp8(((c >> 16) & 0xff) * num / den);
-    let g = clamp8(((c >> 8) & 0xff) * num / den);
-    let b = clamp8((c & 0xff) * num / den);
-    (r << 16) | (g << 8) | b
-}
-
-/// Build a coherent DARK theme from a background, text, and accent color.
-/// Surfaces are derived lighter than the background; muted/dim text darker.
-const fn dark_theme(bg: u32, text: u32, accent: u32) -> Theme {
-    Theme {
-        bg,
-        sidebar: scale(bg, 8, 10),
-        surface: scale(bg, 15, 10),
-        hover: scale(bg, 13, 10),
-        selected: scale(bg, 19, 10),
-        border: scale(bg, 14, 10),
-        border_strong: scale(bg, 20, 10),
-        text,
-        text_muted: scale(text, 7, 10),
-        text_dim: scale(text, 5, 10),
-        accent,
-    }
-}
-
-/// Build a coherent LIGHT theme. Surfaces are derived darker than the (light)
-/// background; muted/dim text lighter so it recedes.
-const fn light_theme(bg: u32, text: u32, accent: u32) -> Theme {
-    Theme {
-        bg,
-        sidebar: scale(bg, 95, 100),
-        surface: scale(bg, 90, 100),
-        hover: scale(bg, 93, 100),
-        selected: scale(bg, 84, 100),
-        border: scale(bg, 88, 100),
-        border_strong: scale(bg, 80, 100),
-        text,
-        text_muted: scale(text, 13, 10),
-        text_dim: scale(text, 16, 10),
-        accent,
-    }
-}
-
-/// Built-in palettes shown in Settings — a broad spread across hues, dark and
-/// light. (name, theme)
-const PRESETS: &[(&str, Theme)] = &[
-    // --- Hand-tuned signatures ---
-    (
-        "Shuffle Dark",
-        Theme {
-            bg: 0x1e1e22,
-            sidebar: 0x17171a,
-            surface: 0x2f2f3a,
-            hover: 0x2a2a30,
-            selected: 0x33334a,
-            border: 0x303036,
-            border_strong: 0x3a3a44,
-            text: 0xf0f0f4,
-            text_muted: 0x8a8a92,
-            text_dim: 0x6b6b73,
-            accent: 0x7aa2f7,
-        },
-    ),
-    (
-        "Catppuccin Mocha",
-        Theme {
-            bg: 0x1e1e2e,
-            sidebar: 0x181825,
-            surface: 0x313244,
-            hover: 0x2a2b3c,
-            selected: 0x45475a,
-            border: 0x313244,
-            border_strong: 0x45475a,
-            text: 0xcdd6f4,
-            text_muted: 0xa6adc8,
-            text_dim: 0x6c7086,
-            accent: 0x89b4fa,
-        },
-    ),
-    (
-        "Catppuccin Macchiato",
-        Theme {
-            bg: 0x24273a,
-            sidebar: 0x1e2030,
-            surface: 0x363a4f,
-            hover: 0x2e3148,
-            selected: 0x494d64,
-            border: 0x363a4f,
-            border_strong: 0x494d64,
-            text: 0xcad3f5,
-            text_muted: 0xa5adcb,
-            text_dim: 0x6e738d,
-            accent: 0x8aadf4,
-        },
-    ),
-    (
-        "Catppuccin Frappé",
-        Theme {
-            bg: 0x303446,
-            sidebar: 0x292c3c,
-            surface: 0x414559,
-            hover: 0x3a3e52,
-            selected: 0x51576d,
-            border: 0x414559,
-            border_strong: 0x51576d,
-            text: 0xc6d0f5,
-            text_muted: 0xa5adce,
-            text_dim: 0x737994,
-            accent: 0x8caaee,
-        },
-    ),
-    (
-        "Catppuccin Latte",
-        Theme {
-            bg: 0xeff1f5,
-            sidebar: 0xe6e9ef,
-            surface: 0xccd0da,
-            hover: 0xdce0e8,
-            selected: 0xbcc0cc,
-            border: 0xccd0da,
-            border_strong: 0xbcc0cc,
-            text: 0x4c4f69,
-            text_muted: 0x6c6f85,
-            text_dim: 0x9ca0b0,
-            accent: 0x1e66f5,
-        },
-    ),
-    // --- Popular dark themes (varied accent hues) ---
-    ("Dracula", dark_theme(0x282a36, 0xf8f8f2, 0xbd93f9)),
-    ("Nord", dark_theme(0x2e3440, 0xe5e9f0, 0x88c0d0)),
-    ("Tokyo Night", dark_theme(0x1a1b26, 0xc0caf5, 0x7aa2f7)),
-    ("Gruvbox Dark", dark_theme(0x282828, 0xebdbb2, 0xfe8019)),
-    ("One Dark", dark_theme(0x282c34, 0xabb2bf, 0x61afef)),
-    ("Solarized Dark", dark_theme(0x002b36, 0x93a1a1, 0x268bd2)),
-    ("Monokai", dark_theme(0x272822, 0xf8f8f2, 0xa6e22e)),
-    ("Everforest", dark_theme(0x2d353b, 0xd3c6aa, 0xa7c080)),
-    ("Rosé Pine", dark_theme(0x191724, 0xe0def4, 0xeb6f92)),
-    // --- Bold single-hue darks (green / red / blue / …) ---
-    ("Forest", dark_theme(0x10211a, 0xd6f5e3, 0x4ade80)),
-    ("Crimson", dark_theme(0x211315, 0xf8dcdc, 0xf87171)),
-    ("Ocean", dark_theme(0x0e1a26, 0xd6ecff, 0x38bdf8)),
-    ("Grape", dark_theme(0x1a1326, 0xece0f8, 0xc084fc)),
-    ("Amber", dark_theme(0x221a10, 0xf8ecd6, 0xfbbf24)),
-    ("Rose", dark_theme(0x241620, 0xf8dcee, 0xf472b6)),
-    ("Teal", dark_theme(0x0e201e, 0xd6f5f0, 0x2dd4bf)),
-    ("Sunset", dark_theme(0x241712, 0xfae5d8, 0xfb7185)),
-    // --- Light themes ---
-    ("Solarized Light", light_theme(0xfdf6e3, 0x586e75, 0x268bd2)),
-    ("GitHub Light", light_theme(0xffffff, 0x24292f, 0x0969da)),
-    ("Rosé Pine Dawn", light_theme(0xfaf4ed, 0x575279, 0xd7827e)),
-    ("Mint", light_theme(0xf0faf4, 0x14532d, 0x16a34a)),
-    ("Sky", light_theme(0xeff6ff, 0x1e3a5f, 0x2563eb)),
-    ("Lavender", light_theme(0xf6f2fe, 0x4c3a66, 0x8b5cf6)),
-];
-
-/// Curated per-property options shown in Settings alongside the presets.
-/// Convert HSL (h in 0..360, s/l in 0..1) to a 0xRRGGBB color.
-fn hsl_to_rgb(h: f32, s: f32, l: f32) -> u32 {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let hp = h / 60.0;
-    let x = c * (1.0 - (hp % 2.0 - 1.0).abs());
-    let (r1, g1, b1) = match hp as i32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let m = l - c / 2.0;
-    let to = |v: f32| (((v + m).clamp(0.0, 1.0)) * 255.0).round() as u32;
-    (to(r1) << 16) | (to(g1) << 8) | to(b1)
-}
-
-/// A broad, ordered swatch palette: a grayscale ramp plus a hue × lightness grid
-/// — enough variety to set any reasonable background/text/accent color.
-fn palette_colors() -> Vec<u32> {
-    let mut out = Vec::new();
-    // Grayscale ramp (black → white).
-    for i in 0..13 {
-        let v = (i as f32 / 12.0 * 255.0).round() as u32;
-        out.push((v << 16) | (v << 8) | v);
-    }
-    // Hues across the wheel, each from dark to light.
-    let lights = [0.18f32, 0.30, 0.42, 0.55, 0.68, 0.82];
-    for hue in (0..360).step_by(30) {
-        for &l in &lights {
-            out.push(hsl_to_rgb(hue as f32, 0.65, l));
-        }
-    }
-    out
-}
-
-/// Wrapper so the theme lives in the GPUI global store and notifies observers.
-#[derive(Clone, Copy)]
-struct ThemeGlobal(Theme);
-impl gpui::Global for ThemeGlobal {}
-
-thread_local! {
-    /// The render-side copy of the active theme, read by all draw code on the
-    /// main thread without needing an `App` handle.
-    static ACTIVE_THEME: RefCell<Theme> = RefCell::new(Theme::default());
-}
-
-/// The active theme. Read this anywhere in render code.
-fn theme() -> Theme {
-    ACTIVE_THEME.with(|t| *t.borrow())
-}
-
-fn set_active_theme(t: Theme) {
-    ACTIVE_THEME.with(|c| *c.borrow_mut() = t);
-}
-
-/// Apply a theme everywhere: update the render-side copy, persist it, and store
-/// it in the global so observers (the main window) repaint.
-fn apply_theme(t: Theme, cx: &mut App) {
-    set_active_theme(t);
-    save_theme(&t);
-    cx.set_global(ThemeGlobal(t));
-    // Keep menus following the theme unless the user chose menu colors.
-    let mut m = menu_style();
-    if !m.custom {
-        m.follow_theme(&t);
-        set_active_menu(m);
-        save_menu_style(&m);
-        cx.set_global(MenuStyleGlobal(m));
-    }
-    cx.refresh_windows();
-}
+mod theme;
+use theme::*;
+mod workspaces;
+mod studio;
 
 // ----- feature preferences (the General tab toggles) -------------------------
 
@@ -387,10 +125,10 @@ impl Default for Prefs {
         Prefs {
             terminal: false,
             term_history: false,
-            preview: false,
+            preview: true,
             preview_pages: true,
-            info: false,
-            show_parent: true,
+            info: true,
+            show_parent: false,
             sidebar_collapsed: false,
             recent_limit: 3,
             palette_history: false,
@@ -414,10 +152,10 @@ thread_local! {
     static ACTIVE_PREFS: RefCell<Prefs> = const { RefCell::new(Prefs {
         terminal: false,
         term_history: false,
-        preview: false,
+        preview: true,
         preview_pages: true,
-        info: false,
-        show_parent: true,
+        info: true,
+        show_parent: false,
         sidebar_collapsed: false,
         recent_limit: 3,
         palette_history: false,
@@ -897,7 +635,7 @@ impl KeyAction {
             KeyAction::SelectAll => Some("cmd-a"),
             KeyAction::Refresh => Some("cmd-r"),
             KeyAction::SwitchPane => Some("ctrl-tab"),
-            KeyAction::Share => Some("cmd-shift-s"),
+            KeyAction::Share => Some("cmd-alt-s"),
             KeyAction::GetInfo => Some("cmd-i"),
             KeyAction::BatchRename => Some("cmd-shift-r"),
             KeyAction::Undo => Some("cmd-z"),
@@ -1132,6 +870,7 @@ impl Settings {
 
     /// Kick off a GitHub check from the Settings "Updates" row.
     fn start_update_check(&self, cx: &mut Context<Self>) {
+        if !upstream_updates_enabled() { return; }
         cx.set_global(UpdateCheckGlobal(UpdateCheck::Checking));
         cx.spawn(async move |_, cx| {
             let tag = cx.background_spawn(async move { fetch_latest_tag() }).await;
@@ -1952,6 +1691,13 @@ impl Settings {
     /// The Software-Update row: current version plus a Check / Install &
     /// Relaunch button, driven by the shared UpdateCheck state.
     fn render_update_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        if !upstream_updates_enabled() {
+            return div().flex().flex_col().gap_1()
+                .child(format!("Shuffle Studio {}", env!("CARGO_PKG_VERSION")))
+                .child(div().text_xs().text_color(rgb(theme().text_muted))
+                    .child("Personal build · updates are installed from this project's builds."))
+                .into_any_element();
+        }
         let t = theme();
         let state = cx.global::<UpdateCheckGlobal>().0.clone();
         let status: Option<String> = match &state {
@@ -2361,7 +2107,7 @@ impl Settings {
         vec![
             settings_header(
                 "Customization",
-                "Make Shuffle yours \u{2014} palette, menus, and app icon.",
+                "Make Shuffle Studio yours \u{2014} palette, menus, and app icon.",
             )
             .into_any_element(),
             settings_section(
@@ -3102,16 +2848,16 @@ const MIN_COL_W: f32 = 50.0;
 const PALETTE_ROW_H: f32 = 26.0;
 const PALETTE_MAX_ROWS: usize = 7;
 /// Sidebar width; also the left edge of the content/canvas area.
-const SIDEBAR_W: f32 = 220.0;
+const SIDEBAR_W: f32 = 232.0;
 /// Sidebar width when collapsed to an icon-only rail.
 const SIDEBAR_COLLAPSED_W: f32 = 52.0;
 /// Height of the custom titlebar strip (the OS titlebar is transparent, so this
 /// colored bar sits behind the traffic lights).
-const TITLEBAR_H: f32 = 34.0;
+const TITLEBAR_H: f32 = 56.0;
 /// Tab strip row height.
-const TAB_H: f32 = 30.0;
+const TAB_H: f32 = 40.0;
 /// Fixed list-row height (so marquee selection can map y-coordinates to rows).
-const ROW_H: f32 = 24.0;
+const ROW_H: f32 = 32.0;
 /// Overlay scrollbar: stays solid this long after the last scroll…
 const SCROLLBAR_LINGER: f32 = 1.0;
 /// …then fades out over this long (seconds).
@@ -3429,6 +3175,7 @@ struct Group {
 /// What a right-click in the sidebar targeted (drives its context menu).
 #[derive(Clone)]
 enum SidebarTarget {
+    Workspace(u64),
     /// Empty sidebar space → offer "New Group".
     Empty,
     /// A pinned bookmark path → offer "Remove Bookmark".
@@ -3821,6 +3568,11 @@ struct Shuffle {
     undo_stack: Vec<UndoOp>,
     /// The tabs/split layout as last written to session.txt (skip rewrites).
     saved_session: String,
+    workspaces: workspaces::Library,
+    workspace_load_error: Option<String>,
+    active_workspace: Option<u64>,
+    workspace_dialog: Option<String>,
+    workspace_dialog_error: Option<String>,
     /// The open Get Info card, if any.
     info_panel: Option<InfoPanel>,
     /// The open "Rename N Items" dialog, if any.
@@ -3881,8 +3633,9 @@ impl Shuffle {
         })
         .detach();
         // Sync + repaint whenever feature prefs change.
-        cx.observe_global::<PrefsGlobal>(|_, cx| {
+        cx.observe_global::<PrefsGlobal>(|this, cx| {
             set_active_prefs(cx.global::<PrefsGlobal>().0);
+            this.prewarm_icons(cx);
             cx.notify();
         })
         .detach();
@@ -4074,6 +3827,13 @@ impl Shuffle {
             this.prewarm_icons(cx);
         })
         .detach();
+        let workspace_result = config_file("workspaces.json")
+            .ok_or_else(|| "Cannot find the settings folder.".to_string())
+            .and_then(|path| workspaces::Library::load(&path).map_err(|error| format!("Couldn't read saved workspaces: {error}. The existing file has been preserved.")));
+        let (workspaces, workspace_load_error) = match workspace_result {
+            Ok(library) => (library, None),
+            Err(error) => (workspaces::Library::default(), Some(error)),
+        };
         Self {
             panes: vec![Pane::new(dir)],
             active_pane: 0,
@@ -4136,6 +3896,8 @@ impl Shuffle {
             next_job_id: 0,
             undo_stack: Vec::new(),
             saved_session: String::new(),
+            workspaces, workspace_load_error, active_workspace: None,
+            workspace_dialog: None, workspace_dialog_error: None,
             info_panel: None,
             batch_rename: None,
         }
@@ -4881,93 +4643,25 @@ impl Shuffle {
     /// folder (tab-separated; paths can't contain tabs in practice). Remote
     /// tabs aren't restored.
     fn session_string(&self) -> String {
-        let mut out = format!("ratio\t{}\nactive\t{}\n", self.split_ratio, self.active_pane);
-        for p in &self.panes {
-            let locals: Vec<(usize, &Tab)> = p.tabs.iter().enumerate().filter(|(_, t)| t.remote.is_none()).collect();
-            if locals.is_empty() {
-                continue;
-            }
-            let active = locals.iter().position(|(i, _)| *i == p.active).unwrap_or(0);
-            out.push_str(&format!("pane\t{active}\n"));
-            for (_, t) in locals {
-                out.push_str(&format!(
-                    "tab\t{}\t{}\t{}\t{}\n",
-                    view_mode_key(t.view),
-                    sort_key_name(t.sort_key),
-                    u8::from(t.sort_asc),
-                    t.current_dir.to_string_lossy()
-                ));
-            }
-        }
-        out
+        serde_json::to_string(&self.capture_layout()).unwrap_or_default()
     }
 
-    /// Write session.txt if the layout changed since the last write.
     fn save_session(&mut self) {
-        let s = self.session_string();
-        if s != self.saved_session {
-            if let Some(path) = config_file("session.txt") {
-                if let Some(parent) = path.parent() {
-                    let _ = fs::create_dir_all(parent);
+        let session = self.session_string();
+        if session.is_empty() { return; }
+        if session != self.saved_session {
+            if let Some(path) = config_file("session.json") {
+                if workspaces::atomic_write(&path, session.as_bytes()).is_ok() {
+                    self.saved_session = session;
                 }
-                let _ = fs::write(&path, &s);
             }
-            self.saved_session = s;
         }
     }
 
-    /// Reopen the tabs and split from the last run. Folders that no longer
-    /// exist are dropped; returns false (leaving the default single tab) if
-    /// nothing usable was saved.
     fn restore_session(&mut self) -> bool {
-        let Some(text) = config_file("session.txt").and_then(|p| fs::read_to_string(p).ok()) else {
-            return false;
-        };
-        let (mut ratio, mut active_pane) = (0.5f32, 0usize);
-        let mut panes: Vec<Pane> = Vec::new();
-        let mut wanted_active: Vec<usize> = Vec::new();
-        for line in text.lines() {
-            let f: Vec<&str> = line.splitn(5, '\t').collect();
-            match f.as_slice() {
-                ["ratio", v] => ratio = v.parse().unwrap_or(0.5),
-                ["active", v] => active_pane = v.parse().unwrap_or(0),
-                ["pane", v] => {
-                    panes.push(Pane { tabs: Vec::new(), active: 0 });
-                    wanted_active.push(v.parse().unwrap_or(0));
-                }
-                ["tab", view, sort, asc, path] => {
-                    let dir = PathBuf::from(path);
-                    let Some(p) = panes.last_mut() else { continue };
-                    if !dir.is_dir() {
-                        continue;
-                    }
-                    let mut t = Tab::new(dir);
-                    t.view = view_mode_from_key(view).unwrap_or(t.view);
-                    if let Some(k) = sort_key_from_name(sort) {
-                        t.sort_key = k;
-                        t.sort_asc = *asc == "1";
-                    }
-                    p.tabs.push(t);
-                }
-                _ => {}
-            }
-        }
-        let mut kept = Vec::new();
-        for (p, want) in panes.into_iter().zip(wanted_active) {
-            if !p.tabs.is_empty() {
-                let active = want.min(p.tabs.len() - 1);
-                kept.push(Pane { active, ..p });
-            }
-        }
-        kept.truncate(2);
-        if kept.is_empty() {
-            return false;
-        }
-        self.active_pane = active_pane.min(kept.len() - 1);
-        self.split_ratio = ratio.clamp(0.2, 0.8);
-        self.panes = kept;
-        self.saved_session = self.session_string();
-        true
+        let Some(bytes) = config_file("session.json").and_then(|path| fs::read(path).ok()) else { return false };
+        let Ok(layout) = serde_json::from_slice::<workspaces::Layout>(&bytes) else { return false };
+        self.apply_layout(&layout)
     }
 
     // ----- Get Info -----
@@ -7475,7 +7169,7 @@ impl Shuffle {
                 .rounded_md()
                 .cursor_pointer()
                 .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
-                .bg(if active { rgb(t.surface) } else { rgba(0x00000000) })
+                .bg(if active { rgb(t.selected) } else { rgba(0x00000000) })
                 .hover(|s| s.bg(rgb(t.hover)))
                 .child(label)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -7784,7 +7478,7 @@ impl Shuffle {
                             .child("Connect over SSH"),
                     )
                     .child(div().text_xs().text_color(rgb(t.text_muted)).child(
-                        "How should Shuffle authenticate to SFTP servers? You can change this \
+                        "How should Shuffle Studio authenticate to SFTP servers? You can change this \
                          anytime in Settings \u{2192} Connections.",
                     ))
                     .child(choice(
@@ -7903,6 +7597,12 @@ impl Shuffle {
         let groups_on = prefs().groups_enabled;
         let mut items: Vec<AnyElement> = Vec::new();
         match target {
+            SidebarTarget::Workspace(id) => {
+                items.push(ctx_item("Open workspace", cx.listener(move |this, _: &ClickEvent, _, cx| this.restore_workspace(id, cx))).into_any_element());
+                items.push(ctx_item("Update with current tabs", cx.listener(move |this, _: &ClickEvent, _, cx| this.update_workspace(id, cx))).into_any_element());
+                items.push(ctx_separator().into_any_element());
+                items.push(ctx_item("Remove workspace", cx.listener(move |this, _: &ClickEvent, _, cx| this.remove_workspace(id, cx))).into_any_element());
+            }
             SidebarTarget::Empty => {
                 if groups_on {
                     items.push(
@@ -8085,7 +7785,7 @@ impl Shuffle {
     fn build_index(&self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let index = cx
-                .background_spawn(async move { FileIndex::build(home_dir()) })
+                .background_spawn(async move { FileIndex::build(std::env::var_os("SHUFFLE_STUDIO_INDEX_ROOT").map(PathBuf::from).unwrap_or_else(home_dir)) })
                 .await;
             this.update(cx, |this, cx| {
                 this.index = Some(Arc::new(index));
@@ -8101,6 +7801,7 @@ impl Shuffle {
     /// surface the update banner. Best-effort: any failure (offline, timeout,
     /// unparseable) just leaves the banner hidden. Never blocks the UI.
     fn check_for_update(&self, cx: &mut Context<Self>) {
+        if !upstream_updates_enabled() { return; }
         cx.spawn(async move |this, cx| {
             let Some(tag) = cx.background_spawn(async move { fetch_latest_tag() }).await else {
                 return;
@@ -8136,6 +7837,7 @@ impl Shuffle {
     /// off by the banner's "Update" button. All network/disk work is off-thread;
     /// the actual replace happens in a tiny helper that waits for us to quit.
     fn start_self_update(&mut self, cx: &mut Context<Self>) {
+        if !upstream_updates_enabled() { return; }
         let ver = match &self.update {
             Some(UpdateStatus::Available(v)) => v.clone(),
             _ => return,
@@ -8786,6 +8488,11 @@ impl Shuffle {
         let ks = &ev.keystroke;
         let cmd = ks.modifiers.platform;
         let key = ks.key.as_str();
+
+        if self.workspace_dialog.is_some() {
+            self.handle_workspace_key(ev, cx);
+            return;
+        }
 
         // The first-run SSH prompt: Escape dismisses; clicks pick a mode.
         if self.ssh_ask {
@@ -11410,13 +11117,21 @@ impl Shuffle {
         if !show_preview && !p.info {
             return None;
         }
-        let sel = self.active_tab().anchor.clone()?;
         let t = theme();
+        let Some(sel) = self.active_tab().anchor.clone() else {
+            return Some(div().w(px(280.0)).h_full().flex_none().flex().flex_col()
+                .items_center().justify_center().gap_3().px_6().bg(rgb(t.sidebar))
+                .border_l_1().border_color(rgb(t.border))
+                .child(div().text_size(px(30.0)).text_color(rgb(t.accent)).child("◧"))
+                .child(div().font_weight(FontWeight::MEDIUM).child("A closer look"))
+                .child(div().text_xs().text_color(rgb(t.text_muted)).child("Select a file to see its preview and details."))
+                .into_any_element());
+        };
 
         let mut col = div()
             .id("inspector")
             .flex_none()
-            .w(px(320.0))
+            .w(px(280.0))
             .h_full()
             .overflow_y_scroll()
             .flex()
@@ -11451,7 +11166,7 @@ impl Shuffle {
             let handle = page_img.or_else(|| lookup_preview(&sel).flatten());
             let body: AnyElement = match handle {
                 Some(handle) => img(ImageSource::Render(handle))
-                    .max_w(px(288.0))
+                    .max_w(px(248.0))
                     .max_h(px(360.0))
                     .object_fit(ObjectFit::Contain)
                     .into_any_element(),
@@ -12464,6 +12179,8 @@ impl Shuffle {
                 .into_any_element(),
         );
 
+        self.push_workspace_sidebar(&mut items, collapsed, cx);
+
         // --- Favorites (Applications, Documents, …) ---
         if self.begin_section(&mut items, "FAVORITES", collapsed, cx) {
             for (label, slug) in SIDEBAR_FAVORITES {
@@ -12768,8 +12485,8 @@ impl Shuffle {
             .flex()
             .items_center()
             .gap_1()
-            .px_2()
-            .py_1()
+            .px_3()
+            .py_2()
             .min_w_0()
             .overflow_hidden()
             .border_b_1()
@@ -13342,12 +13059,12 @@ impl Shuffle {
                     .items_center()
                     .gap_1()
                     .px_2()
-                    .h(px(TAB_H - 6.0))
+                    .h(px(TAB_H - 10.0))
                     .max_w(px(180.0))
                     .rounded_md()
                     .cursor_pointer()
                     .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
-                    .bg(if active { rgb(t.surface) } else { rgba(0x00000000) })
+                    .bg(if active { rgb(t.selected) } else { rgba(0x00000000) })
                     .hover(|s| s.bg(rgb(t.hover)))
                     .active(|s| s.bg(rgb(t.selected)))
                     // Drag this tab (live floating preview).
@@ -14309,6 +14026,9 @@ impl Render for Shuffle {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
             // Native menu-bar actions (File / View / Go menus).
+            .on_action(cx.listener(|this, _: &SaveWorkspace, _, cx| this.open_workspace_dialog(cx)))
+            .on_action(cx.listener(|this, _: &ToggleStudioSplit, _, cx| this.toggle_studio_split(cx)))
+            .on_action(cx.listener(|_, _: &ToggleInspector, _, cx| studio::toggle_inspector(cx)))
             .on_action(cx.listener(|this, _: &NewTab, _, cx| {
                 let p = this.active_pane;
                 this.new_tab_in(p, cx);
@@ -14403,7 +14123,7 @@ impl Render for Shuffle {
             // A slim titlebar strip in the app's own background color. With the
             // OS titlebar transparent, this is what shows behind the traffic
             // lights, and it keeps the content clear of them.
-            .child(div().flex_none().w_full().h(px(TITLEBAR_H)).bg(rgb(t.bg)));
+            .child(self.render_studio_toolbar(cx));
 
         // The update bar (available / downloading / failed), just under the titlebar.
         if let Some(banner) = self.render_update_banner(cx) {
@@ -14459,7 +14179,7 @@ impl Render for Shuffle {
             );
         }
 
-        root = root.child(main_row);
+        root = root.child(main_row).child(self.render_studio_status(cx));
 
         // Terminal-mode command bar at the bottom.
         if prefs().terminal {
@@ -14498,6 +14218,9 @@ impl Render for Shuffle {
         }
         if self.group_dialog.is_some() {
             root = root.child(self.render_group_dialog(cx));
+        }
+        if self.workspace_dialog.is_some() {
+            root = root.child(self.render_workspace_dialog(cx));
         }
         if prefs().show_fps {
             root = root.child(fps_overlay());
@@ -15048,7 +14771,7 @@ struct ScriptAction {
     types: Vec<String>,
 }
 
-/// The folder scripts live in: `…/Application Support/Shuffle/actions`.
+/// The folder scripts live in: `…/Application Support/Shuffle Studio/actions`.
 fn script_actions_dir() -> Option<PathBuf> {
     config_dir().map(|d| d.join("actions"))
 }
@@ -15799,10 +15522,10 @@ fn nav_item(
     base = if collapsed {
         base.mx_1().px_0().py_1().justify_center()
     } else {
-        base.mx_2().px_2().py_1().gap_2()
+        base.mx_2().px_3().py_2().gap_2()
     };
     let base = if active {
-        base.bg(rgb(t.surface))
+        base.bg(rgb(t.selected))
     } else {
         base.hover(|s| s.bg(rgb(t.hover)))
             .active(|s| s.bg(rgb(t.selected)))
@@ -16912,7 +16635,7 @@ fn keychain_account(s: &SftpServer) -> String {
 /// Store a server's password in the login Keychain (updating any existing one).
 fn keychain_set_password(s: &SftpServer, pw: &str) {
     let _ = Command::new("security")
-        .args(["add-generic-password", "-U", "-s", "shuffle-sftp", "-a"])
+        .args(["add-generic-password", "-U", "-s", "shuffle-studio-sftp", "-a"])
         .arg(keychain_account(s))
         .arg("-w")
         .arg(pw)
@@ -16922,7 +16645,7 @@ fn keychain_set_password(s: &SftpServer, pw: &str) {
 /// Remove a server's stored password.
 fn keychain_delete_password(s: &SftpServer) {
     let _ = Command::new("security")
-        .args(["delete-generic-password", "-s", "shuffle-sftp", "-a"])
+        .args(["delete-generic-password", "-s", "shuffle-studio-sftp", "-a"])
         .arg(keychain_account(s))
         .output();
 }
@@ -16930,7 +16653,7 @@ fn keychain_delete_password(s: &SftpServer) {
 /// Read a server's stored password back from the Keychain (empty = none).
 fn keychain_get_password(s: &SftpServer) -> Option<String> {
     let out = Command::new("security")
-        .args(["find-generic-password", "-w", "-s", "shuffle-sftp", "-a"])
+        .args(["find-generic-password", "-w", "-s", "shuffle-studio-sftp", "-a"])
         .arg(keychain_account(s))
         .output()
         .ok()?;
@@ -17090,7 +16813,7 @@ fn ssh_control_path(s: &SftpServer) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.display().hash(&mut h);
-    PathBuf::from(format!("/tmp/shuffle-ssh-{:016x}.sock", h.finish()))
+    PathBuf::from(format!("/tmp/shuffle-studio-ssh-{:016x}.sock", h.finish()))
 }
 
 /// Common `ssh`/`sftp` options for a server: multiplexing, non-interactive
@@ -18474,7 +18197,7 @@ fn command_matches(q: &str) -> Vec<PaletteItem> {
     if hit {
         out.push(PaletteItem {
             title: "Settings".to_string(),
-            subtitle: "Open Shuffle settings".to_string(),
+            subtitle: "Open Shuffle Studio settings".to_string(),
             action: Action::OpenSettings,
             is_dir: false,
         });
@@ -19015,8 +18738,9 @@ fn home_dir() -> PathBuf {
 }
 
 fn config_dir() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("SHUFFLE_STUDIO_CONFIG_DIR") { return Some(PathBuf::from(path)); }
     std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join("Library/Application Support/Shuffle"))
+        .map(|h| PathBuf::from(h).join("Library/Application Support/Shuffle Studio"))
 }
 
 fn config_file(name: &str) -> Option<PathBuf> {
@@ -19026,6 +18750,10 @@ fn config_file(name: &str) -> Option<PathBuf> {
 /// The directory to open on launch: the last-visited one if still valid,
 /// otherwise the home directory.
 fn load_last_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("SHUFFLE_STUDIO_START_DIR") {
+        let path = PathBuf::from(path);
+        if path.is_dir() { return path; }
+    }
     if let Some(path) = config_file("last_dir.txt") {
         if let Ok(saved) = fs::read_to_string(&path) {
             let dir = PathBuf::from(saved.trim());
@@ -19117,6 +18845,8 @@ fn write_config_string(name: &str, value: &str) {
 // --- Update check (GitHub "latest release" → dismissible banner) ---
 
 /// The GitHub repo whose latest release drives the update banner.
+fn upstream_updates_enabled() -> bool { false }
+
 const GITHUB_REPO: &str = "WizenPainter/shuffle";
 /// The stable "always the newest DMG" download link (same one the website uses).
 const DMG_URL: &str = "https://github.com/WizenPainter/shuffle/releases/latest/download/Shuffle.dmg";
@@ -19681,7 +19411,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 3 && args[1] == "--index-bench" {
         let t0 = std::time::Instant::now();
-        let index = FileIndex::build(home_dir());
+        let index = FileIndex::build(std::env::var_os("SHUFFLE_STUDIO_INDEX_ROOT").map(PathBuf::from).unwrap_or_else(home_dir));
         eprintln!(
             "index: {} entries built in {} ms",
             index.entries.len(),
@@ -20059,14 +19789,17 @@ fn main() {
         cx.bind_keys([
             KeyBinding::new("cmd-,", OpenSettings, None),
             KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("cmd-shift-s", SaveWorkspace, None),
+            KeyBinding::new("cmd-shift-d", ToggleStudioSplit, None),
+            KeyBinding::new("cmd-shift-i", ToggleInspector, None),
         ]);
         cx.set_menus(vec![
             Menu {
-                name: "Shuffle".into(),
+                name: "Shuffle Studio".into(),
                 items: vec![
                     MenuItem::action("Settings…", OpenSettings),
                     MenuItem::separator(),
-                    MenuItem::action("Quit Shuffle", Quit),
+                    MenuItem::action("Quit Shuffle Studio", Quit),
                 ],
             },
             Menu {
@@ -20074,6 +19807,7 @@ fn main() {
                 items: vec![
                     MenuItem::action("New Tab", NewTab),
                     MenuItem::action("New Folder", NewFolder),
+                    MenuItem::action("Save Workspace…", SaveWorkspace),
                     MenuItem::separator(),
                     MenuItem::action("Close Tab", CloseTab),
                     MenuItem::action("Move to Trash", MoveToTrash),
@@ -20089,6 +19823,8 @@ fn main() {
                     MenuItem::separator(),
                     MenuItem::action("Hide/Show Sidebar", ToggleSidebar),
                     MenuItem::action("Search…", FocusSearch),
+                    MenuItem::action("Split / Join Panes", ToggleStudioSplit),
+                    MenuItem::action("Show / Hide Preview", ToggleInspector),
                 ],
             },
             Menu {
@@ -20113,10 +19849,11 @@ fn main() {
 
 /// Open the main explorer window.
 fn open_main_window(cx: &mut App) {
-    let bounds = Bounds::centered(None, size(px(1100.0), px(720.0)), cx);
+    let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
     let _ = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(980.0), px(600.0))),
             titlebar: Some(TitlebarOptions {
                 // No title text; transparent so our own colored bar shows.
                 title: None,

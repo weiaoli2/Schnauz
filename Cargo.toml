@@ -1,11 +1,13 @@
 [package]
-name = "shuffle"
-version = "0.4.0"
+name = "shuffle-studio"
+version = "0.1.0"
 edition = "2021"
-description = "Shuffle — a fast, snappy file manager for Apple Silicon Macs"
+description = "Shuffle Studio — a personal workspace for your files"
 publish = false
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 gpui = "0.2.2"
 chrono = "0.4"
 # Parallel fuzzy scoring of the in-memory file index.
