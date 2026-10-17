@@ -74,7 +74,6 @@ impl Render for About {
                         .on_click(|_, _, _| resource("Credits.txt", "CREDITS.txt")))
                     .child(div().id("about-licenses").cursor_pointer().text_color(rgb(t.accent)).child("Licenses")
                         .on_click(|_, _, _| resource("Licenses", "LICENSE")))))
-            .child(div().flex_1())
             .child(div().flex_none().flex().justify_end()
                 .child(div().id("about-close").h(px(28.)).px_4().flex().items_center().rounded_md().cursor_pointer()
                     .bg(rgb(t.surface)).border_1().border_color(rgb(t.border)).hover(|d| d.bg(rgb(t.hover))).child("Close")
@@ -89,11 +88,11 @@ pub(super) fn open_about(cx: &mut App) {
             return;
         }
     }
-    let bounds = Bounds::centered(None, size(px(520.), px(680.)), cx);
+    let bounds = Bounds::centered(None, size(px(520.), px(600.)), cx);
     let _ = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(460.), px(580.))),
+            window_min_size: Some(size(px(460.), px(500.))),
             titlebar: Some(TitlebarOptions {
                 title: Some("About Schnauz".into()),
                 ..Default::default()

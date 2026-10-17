@@ -2,6 +2,7 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShellEvent {
     Focused,
+    SshIntegration(String),
     WorkingDirectory(String),
     PromptReady,
     CommandStarted,
@@ -27,7 +28,9 @@ impl ShellParser {
                 (1, _) => self.state = 0,
                 (2, 7) | (3, b'\\') => {
                     if let Ok(payload) = std::str::from_utf8(&self.payload) {
-                        if let Some(url) = payload.strip_prefix("7;") {
+                        if let Some(event) = payload.strip_prefix("777;schnauz-ssh;") {
+                            events.push(ShellEvent::SshIntegration(event.to_owned()));
+                        } else if let Some(url) = payload.strip_prefix("7;") {
                             events.push(ShellEvent::WorkingDirectory(url.to_owned()));
                         } else if payload == "133;A" {
                             events.push(ShellEvent::PromptReady);
@@ -63,11 +66,12 @@ mod tests {
 
     #[test]
     fn fragmented_shell_events_survive_every_byte_boundary() {
-        let bytes = b"prompt\x1b]7;file://localhost/tmp/My%20Folder\x1b\\\x1b]133;A\x07command\x1b]133;C\x07";
+        let bytes = b"prompt\x1b]7;file://localhost/tmp/My%20Folder\x1b\\\x1b]133;A\x07command\x1b]133;C\x07\x1b]777;schnauz-ssh;ready;schnauz-ssh.ABC;2f746d70\x07";
         let expected = vec![
             ShellEvent::WorkingDirectory("file://localhost/tmp/My%20Folder".into()),
             ShellEvent::PromptReady,
             ShellEvent::CommandStarted,
+            ShellEvent::SshIntegration("ready;schnauz-ssh.ABC;2f746d70".into()),
         ];
         for split in 0..bytes.len() {
             let mut parser = ShellParser::default();

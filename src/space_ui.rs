@@ -10,7 +10,7 @@ struct Geometry {
 pub(super) struct State {
     id: u64,
     root: PathBuf,
-    pane: usize,
+    pub(super) pane: usize,
     cancel: Arc<AtomicBool>,
     tree: Option<Arc<Tree>>,
     view_root: usize,

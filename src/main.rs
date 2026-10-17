@@ -79,6 +79,7 @@ use entry_filter::EntryFilter;
 mod studio;
 mod clipboard_path;
 mod studio_terminal;
+mod ssh_sync;
 mod file_search;
 mod search_ui;
 mod space_map;
@@ -4607,6 +4608,7 @@ impl Shuffle {
             form.name.trim().to_string()
         };
         let server = SftpServer {
+            control_path: None,
             name,
             host,
             user: form.user.trim().to_string(),
@@ -7254,7 +7256,10 @@ impl Shuffle {
     /// Open a new tab in `pane`, starting in that pane's current directory.
     fn new_tab_in(&mut self, pane: usize, cx: &mut Context<Self>) {
         if self.palette_open && self.file_search.inline { self.close_palette(cx); }
-        let dir = self.tab(pane).current_dir.clone();
+        let tab = self.tab(pane);
+        let origin = tab.remote.as_ref().and_then(|_| tab.terminal.as_ref())
+            .and_then(|s| s.ssh.as_ref()).map(|s| s.origin().to_path_buf());
+        let dir = origin.unwrap_or_else(|| tab.current_dir.clone());
         let p = self.pane_mut(pane);
         p.tabs.push(Tab::new(dir));
         p.active = p.tabs.len() - 1;
@@ -7332,7 +7337,7 @@ impl Shuffle {
         cx.notify();
         self.prewarm_icons(cx);
         // If this tab only got the fast pass, finish loading its metadata.
-        if self.tab(pane).entries.iter().any(|e| !e.loaded) {
+        if self.tab(pane).entries.is_empty() || self.tab(pane).entries.iter().any(|e| !e.loaded) {
             self.reload_pane(pane, cx);
         }
     }
@@ -8858,6 +8863,7 @@ impl Shuffle {
                 .child(div().min_w_0().overflow_hidden().child(label))
                 // Clicking the row (name/icon) opens the folder in the pane.
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.unsync_ssh_browser(this.active_pane, cx);
                     this.navigate_to(nav_target.clone(), cx);
                 }));
             out.push(row.into_any_element());
@@ -10534,6 +10540,7 @@ fn push_bookmark_nav(
         active,
         collapsed,
         cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.unsync_ssh_browser(this.active_pane, cx);
             if nav_target.is_dir() {
                 this.navigate_to(nav_target.clone(), cx);
             } else {
@@ -10581,6 +10588,7 @@ fn push_group_member(
         active,
         collapsed,
         cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.unsync_ssh_browser(this.active_pane, cx);
             if nav_target.is_dir() {
                 this.navigate_to(nav_target.clone(), cx);
             } else {
@@ -12224,6 +12232,9 @@ fn pretty_cloud_name(raw: &str) -> String {
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 struct SftpServer {
+    /// Live terminal transport; never persisted as a saved project connection.
+    #[serde(skip)]
+    control_path: Option<PathBuf>,
     /// Display label in the sidebar.
     name: String,
     /// Hostname or a `~/.ssh/config` alias.
@@ -12513,6 +12524,7 @@ fn parse_sftp_url(s: &str) -> Option<SftpServer> {
         return None;
     }
     Some(SftpServer {
+        control_path: None,
         name: host.clone(),
         host,
         user,
@@ -12550,6 +12562,7 @@ fn apply_sftp_servers(list: Vec<SftpServer>, cx: &mut App) {
 /// A per-server socket path for SSH connection multiplexing (ControlMaster), so
 /// repeated listings/transfers reuse one authenticated connection.
 fn ssh_control_path(s: &SftpServer) -> PathBuf {
+    if let Some(path) = &s.control_path { return path.clone(); }
     // Unix socket paths are capped near 104 bytes, so we can't use macOS's long
     // per-user temp dir (/var/folders/…/T). A short, stable /tmp name keyed by a
     // hash of the target stays well under the limit.
@@ -12564,6 +12577,13 @@ fn ssh_control_path(s: &SftpServer) -> PathBuf {
 /// keys, and an explicit key when in "configure in-app" mode.
 fn ssh_options(s: &SftpServer, use_system: bool) -> Vec<String> {
     let cp = ssh_control_path(s);
+    if s.control_path.is_some() {
+        // Reuse only the authenticated live terminal transport. If it vanishes,
+        // fail closed instead of reconnecting with different keys or prompts.
+        return vec!["-o".into(), format!("ControlPath={}", cp.display()),
+            "-o".into(), "ControlMaster=no".into(), "-o".into(), "BatchMode=yes".into(),
+            "-o".into(), "ProxyCommand=false".into(), "-o".into(), "StrictHostKeyChecking=yes".into()];
+    }
     let mut o = vec![
         "-o".into(),
         format!("ControlPath={}", cp.to_string_lossy()),
@@ -12681,10 +12701,24 @@ fn sftp_home(server: &SftpServer, use_system: bool) -> Result<String, String> {
     Ok("/".to_string())
 }
 
+/// A literal SFTP glob argument. Batch commands are line-oriented, so reject
+/// line breaks rather than allowing a remote cwd to become another command.
+fn sftp_path_arg(path: &str) -> Result<String, String> {
+    if path.contains(['\0', '\r', '\n']) { return Err("SFTP cannot browse a path containing line breaks or NUL bytes.".into()); }
+    // OpenSSH treats wildcard characters inside quotes literally. Escaping
+    // them again would introduce literal backslashes into the remote path.
+    let mut quoted = String::from("\"");
+    for ch in path.chars() {
+        if matches!(ch, '\\' | '"') { quoted.push('\\'); }
+        quoted.push(ch);
+    }
+    quoted.push('"');
+    Ok(quoted)
+}
+
 /// List a remote directory, returning entries parsed from sftp's `ls -l`.
 fn sftp_list(server: &SftpServer, path: &str, use_system: bool) -> Result<Vec<Entry>, String> {
-    // Quote the path so spaces work; sftp treats the argument as a glob-free path.
-    let script = format!("ls -la \"{}\"", path.replace('"', ""));
+    let script = format!("ls -la {}", sftp_path_arg(path)?);
     let out = sftp_batch(server, &script, use_system)?;
     Ok(parse_sftp_ls(&out))
 }
@@ -12792,6 +12826,7 @@ fn load_sftp_servers() -> Vec<SftpServer> {
                     continue;
                 }
                 out.push(SftpServer {
+                    control_path: None,
                     name: f[0].to_string(),
                     host: f.get(1).unwrap_or(&"").to_string(),
                     user: f.get(2).unwrap_or(&"").to_string(),
@@ -14341,6 +14376,7 @@ fn main() {
             .unwrap_or((hostport.to_string(), 0));
         let password = args.get(4).cloned();
         let srv = SftpServer {
+            control_path: None,
             name: host.clone(),
             host,
             user: user.to_string(),
@@ -14382,6 +14418,7 @@ fn main() {
             .unwrap_or((hostport.to_string(), 0));
         let password = args.get(4).cloned();
         let srv = SftpServer {
+            control_path: None,
             name: host.clone(),
             host,
             user: user.to_string(),

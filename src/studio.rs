@@ -280,7 +280,10 @@ impl Shuffle {
             let mut tabs = Vec::new();
             let mut active = 0;
             for (tab_index, tab) in pane.tabs.iter().enumerate() {
-                if tab.remote.is_none() {
+                if tab.remote.is_some() && tab.terminal.as_ref().and_then(|s| s.ssh.as_ref()).is_some() {
+                    if tab_index <= pane.active { active = tabs.len(); }
+                    tabs.push(tab.terminal.as_ref().unwrap().ssh.as_ref().unwrap().saved_local());
+                } else if tab.remote.is_none() {
                     if tab_index <= pane.active {
                         active = tabs.len();
                     }

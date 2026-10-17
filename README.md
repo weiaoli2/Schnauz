@@ -53,6 +53,23 @@ with a suggested USD 2.50 amount; the user completes any payment on PayPal.
   block recovery. A restart clears scrollback, shell variables and unfinished input.
 - The existing native file browser, file operations and Mac integrations.
 
+**SSH folder following:** start a new integrated terminal and use normal
+`ssh host` (including SSH aliases, keys, ports and jump hosts). On remote Bash or
+Zsh, the browser above follows the remote shell's folder, using SFTP over the same
+authenticated connection. The breadcrumb and terminal header identify the server.
+This is **terminal → browser only**; browsing never sends commands or keypresses
+into SSH. Click **Synced** to detach and return to the original Mac folder without
+ending SSH or a remote CLI; click **Unsynced** to follow again. SSH exit returns
+the browser to local browsing; an already detached local folder stays as chosen.
+Remote prompt integration uses a private temporary folder for that session and
+leaves remote dotfiles unchanged. The server must allow SFTP. Existing terminal
+sessions need a fresh shell to load the new integration. Commands (`ssh host cmd`),
+tunnels, custom RemoteCommand sessions and user-defined `ssh` functions use their
+normal behavior. `command ssh …` explicitly bypasses integration. Nested SSH,
+existing tmux sessions and other remote shells do not automatically report folders.
+The authenticated transport is not reused after its SSH session ends. SFTP
+listings reject paths containing line breaks instead of interpreting extra commands.
+
 The top search bar defaults to **Current Folder + File**. Current Folder includes
 subfolders; Drive searches the containing volume. Names match literal parts without
 fuzzy guesses, ignoring case. Spaces mean AND: `test .txt` requires `test` in the
@@ -200,7 +217,8 @@ disposable test folders.
 - `src/mascot.rs`: native sitting/running Schnauz animation and stop control
 - `src/file_search.rs`, `src/search_ui.rs`: scoped name/content search and its toolbar
 - `src/space_map.rs`, `src/space_ui.rs`: explicit folder scans and interactive size map
-- `src/studio_terminal.rs`, `src/terminal-shell/`: PTY sessions and folder synchronization
+- `src/studio_terminal.rs`, `src/terminal-shell/`: PTY sessions and shell integration
+- `src/ssh_sync.rs`: connection-bound SSH folder following and return to local browsing
 - `src/main.rs`: the existing GPUI file browser and file operations
 - `scripts/package_icon.sh`: package the Schnauzer artwork as a Mac app icon
 

@@ -25,6 +25,7 @@ struct Process {
     killer: Box<dyn ChildKiller + Send + Sync>,
     exited: Arc<AtomicBool>,
     request_file: PathBuf,
+    ssh_request: PathBuf,
     shell_pid: Option<u32>,
 }
 impl Process {
@@ -93,6 +94,7 @@ impl Drop for Process {
             let _ = self.killer.kill();
         }
         let _ = fs::remove_file(&self.request_file);
+        let _ = fs::remove_file(&self.ssh_request);
     }
 }
 
@@ -108,6 +110,8 @@ fn spawn_process(
         (".zshenv", include_str!("terminal-shell/zshenv")),
         (".zprofile", include_str!("terminal-shell/zprofile")),
         (".zshrc", include_str!("terminal-shell/zshrc")),
+        ("ssh.zsh", include_str!("terminal-shell/ssh.zsh")),
+        ("ssh-bootstrap.sh", include_str!("terminal-shell/ssh-bootstrap.sh")),
     ] {
         crate::projects::atomic_write(&integration.join(name), source.as_bytes())
             .map_err(|e| e.to_string())?;
@@ -117,6 +121,7 @@ fn spawn_process(
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&requests, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
     let request_file = requests.join(format!("{}-{id}.cwd", std::process::id()));
+    let ssh_request = requests.join(format!("{}-{id}.ssh", std::process::id()));
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: 18,
@@ -138,6 +143,7 @@ fn spawn_process(
         std::env::var_os("ZDOTDIR").unwrap_or_else(|| home_dir().into_os_string()),
     );
     command.env("SHUFFLE_STUDIO_CWD_REQUEST", &request_file);
+    command.env("SHUFFLE_STUDIO_SSH_REQUEST", &ssh_request);
     command.env(
         "SHUFFLE_STUDIO_TEST_SHELL",
         if test_shell { "1" } else { "0" },
@@ -169,6 +175,7 @@ fn spawn_process(
             killer,
             exited,
             request_file,
+            ssh_request,
             shell_pid,
         },
         reader,
@@ -205,8 +212,11 @@ pub(super) struct Session {
     guard: ForegroundSync,
     pub pending: Option<PathBuf>,
     process: Process,
+    pub ssh: Option<crate::ssh_sync::Link>,
 }
 impl Session {
+    pub(super) fn ssh_record(&self) -> &Path { &self.process.ssh_request }
+    pub(super) fn browser_moved_during_ssh(&mut self) { self.guard.browser_moved = true; }
     fn exited(&self) -> bool {
         self.process.exited.load(Ordering::Acquire)
     }
@@ -244,7 +254,7 @@ impl Session {
 impl Shuffle {
     pub(super) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pane = self.active_pane;
-        if self.tab(pane).remote.is_some() {
+        if self.tab(pane).remote.is_some() && self.tab(pane).terminal.is_none() {
             self.set_notice(
                 "Open a local folder to start its terminal. You can run ssh inside the terminal."
                     .into(),
@@ -350,6 +360,7 @@ impl Shuffle {
             guard: ForegroundSync::default(),
             pending: None,
             process,
+            ssh: None,
         });
         self.tab_mut(pane).terminal_open = true;
         true
@@ -385,6 +396,7 @@ impl Shuffle {
 
     pub(super) fn sync_terminal_directory(&mut self, pane: usize) {
         let tab = self.tab_mut(pane);
+        if tab.terminal.as_ref().is_some_and(|s| s.ssh.is_some()) { return; }
         if tab.terminal_open && tab.remote.is_none() {
             if let Some(session) = tab.terminal.as_mut() {
                 session.request_directory(tab.current_dir.clone());
@@ -393,6 +405,10 @@ impl Shuffle {
     }
 
     fn terminal_shell_event(&mut self, id: u64, event: &ShellEvent, cx: &mut Context<Self>) {
+        if let ShellEvent::SshIntegration(payload) = event {
+            self.ssh_shell_event(id, payload, cx);
+            return;
+        }
         let target = self.panes.iter().enumerate().find_map(|(p, pane)| {
             pane.tabs.iter().enumerate().find_map(|(t, tab)| {
                 tab.terminal
@@ -409,7 +425,9 @@ impl Shuffle {
                     let Some(session) = tab.terminal.as_mut().filter(|s| s.id == id) else {
                         continue;
                     };
+                    if session.ssh.is_some() { return; }
                     match event {
+                        ShellEvent::SshIntegration(_) => unreachable!(),
                         ShellEvent::WorkingDirectory(url) => {
                             if let Some(folder) =
                                 crate::clipboard_path::parse_path(url, &home_dir())
@@ -463,7 +481,12 @@ impl Shuffle {
         };
         let tab = &mut self.panes[pane].tabs[tab_index];
         let session = tab.terminal.as_mut().unwrap();
+        if session.ssh.is_some() {
+            if matches!(event, ShellEvent::Focused) { self.active_pane = pane; }
+            cx.notify(); return;
+        }
         match event {
+            ShellEvent::SshIntegration(_) => unreachable!(),
             ShellEvent::Focused => {
                 self.active_pane = pane;
             }
@@ -542,7 +565,15 @@ impl Shuffle {
         }
         let session = tab.terminal.as_ref()?;
         let t = theme();
-        let synced = session.cwd == tab.current_dir && session.pending.is_none();
+        let ssh = session.ssh.as_ref();
+        let synced = if let Some(link) = ssh {
+            link.following && link.folder.as_ref() == Some(&tab.current_dir) && tab.remote.as_ref() == Some(&link.server)
+        } else { session.cwd == tab.current_dir && session.pending.is_none() };
+        let sync_tip = if ssh.is_some() {
+            "Click to toggle SSH folder following. Unsync shows your original local folder; SSH keeps running."
+        } else { "Restart in this folder when idle. Clears scrollback, shell variables and unfinished input." };
+        let terminal_path = ssh.map(|link| format!("{}:{}", link.server.name, link.folder.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "connecting…".into())))
+            .unwrap_or_else(|| display_path(&session.cwd));
         let label = if session.exited() {
             "Session ended"
         } else if synced {
@@ -594,24 +625,27 @@ impl Shuffle {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .child(display_path(&session.cwd)),
+                                .child(terminal_path),
                         )
                         .child(
                             div()
                                 .id(("terminal-sync", pane))
                                 .text_color(rgb(if synced { 0x83d7ac } else { 0xf0c577 }))
                                 .child(label)
-                                .when(!synced && !session.exited(), |d| {
+                                .when((ssh.is_some() || !synced) && !session.exited(), |d| {
                                     d.cursor_pointer()
                                         .hover(|s| s.text_color(rgb(0xffffff)))
-                                        .tooltip(tip("Restart in this folder when idle. Clears scrollback, shell variables and unfinished input."))
+                                        .tooltip(tip(sync_tip))
                                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                                             cx.stop_propagation();
-                                            this.recover_terminal(pane, window, cx);
+                                            if this.tab(pane).terminal.as_ref().is_some_and(|s| s.ssh.is_some()) {
+                                                this.toggle_ssh_follow(pane, cx);
+                                            } else { this.recover_terminal(pane, window, cx); }
                                         }))
                                 }),
                         )
-                        .when(session.guard.running, |d| d.child("· Folder sync paused"))
+                        .when(ssh.is_none() && session.guard.running, |d| d.child("· Folder sync paused"))
+                        .when(ssh.is_some(), |d| d.child("· SSH → browser"))
                         .child(
                             div()
                                 .id(("terminal-hide", pane))
@@ -648,6 +682,7 @@ mod tests {
         rx: mpsc::Receiver<Vec<u8>>,
         parser: gpui_terminal::shell::ShellParser,
         output: Vec<u8>,
+        events: Vec<ShellEvent>,
         cwd: Option<PathBuf>,
     }
     impl Probe {
@@ -667,6 +702,7 @@ mod tests {
                 rx,
                 parser: Default::default(),
                 output: Vec::new(),
+                events: Vec::new(),
                 cwd: None,
             }
         }
@@ -677,13 +713,14 @@ mod tests {
                 let bytes = self
                     .rx
                     .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                    .expect("terminal did not reach the expected state");
+                    .unwrap_or_else(|error| panic!("terminal did not reach the expected state: {error}; output: {}", String::from_utf8_lossy(&self.output)));
                 let received = self.parser.feed(&bytes);
                 for event in &received {
                     if let ShellEvent::WorkingDirectory(url) = event {
                         self.cwd = crate::clipboard_path::parse_path(url, &home_dir());
                     }
                 }
+                self.events.extend(received.iter().cloned());
                 events.extend(received);
                 self.output.extend(bytes);
                 if condition(&events, &String::from_utf8_lossy(&self.output)) {
@@ -716,6 +753,68 @@ mod tests {
         // A later explicit shell cd can follow the terminal normally.
         guard.started();
         assert!(guard.prompt_ready());
+    }
+
+    #[test]
+    fn ssh_wrapper_reports_remote_folders_and_preserves_the_live_remote_cli() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = crate::tests::scratch("ssh-terminal");
+        let bin = root.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let fake_ssh = bin.join("ssh");
+        fs::write(&fake_ssh, r#"#!/bin/sh
+if [ "$1" = -G ]; then
+  printf 'hostname test.invalid\nuser tester\nport 2222\nremotecommand none\nsessiontype default\n'
+  exit 0
+fi
+remote=''
+for arg in "$@"; do
+  case "$arg" in RemoteCommand=*) remote=${arg#RemoteCommand=} ;; esac
+done
+if [ -z "$remote" ]; then printf 'NORMAL_SSH_PASSTHROUGH\n'; exit 0; fi
+# Simulate OpenSSH's documented %% expansion without making a network connection.
+remote=$(printf '%s' "$remote" | sed 's/%%/%/g')
+SNZ_SSH_TEST_SHELL=1 SHELL="$SNZ_SSH_TEST_REMOTE_SHELL" /bin/sh -c "$remote"
+"#).unwrap();
+        fs::set_permissions(&fake_ssh, fs::Permissions::from_mode(0o755)).unwrap();
+        let destination = root.join("Remote 'quoted' $name 素材 #?%;folder");
+        fs::create_dir(&destination).unwrap();
+        for shell in ["/bin/bash", "/bin/zsh"] {
+            let mut probe = Probe::start(&root, &root.join(if shell.ends_with("bash") {"bash-profile"} else {"zsh-profile"}));
+            probe.ready();
+            probe.command(&format!("export PATH={}:$PATH SNZ_SSH_TEST_REMOTE_SHELL={shell}", shell_quote(&bin.to_string_lossy())));
+            probe.events.clear();
+            probe.output.clear();
+            probe.process.input(b"ssh -p 2222 test-alias\r").unwrap();
+            probe.wait(|events, _| events.iter().any(|e| matches!(e, ShellEvent::SshIntegration(p) if matches!(crate::ssh_sync::parse(p), Some(crate::ssh_sync::Event::Ready(_, _))))));
+            assert!(probe.process.has_foreground_app());
+            assert!(probe.events.iter().any(|e| matches!(e, ShellEvent::SshIntegration(p) if p.starts_with("start;"))));
+            assert!(probe.process.ssh_request.is_file());
+            probe.output.clear();
+            probe.events.clear();
+            probe.process.input(format!("cd -- {}\r", shell_quote(&destination.to_string_lossy())).as_bytes()).unwrap();
+            probe.wait(|events, _| events.iter().any(|e| matches!(e, ShellEvent::SshIntegration(p) if matches!(crate::ssh_sync::parse(p), Some(crate::ssh_sync::Event::Ready(_, folder)) if folder == destination))));
+            // A live remote CLI still owns the terminal; browsing must never
+            // inject the local directory-change widget into it.
+            probe.process.input(b"/usr/bin/vim -Nu NONE -n -i NONE ssh-test.txt\r").unwrap();
+            probe.wait(|_, text| text.contains("\x1b[?1049h"));
+            assert_eq!(probe.process.change_directory(&root).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+            probe.process.input(b"iSSH editor survived\x1b:wq\r").unwrap();
+            probe.wait(|events, _| events.iter().any(|e| matches!(e, ShellEvent::SshIntegration(p) if p.starts_with("ready;"))));
+            assert_eq!(fs::read_to_string(destination.join("ssh-test.txt")).unwrap(), "SSH editor survived\n");
+            fs::remove_file(destination.join("ssh-test.txt")).unwrap();
+            probe.events.clear();
+            probe.output.clear();
+            probe.process.input(b"exit\r").unwrap();
+            probe.wait(|events, _| events.contains(&ShellEvent::PromptReady));
+            assert!(probe.events.iter().any(|e| matches!(e, ShellEvent::SshIntegration(p) if p.starts_with("end;"))));
+            assert!(!probe.process.ssh_request.exists());
+            assert!(probe.process.is_idle_shell());
+            probe.command("ssh test-alias printf hello");
+            assert!(String::from_utf8_lossy(&probe.output).contains("NORMAL_SSH_PASSTHROUGH"));
+            drop(probe);
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -126,3 +126,28 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   views below GPUI headers and inside the scroll viewport; hide during app modals.
 - Dates use NSDateFormatter and current macOS locale, time zone and hour cycle.
   Never hard-code English or AM/PM; reuse a cached formatter rather than per-row I/O.
+
+- Normal interactive SSH from a new integrated local zsh terminal can follow
+  remote Bash/Zsh folders in the same browser tab. This is terminal → browser only;
+  never inject commands or directory-change keys into SSH. Clicking Synced
+  detaches the view and restores the original local folder/layout while SSH and
+  remote CLIs stay running. Click Unsynced to follow SSH again. SSH exit restores
+  local browsing unless the user already detached and chose another local folder.
+  Only our private local launch record can authorize a remote host/control socket.
+  Use the live authenticated SSH mux only, with no reconnect/auth fallback. Remote
+  prompt hooks are session-local temporary files; never modify remote dotfiles.
+  Commands, tunnels, custom RemoteCommand and user-defined ssh functions retain
+  normal behavior. Remote SFTP paths must quote glob characters and reject line
+  breaks/NUL before generating a batch command. Preserve original local tabs in
+  saved projects while the browser temporarily follows SSH.
+- About is 520×600 pt, with content following naturally and no flexible blank
+  spacer above Close. Preserve scrolling for small windows.
+- Next release workflow requested: Oliver checks the current SSH/About build
+  first. After that review, publish this project to his Gitea at 192.168.1.8,
+  prepare a 0.5 release candidate, and install the release app in Applications.
+  Do not publish before his review or restart live terminals to install a build.
+
+- Future idea under discussion (not yet approved for implementation): link each
+  Schnauz project to a Todoist project; a right-hand Tasks pane shows its tasks,
+  offers completion and quick-add scoped to that Todoist project, and follows
+  Schnauz project switching. Optional later action: create a task from a file.

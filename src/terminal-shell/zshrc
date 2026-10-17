@@ -49,3 +49,5 @@ done
 if [[ "$SHUFFLE_STUDIO_TEST_SHELL" == 1 ]]; then
   export ZDOTDIR="$SHUFFLE_STUDIO_INTEGRATION_DIR"
 fi
+
+source "$SHUFFLE_STUDIO_INTEGRATION_DIR/ssh.zsh"

@@ -238,6 +238,7 @@ impl Shuffle {
                         return;
                     }
                     let pane = this.active_pane;
+                this.unsync_ssh_browser(pane, cx);
                     let is_dir = nav.is_dir();
                     let folder = if is_dir {
                         nav.clone()
