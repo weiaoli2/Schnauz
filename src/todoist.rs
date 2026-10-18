@@ -159,7 +159,7 @@ pub(super) fn outline(data: &Snapshot) -> Vec<Row> {
                     && t.parent_id.as_deref().is_none_or(|p| !ids.contains(p))
             })
             .collect();
-        if !roots.is_empty() || section.is_some() {
+        if section.is_some() {
             rows.push(Row::Section(name));
         }
         for i in roots {
@@ -183,6 +183,7 @@ pub(super) struct Request {
     request_id: Option<String>,
     expected_updated: Option<String>,
     allow_create: bool,
+    interactive: bool,
     palette: HashMap<String, u32>,
 }
 impl Request {
@@ -197,8 +198,17 @@ impl Request {
             request_id: None,
             expected_updated: None,
             allow_create: false,
-            palette: [("bg", theme().bg), ("sidebar", theme().sidebar), ("text", theme().text), ("accent", theme().accent), ("border", theme().border)]
-                .into_iter().map(|(name, color)| (name.to_string(), color)).collect(),
+            interactive: matches!(operation, "connect" | "disconnect" | "add"),
+            palette: [
+                ("bg", theme().bg),
+                ("sidebar", theme().sidebar),
+                ("text", theme().text),
+                ("accent", theme().accent),
+                ("border", theme().border),
+            ]
+            .into_iter()
+            .map(|(name, color)| (name.to_string(), color))
+            .collect(),
         }
     }
     fn linked(operation: &str, link: &projects::TodoistLink) -> Self {
@@ -220,12 +230,33 @@ pub(super) struct Response {
     pub project: Option<Project>,
     pub snapshot: Option<Snapshot>,
     pub task: Option<TaskItem>,
+    #[serde(skip)]
+    rows: Option<Vec<Row>>,
     pub retry_after: Option<u64>,
 }
 pub(super) fn request_id() -> String {
     objc2_foundation::NSUUID::UUID().UUIDString().to_string()
 }
-fn run(request: Request) -> Response {
+// Waiting for a native process must never occupy GPUI's shared background pool.
+async fn run(request: Request) -> Response {
+    let (send, receive) = futures::channel::oneshot::channel();
+    let worker = std::thread::Builder::new()
+        .name("schnauz-todoist".into())
+        .spawn(move || {
+            let _ = send.send(run_blocking(request));
+        });
+    if worker.is_err() {
+        return Response {
+            message: "Could not start Todoist in the background.".into(),
+            ..Response::default()
+        };
+    }
+    receive.await.unwrap_or_else(|_| Response {
+        message: "Todoist stopped unexpectedly.".into(),
+        ..Response::default()
+    })
+}
+fn run_blocking(request: Request) -> Response {
     let result = (|| -> Result<Response, ()> {
         use std::io::Write;
         let helper = std::env::current_exe()
@@ -249,7 +280,9 @@ fn run(request: Request) -> Response {
             return Err(());
         }
         let output = child.wait_with_output().map_err(|_| ())?;
-        serde_json::from_slice(&output.stdout).map_err(|_| ())
+        let mut response: Response = serde_json::from_slice(&output.stdout).map_err(|_| ())?;
+        response.rows = response.snapshot.as_ref().map(outline);
+        Ok(response)
     })();
     result.unwrap_or_else(|_| Response { message: "The Todoist helper is unavailable or stopped unexpectedly. Your existing tasks have been kept.".into(), ..Response::default() })
 }
@@ -271,7 +304,7 @@ pub(super) fn account_action<T: 'static>(operation: &str, cx: &mut Context<T>) {
     global.notice = Some("Todoist: working…".into());
     cx.set_global(global);
     cx.spawn(async move |_, cx| {
-        let response = cx.background_spawn(async move { run(request) }).await;
+        let response = run(request).await;
         let _ = cx.update(|cx| {
             let mut global = cx.global::<Global>().clone();
             global.busy = false;
@@ -315,9 +348,26 @@ pub(super) struct Cache {
     pub refresh_after: bool,
 }
 impl Cache {
+    fn record_created(&mut self, task: TaskItem, link: &projects::TodoistLink) {
+        if task.project_id != link.project_id {
+            return;
+        }
+        let data = self.data.get_or_insert_with(|| Snapshot {
+            project: Project {
+                id: link.project_id.clone(),
+                name: link.project_name.clone(),
+            },
+            tasks: Vec::new(),
+            sections: Vec::new(),
+        });
+        data.tasks.retain(|old| old.id != task.id);
+        data.tasks.push(task);
+        self.rows = outline(data);
+        self.error = None;
+    }
     /// A write may finish while an older read is in flight. Discard that read
     /// and request a fresh snapshot rather than making old tasks look current.
-    fn finish_read(&mut self, response: Response, project_id: &str) -> bool {
+    pub(super) fn finish_read(&mut self, response: Response, project_id: &str) -> bool {
         self.busy = false;
         if std::mem::take(&mut self.refresh_after) {
             self.good_at = None;
@@ -329,7 +379,7 @@ impl Cache {
             if let Some(data) = response.snapshot.filter(|s| {
                 s.project.id == project_id && s.tasks.iter().all(|t| t.project_id == project_id)
             }) {
-                self.rows = outline(&data);
+                self.rows = response.rows.unwrap_or_else(|| outline(&data));
                 self.data = Some(data);
                 self.good_at = Some(Instant::now());
                 self.error = None;
@@ -368,7 +418,9 @@ impl State {
         let changed = self.revision != global.revision;
         let requested = self.tasks_request != global.tasks_request && global.account.is_some();
         self.tasks_request = global.tasks_request;
-        if global.account.is_none() { self.open = false; }
+        if global.account.is_none() {
+            self.open = false;
+        }
         if changed {
             self.caches.clear();
             self.attempted.clear();
@@ -446,7 +498,7 @@ impl Schnauz {
         let request = Request::linked("snapshot", &link);
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let response = cx.background_spawn(async move { run(request) }).await;
+            let response = run(request).await;
             let _ = this.update(cx, |this, cx| {
                 if cx.global::<Global>().revision != revision {
                     return;
@@ -519,11 +571,12 @@ impl Schnauz {
         let mut request = Request::account("ensure-project", Some(account.id.clone()));
         request.project_name = Some(name.clone());
         request.allow_create = intent.is_some();
+        request.interactive = create;
         request.request_id = intent.clone();
         let revision = cx.global::<Global>().revision;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let response = cx.background_spawn(async move { run(request) }).await;
+            let response = run(request).await;
             let _ = this.update(cx, |this, cx| {
                 if cx.global::<Global>().revision != revision {
                     return;
@@ -615,7 +668,7 @@ impl Schnauz {
         let revision = cx.global::<Global>().revision;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let response = cx.background_spawn(async move { run(request) }).await;
+            let response = run(request).await;
             let _ = this.update(cx, |this, cx| {
                 if cx.global::<Global>().revision != revision {
                     return;
@@ -627,12 +680,8 @@ impl Schnauz {
                     }
                     let cache = this.todoist.caches.entry(key.clone()).or_default();
                     // A confirmed creation is visible immediately, before refresh.
-                    if let Some(task) = response.task.filter(|task| task.project_id == key.1) {
-                        if let Some(data) = &mut cache.data {
-                            data.tasks.retain(|old| old.id != task.id);
-                            data.tasks.push(task);
-                            cache.rows = outline(data);
-                        }
+                    if let Some(task) = response.task {
+                        cache.record_created(task, &link);
                     }
                     cache.refresh_after = cache.busy;
                     cache.good_at = None;
@@ -655,7 +704,9 @@ impl Schnauz {
         .detach();
     }
     pub(super) fn open_todoist(&mut self, cx: &mut Context<Self>) {
-        if cx.global::<Global>().account.is_none() { return; }
+        if cx.global::<Global>().account.is_none() {
+            return;
+        }
         self.dismiss_space_map |= self.space_map.is_some();
         self.todoist.open = true;
         self.todoist.scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -697,6 +748,37 @@ mod tests {
     fn snapshot(project: &str, tasks: serde_json::Value) -> Snapshot {
         serde_json::from_value(serde_json::json!({"project":{"id":project,"name":"Work"},"tasks":tasks,"sections":[{"id":"section-A","name":"Section","section_order":1}]})).unwrap()
     }
+    #[test]
+    fn confirmed_creation_is_visible_before_the_first_snapshot() {
+        let link = projects::TodoistLink {
+            account_id: "fixture".into(),
+            project_id: "A".into(),
+            project_name: "Work".into(),
+        };
+        let task: TaskItem = serde_json::from_value(
+            serde_json::json!({"id":"created","project_id":"A","content":"New task"}),
+        )
+        .unwrap();
+        let mut cache = Cache::default();
+        cache.record_created(task.clone(), &link);
+        cache.record_created(task, &link);
+        assert_eq!(cache.data.as_ref().unwrap().tasks.len(), 1);
+        assert_eq!(
+            cache
+                .rows
+                .iter()
+                .filter(|r| matches!(r, Row::Task(_, _)))
+                .count(),
+            1
+        );
+        let foreign: TaskItem = serde_json::from_value(
+            serde_json::json!({"id":"other","project_id":"B","content":"Other project"}),
+        )
+        .unwrap();
+        cache.record_created(foreign, &link);
+        assert_eq!(cache.data.as_ref().unwrap().tasks.len(), 1);
+    }
+
     #[test]
     fn delayed_reads_cannot_replace_post_write_state_and_failed_reads_keep_cached_tasks() {
         let old = snapshot(
@@ -785,9 +867,19 @@ mod tests {
     fn opening_tasks_preserves_cache_but_account_changes_discard_it() {
         let mut state = State::default();
         let key = ("account".to_string(), "A".to_string());
-        state.caches.insert(key.clone(), Cache { data: Some(snapshot("A", serde_json::json!([]))), ..Cache::default() });
+        state.caches.insert(
+            key.clone(),
+            Cache {
+                data: Some(snapshot("A", serde_json::json!([]))),
+                ..Cache::default()
+            },
+        );
         let mut global = Global {
-            account: Some(Account { id: "account".into(), user_id: "user".into(), name: "Test".into() }),
+            account: Some(Account {
+                id: "account".into(),
+                user_id: "user".into(),
+                name: "Test".into(),
+            }),
             tasks_request: 1,
             ..Global::default()
         };
@@ -799,7 +891,10 @@ mod tests {
         state.open = true;
         assert_eq!(state.observe_account(&global), (true, false));
         assert!(state.caches.is_empty());
-        assert!(!state.open, "Disconnect must close Tasks as well as hide its toolbar button");
+        assert!(
+            !state.open,
+            "Disconnect must close Tasks as well as hide its toolbar button"
+        );
     }
 
     #[test]

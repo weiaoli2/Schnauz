@@ -2,6 +2,19 @@
 use super::*;
 use projects::{Section, Shortcut};
 
+/// A small exit tolerance avoids native drag jitter at the sidebar boundary.
+pub(super) fn drop_hover(
+    bounds: Bounds<gpui::Pixels>,
+    position: gpui::Point<gpui::Pixels>,
+    already_inside: bool,
+) -> bool {
+    if already_inside {
+        bounds.dilate(px(2.)).contains(&position)
+    } else {
+        bounds.contains(&position)
+    }
+}
+
 pub(super) struct RemoteDrag {
     pub items: Vec<Shortcut>,
     pub position: gpui::Point<gpui::Pixels>,
@@ -31,6 +44,32 @@ fn fitted_width(content: f32, window_width: f32) -> f32 {
         .clamp(170., (window_width * 0.3).clamp(170., 320.))
 }
 
+/// Discard the obsolete collapse flag of the fixed Favourites heading.
+pub(super) fn restored_sections(saved: Vec<String>) -> HashSet<String> {
+    saved
+        .into_iter()
+        .filter(|title| title != "FAVOURITES")
+        .collect()
+}
+
+/// Only Common pins Home, including when its remaining folders are folded.
+fn shortcuts_in_section(
+    shortcuts: &[Shortcut],
+    kind: Section,
+    collapsed: bool,
+    pin_home: bool,
+) -> impl Iterator<Item = Shortcut> + '_ {
+    (pin_home && kind == Section::Folders)
+        .then(|| Shortcut::local(home_dir(), Section::Folders))
+        .into_iter()
+        .chain(
+            shortcuts
+                .iter()
+                .filter(move |s| !collapsed && s.kind == kind && !s.is_home())
+                .cloned(),
+        )
+}
+
 impl Schnauz {
     pub(super) fn activate_project_sidebar(&mut self, cx: &mut Context<Self>) {
         let servers = self.projects.sidebar().servers.clone();
@@ -50,6 +89,24 @@ impl Schnauz {
             Ok(()) if add => self.expand_favourites(),
             Err(error) => self.set_notice(error, cx),
             _ => {}
+        }
+        cx.notify();
+    }
+
+    pub(super) fn set_common_shortcut(
+        &mut self,
+        shortcut: Shortcut,
+        add: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let mut candidate = self.projects.clone();
+        candidate.set_common_shortcut(shortcut, add);
+        if let Err(error) = self.persist_library(candidate, cx) {
+            self.set_notice(error, cx);
+        }
+        if add {
+            self.collapsed_sections.remove("COMMON_FOLDERS");
+            self.collapsed_sections.remove("COMMON_FILES");
         }
         cx.notify();
     }
@@ -88,7 +145,13 @@ impl Schnauz {
                 .is_some_and(|s| s.contains(&shortcut))
         });
         let all_shortcut = shortcut.clone();
+        let shared = self.projects.common_contains(&shortcut);
+        let common_shortcut = shortcut.clone();
         let mut items = vec![
+            mi_check("Common · all projects", shared, move |this, _, cx| {
+                this.set_common_shortcut(common_shortcut.clone(), !shared, cx)
+            }),
+            MenuNode::Sep,
             mi_check("All projects", all, move |this, _, cx| {
                 this.share_project_shortcut(all_shortcut.clone(), &targets, !all, cx)
             }),
@@ -178,7 +241,7 @@ impl Schnauz {
     }
 
     fn expand_favourites(&mut self) {
-        for title in ["FAVOURITES", "FOLDERS", "FILES"] {
+        for title in ["FOLDERS", "FILES"] {
             self.collapsed_sections.remove(title);
         }
     }
@@ -186,6 +249,7 @@ impl Schnauz {
     pub(super) fn add_dropped_favourites(
         &mut self,
         project: Option<u64>,
+        common: bool,
         paths: Vec<PathBuf>,
         cx: &mut Context<Self>,
     ) {
@@ -206,7 +270,9 @@ impl Schnauz {
                         .collect::<Vec<_>>()
                 })
                 .await;
-            let _ = this.update(cx, |this, cx| this.add_favourites(project, shortcuts, cx));
+            let _ = this.update(cx, |this, cx| {
+                this.add_favourites(project, common, shortcuts, cx)
+            });
         })
         .detach();
     }
@@ -214,33 +280,54 @@ impl Schnauz {
     fn add_favourites(
         &mut self,
         project: Option<u64>,
+        common: bool,
         shortcuts: Vec<Shortcut>,
         cx: &mut Context<Self>,
     ) {
         let mut candidate = self.projects.clone();
-        let Some(sidebar) = candidate.sidebar_for_mut(project) else {
-            return;
-        };
-        let before = sidebar.shortcuts.len();
-        for shortcut in shortcuts {
-            sidebar.set_shortcut(shortcut, true);
+        let before;
+        let after;
+        if common {
+            before = candidate.common_shortcuts.len();
+            for shortcut in shortcuts {
+                candidate.set_common_shortcut(shortcut, true);
+            }
+            after = candidate.common_shortcuts.len();
+        } else {
+            let Some(sidebar) = candidate.sidebar_for_mut(project) else {
+                return;
+            };
+            before = sidebar.shortcuts.len();
+            for shortcut in shortcuts {
+                sidebar.set_shortcut(shortcut, true);
+            }
+            after = sidebar.shortcuts.len();
         }
-        let added = sidebar.shortcuts.len() - before;
+        let added = after - before;
         if candidate == self.projects {
             self.set_notice("No new favourites to add.".into(), cx);
         } else if let Err(error) = self.persist_library(candidate, cx) {
             self.set_notice(error, cx);
         } else {
-            if self.projects.active == project {
+            if common {
+                self.collapsed_sections.remove("COMMON_FOLDERS");
+                self.collapsed_sections.remove("COMMON_FILES");
+            } else if self.projects.active == project {
                 self.expand_favourites();
             }
             self.set_notice(
                 if added == 0 {
-                    "Favourites updated".into()
+                    if common {
+                        "Common updated"
+                    } else {
+                        "Favourites updated"
+                    }
+                    .into()
                 } else {
                     format!(
-                        "Added {added} favourite{}",
-                        if added == 1 { "" } else { "s" }
+                        "Added {added} item{} to {}",
+                        if added == 1 { "" } else { "s" },
+                        if common { "Common" } else { "Favourites" }
                     )
                 },
                 cx,
@@ -272,7 +359,11 @@ impl Schnauz {
                 .borrow()
                 .is_some_and(|bounds| bounds.contains(&position))
         {
-            self.add_favourites(self.projects.active, drag.items, cx);
+            let common = self
+                .common_bounds
+                .borrow()
+                .is_some_and(|bounds| bounds.contains(&position));
+            self.add_favourites(self.projects.active, common, drag.items, cx);
         }
         cx.notify();
     }
@@ -311,25 +402,74 @@ impl Schnauz {
         key: &mut usize,
         cx: &Context<Self>,
     ) {
-        items.push(self.section_header_el("FAVOURITES", None, cx));
-        if self.collapsed_sections.contains("FAVOURITES") {
-            return;
-        }
-        let home = Shortcut::local(home_dir(), Section::Folders);
-        for (kind, key_name, label) in [
-            (Section::Folders, "FOLDERS", "Folders"),
-            (Section::Files, "FILES", "Files"),
-        ] {
-            if kind != Section::Folders
-                && !self
-                    .projects
-                    .sidebar()
-                    .shortcuts
-                    .iter()
-                    .any(|s| s.kind == kind && !s.is_home())
+        self.shortcut_section(items, key, false, cx);
+    }
+    pub(super) fn common_section(&self, key: &mut usize, cx: &Context<Self>) -> AnyElement {
+        let mut rows = Vec::new();
+        self.shortcut_section(&mut rows, key, true, cx);
+        div()
+            .id("common-shortcuts")
+            .relative()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .children(rows)
+            .child(
+                gpui::canvas(
+                    {
+                        let store = self.common_bounds.clone();
+                        move |bounds, _, _| {
+                            *store.borrow_mut() = Some(bounds);
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .drag_over::<ExternalPaths>(|s, _, _, _| s.bg(Theme::alpha(theme().accent, 0x18)))
+            .on_drop(cx.listener(|this, drag: &ExternalPaths, _, cx| {
+                this.favourites_drop_hover = false;
+                this.common_drop_hover = false;
+                this.add_dropped_favourites(this.projects.active, true, drag.paths().to_vec(), cx);
+                cx.stop_propagation();
+            }))
+            .into_any_element()
+    }
+    fn shortcut_section(
+        &self,
+        items: &mut Vec<AnyElement>,
+        key: &mut usize,
+        common: bool,
+        cx: &Context<Self>,
+    ) {
+        let shortcuts = if common {
+            &self.projects.common_shortcuts
+        } else {
+            &self.projects.sidebar().shortcuts
+        };
+        items.push(
+            div()
+                .px_3()
+                .pt_4()
+                .pb_1()
+                .text_size(px(UI_SMALL_FONT_SIZE))
+                .text_color(rgb(theme().text_dim))
+                .child(if common { "COMMON" } else { "FAVOURITES" })
+                .into_any_element(),
+        );
+        for (kind, label) in [(Section::Folders, "Folders"), (Section::Files, "Files")] {
+            if !(common && kind == Section::Folders)
+                && !shortcuts.iter().any(|s| s.kind == kind && !s.is_home())
             {
                 continue;
             }
+            let key_name = match (common, kind) {
+                (true, Section::Folders) => "COMMON_FOLDERS",
+                (true, Section::Files) => "COMMON_FILES",
+                (false, Section::Folders) => "FOLDERS",
+                (false, Section::Files) => "FILES",
+            };
             items.push(
                 div()
                     .id(key_name)
@@ -346,20 +486,13 @@ impl Schnauz {
                     }))
                     .into_any_element(),
             );
-            if self.collapsed_sections.contains(key_name) {
-                continue;
-            }
-            if kind == Section::Folders {
-                self.project_shortcut_row(items, key, &home, cx);
-            }
-            for shortcut in self
-                .projects
-                .sidebar()
-                .shortcuts
-                .iter()
-                .filter(|s| s.kind == kind && !s.is_home())
-            {
-                self.project_shortcut_row(items, key, shortcut, cx);
+            for shortcut in shortcuts_in_section(
+                shortcuts,
+                kind,
+                self.collapsed_sections.contains(key_name),
+                common,
+            ) {
+                self.project_shortcut_row(items, key, &shortcut, common, cx);
             }
         }
     }
@@ -405,11 +538,16 @@ impl Schnauz {
         items: &mut Vec<AnyElement>,
         key: &mut usize,
         shortcut: &Shortcut,
+        common: bool,
         cx: &Context<Self>,
     ) {
         *key += 1;
         let nav = shortcut.clone();
-        let target = SidebarTarget::Favourite(shortcut.clone());
+        let target = if common {
+            SidebarTarget::Common(shortcut.clone())
+        } else {
+            SidebarTarget::Favourite(shortcut.clone())
+        };
         let same_server = match (&self.active_tab().remote, &shortcut.server) {
             (None, None) => true,
             (Some(a), Some(b)) => projects::same_server(a, b),
@@ -570,23 +708,21 @@ impl Schnauz {
                 width = width.max(text_width(window, &project.name, UI_FONT_SIZE) + 54.);
             }
         }
-        if !self.collapsed_sections.contains("FAVOURITES") {
-            width = width.max(
-                text_width(window, &path_label(&home_dir()), UI_FONT_SIZE)
-                    + text_width(window, "Home", 10.)
-                    + 65.,
-            );
-            for shortcut in self
-                .projects
-                .sidebar()
-                .shortcuts
-                .iter()
-                .filter(|s| !s.is_home())
-            {
-                let section = if shortcut.kind == Section::Folders {
-                    "FOLDERS"
-                } else {
-                    "FILES"
+        width = width.max(
+            text_width(window, &path_label(&home_dir()), UI_FONT_SIZE)
+                + text_width(window, "Home", 10.)
+                + 65.,
+        );
+        for (common, shortcuts) in [
+            (false, &self.projects.sidebar().shortcuts),
+            (true, &self.projects.common_shortcuts),
+        ] {
+            for shortcut in shortcuts.iter().filter(|s| !s.is_home()) {
+                let section = match (common, shortcut.kind) {
+                    (true, Section::Folders) => "COMMON_FOLDERS",
+                    (true, Section::Files) => "COMMON_FILES",
+                    (false, Section::Folders) => "FOLDERS",
+                    (false, Section::Files) => "FILES",
                 };
                 if !self.collapsed_sections.contains(section) {
                     width = width
@@ -609,6 +745,52 @@ impl Schnauz {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn common_pins_home_while_project_favourites_do_not_duplicate_it() {
+        let home = Shortcut::local(home_dir(), Section::Folders);
+        let mut library = projects::Library::default();
+        library.set_common_shortcut(
+            Shortcut::local(PathBuf::from("/shared"), Section::Folders),
+            true,
+        );
+        library.set_common_shortcut(
+            Shortcut::local(PathBuf::from("/shared.txt"), Section::Files),
+            true,
+        );
+        library.set_common_shortcut(home.clone(), true);
+        assert_eq!(library.common_shortcuts.len(), 4);
+        for collapsed in [false, true] {
+            let rows: Vec<_> =
+                shortcuts_in_section(&library.common_shortcuts, Section::Folders, collapsed, true)
+                    .collect();
+            assert_eq!(rows[0], home);
+            assert_eq!(rows.iter().filter(|s| s.is_home()).count(), 1);
+            assert!(shortcuts_in_section(
+                &library.sidebar().shortcuts,
+                Section::Folders,
+                collapsed,
+                false
+            )
+            .next()
+            .is_none());
+        }
+        let restored: projects::Library =
+            serde_json::from_str(&serde_json::to_string(&library).unwrap()).unwrap();
+        assert_eq!(restored.common_shortcuts, library.common_shortcuts);
+        assert!(restored.common_contains(&home));
+        assert!(!restored_sections(vec!["FAVOURITES".into()]).contains("FAVOURITES"));
+    }
+
+    #[test]
+    fn native_drag_hover_is_stable_at_sidebar_edges_and_clears_outside() {
+        let bounds = Bounds::new(point(px(0.), px(56.)), size(px(180.), px(500.)));
+        assert!(drop_hover(bounds, point(px(179.), px(100.)), false));
+        assert!(drop_hover(bounds, point(px(180.5), px(100.)), true));
+        assert!(!drop_hover(bounds, point(px(180.5), px(100.)), false));
+        assert!(!drop_hover(bounds, point(px(190.), px(100.)), true));
+        assert!(!drop_hover(bounds, point(px(100.), px(600.)), true));
+    }
+
     #[test]
     fn sidebar_fits_content_without_growing_over_the_browser() {
         assert_eq!(fitted_width(120., 1000.), 170.);

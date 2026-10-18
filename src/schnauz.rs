@@ -402,7 +402,7 @@ impl Schnauz {
                 self.project_dialog = None;
                 self.project_dialog_error = None;
                 self.collapsed_sections.remove("PROJECTS");
-                for title in ["FAVOURITES", "FOLDERS", "FILES"] { self.collapsed_sections.remove(title); }
+                for title in ["FOLDERS", "FILES"] { self.collapsed_sections.remove(title); }
                 self.open_todoist(cx);
                 cx.notify();
             }
@@ -591,6 +591,7 @@ impl Schnauz {
             .active
             .and_then(|id| self.projects.items.iter().find(|project| project.id == id));
         div()
+            .relative()
             .flex_none()
             .flex()
             .items_center()
@@ -606,12 +607,15 @@ impl Schnauz {
                 div()
                     .flex()
                     .flex_col()
-                    .w(px(96.0))
+                    .w(px(132.0))
                     .flex_none()
                     .child(
                         div().flex().items_center().gap_1()
                             .child(div().text_size(px(14.0)).font_weight(FontWeight::SEMIBOLD).child("Schnauz"))
-                            .child(self.render_search_mascot(cx)),
+                            .child(self.render_search_mascot(cx))
+                            .child(div().id("schnauz-version").text_size(px(9.)).text_color(Theme::alpha(t.text, 0x99))
+                                .tooltip(tip(format!("Schnauz {}", env!("CARGO_PKG_VERSION"))))
+                                .child(env!("CARGO_PKG_VERSION"))),
                     )
                     .child(
                         div()
@@ -900,36 +904,31 @@ impl Schnauz {
         } else {
             format!("{} selected · {count_label}", tab.selection.len())
         };
-        div()
-            .flex_none()
-            .h(px(30.0))
-            .flex()
-            .items_center()
-            .whitespace_nowrap()
-            .gap_3()
-            .px_4()
-            .bg(rgb(t.sidebar))
-            .border_t_1()
-            .border_color(rgb(t.border))
-            .text_size(px(11.0))
-            .text_color(rgb(t.text_muted))
-            .child(div().flex_none().size(px(6.0)).rounded_full().bg(rgb(t.accent)))
+        let status = self.notice.as_deref().map(|text| (text, false))
+            .or_else(|| self.remote_error.as_deref().map(|text| (text, true)))
+            .or_else(|| self.file_search.stopped.then_some(("Search stopped · Results may be incomplete", false)));
+        let left = div().flex_1().min_w_0().flex().items_center().gap_3().overflow_hidden()
+            .child(div().flex_none().size(px(6.)).rounded_full().bg(rgb(t.accent)))
             .child(div().flex_none().child(label))
-            .when(self.file_search.stopped, |bar| {
-                bar.child(
-                    div()
-                        .flex_none()
-                        .text_color(rgb(t.accent))
-                        .child("Search stopped · Results may be incomplete"),
-                )
-            })
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(display_path(&tab.current_dir)),
-            )
+            .child(div().id("footer-path").flex_1().min_w_0().truncate()
+                .tooltip(tip(display_path(&tab.current_dir)))
+                .child(display_path(&tab.current_dir)));
+        let middle = div().flex_1().min_w_0().flex().items_center().justify_center()
+            .children(status.map(|(text, dismiss_remote)| {
+                div().id("footer-status").flex().items_center().min_w_0().max_w_full()
+                    .h(px(21.)).px_2().gap_1().rounded_md()
+                    .bg(rgb(0x3478c5)).text_color(rgb(0xffffff))
+                    .tooltip(tip(text.to_string()))
+                    .child(div().min_w_0().truncate().child(text.to_string()))
+                    .when(dismiss_remote, |badge| badge.child(
+                        div().id("footer-remote-dismiss").flex_none().size(px(16.))
+                            .flex().items_center().justify_center().rounded_sm().cursor_pointer()
+                            .hover(|d| d.bg(rgba(0xffffff33))).child("×")
+                            .tooltip(tip("Dismiss connection error"))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| { this.remote_error = None; cx.notify(); }))
+                    ))
+            }));
+        let right = div().flex_1().min_w_0().flex().items_center().justify_end().gap_3()
             .child(
                 div()
                     .id("schnauz-theme")
@@ -970,6 +969,13 @@ impl Schnauz {
                     .child(ui_icon(Icon::Settings, 14., rgb(t.text_muted)))
                     .on_click(|_: &ClickEvent, _, cx: &mut App| open_settings_window(cx)),
             )
+            ;
+        div().relative().flex_none().h(px(30.)).flex().items_center().whitespace_nowrap()
+            .gap_3().px_4().overflow_hidden().bg(rgb(t.sidebar))
+            .border_t_1().border_color(rgb(t.border))
+            .text_size(px(11.)).text_color(rgb(t.text_muted))
+            .child(left).child(middle).child(right)
+            .children(ui_checks::probe("footer"))
             .into_any_element()
     }
 }

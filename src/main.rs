@@ -118,6 +118,7 @@ mod nextcloud;
 mod rename_ui;
 mod todoist;
 mod todoist_ui;
+mod ui_checks;
 use settings::*;
 use previews::*;
 use cache::Cache;
@@ -851,6 +852,7 @@ struct Group {
 /// What a right-click in the sidebar targeted (drives its context menu).
 #[derive(Clone)]
 enum SidebarTarget {
+    Common(projects::Shortcut),
     Project(u64),
     Favourite(projects::Shortcut),
     /// Empty sidebar space → offer "New Group".
@@ -1357,6 +1359,8 @@ struct Schnauz {
     favourites_drop_hover: bool,
     favourite_drag: Option<project_sidebar::RemoteDrag>,
     sidebar_bounds: Rc<RefCell<Option<Bounds<gpui::Pixels>>>>,
+    common_bounds: Rc<RefCell<Option<Bounds<gpui::Pixels>>>>,
+    common_drop_hover: bool,
     todoist: todoist::State,
     /// Open "Sort By" dropdown: (pane, x, y) in window coords.
     sort_menu: Option<(usize, f32, f32)>,
@@ -1617,7 +1621,7 @@ impl Schnauz {
             groups: load_groups(),
             sidebar_menu: None,
             group_dialog: None,
-            collapsed_sections: read_string_list("collapsed_sections.txt").into_iter().collect(),
+            collapsed_sections: project_sidebar::restored_sections(read_string_list("collapsed_sections.txt")),
             folder_views: cx.global::<FolderViewsGlobal>().0.clone(),
             resize: None,
             scroll_drag: None,
@@ -1654,6 +1658,8 @@ impl Schnauz {
             favourites_drop_hover: false,
             favourite_drag: None,
             sidebar_bounds: Rc::new(RefCell::new(None)),
+            common_bounds: Rc::new(RefCell::new(None)),
+            common_drop_hover: false,
             todoist: todoist::State::default(),
             sort_menu: None,
             confirm_delete: None,
@@ -3612,7 +3618,7 @@ impl Schnauz {
         .detach();
     }
 
-    /// Show a cloud status banner that clears itself after a few seconds.
+    /// Show a footer status message that clears itself after a few seconds.
     fn set_notice(&mut self, msg: String, cx: &mut Context<Self>) {
         self.set_notice_sticky(msg, cx);
         let gen_ = self.notice_gen;
@@ -3628,7 +3634,7 @@ impl Schnauz {
         .detach();
     }
 
-    /// Show a cloud status banner that stays until replaced (cancels any
+    /// Show a footer status message that stays until replaced (cancels any
     /// pending auto-dismiss of the previous one).
     fn set_notice_sticky(&mut self, msg: String, cx: &mut Context<Self>) {
         self.notice_gen += 1;
@@ -4958,7 +4964,7 @@ impl Schnauz {
         let groups_on = prefs().groups_enabled;
         let mut items: Vec<MenuNode> = Vec::new();
         let open_folder = match &target {
-            SidebarTarget::Favourite(s) if s.kind == projects::Section::Folders => Some(s.clone()),
+            SidebarTarget::Favourite(s) | SidebarTarget::Common(s) if s.kind == projects::Section::Folders => Some(s.clone()),
             SidebarTarget::GroupMember(_, p) if cached_is_dir(p) => Some(projects::Shortcut::local(p.clone(), projects::Section::Folders)),
             SidebarTarget::Tab(p, t) => self.panes.get(*p).and_then(|pane| pane.tabs.get(*t)).map(|tab| projects::Shortcut { path: tab.current_dir.clone(), kind: projects::Section::Folders, server: tab.remote.clone() }),
             SidebarTarget::NavBar(p) => Some(self.shortcut_for_path(*p, self.tab(*p).current_dir.clone())),
@@ -4970,7 +4976,7 @@ impl Schnauz {
             items.push(MenuNode::Sep);
         }
         let folder = match &target {
-            SidebarTarget::Favourite(s) => s.server.is_none().then(|| s.path.clone()),
+            SidebarTarget::Favourite(s) | SidebarTarget::Common(s) => s.server.is_none().then(|| s.path.clone()),
             SidebarTarget::GroupMember(_,p) => Some(p.clone()),
             SidebarTarget::Empty => Some(self.active_tab().current_dir.clone()).filter(|_| self.active_tab().remote.is_none()),
             SidebarTarget::Tab(p,t) => self.panes.get(*p).and_then(|p|p.tabs.get(*t)).filter(|t|t.remote.is_none()).map(|t|t.current_dir.clone()),
@@ -4983,7 +4989,7 @@ impl Schnauz {
             }
         }
         if let Some(folder) = folder.filter(|p|p.is_dir()) {
-            if !matches!(target, SidebarTarget::Favourite(_)) && folder != home_dir() { items.push(self.project_visibility_menu(projects::Shortcut::local(folder.clone(), projects::Section::Folders))); }
+            if !matches!(target, SidebarTarget::Favourite(_) | SidebarTarget::Common(_)) && folder != home_dir() { items.push(self.project_visibility_menu(projects::Shortcut::local(folder.clone(), projects::Section::Folders))); }
             items.push(MenuNode::Sep);
             let view_folder = folder.clone();
             let view_pane = match &target { SidebarTarget::NavBar(p) | SidebarTarget::Tab(p, _) => *p, _ => self.active_pane };
@@ -4994,6 +5000,12 @@ impl Schnauz {
             items.push(MenuNode::Sep);
         }
         match target {
+            SidebarTarget::Common(shortcut) => {
+                if !shortcut.is_home() {
+                    items.push(self.project_visibility_menu(shortcut.clone()));
+                    items.push(mi("Remove from Common", move |this, _, cx| this.set_common_shortcut(shortcut.clone(), false, cx)));
+                }
+            }
             SidebarTarget::Favourite(shortcut) => {
                 if !shortcut.is_home() {
                     items.push(self.project_visibility_menu(shortcut.clone()));
@@ -7922,7 +7934,7 @@ impl Schnauz {
     }
 
     /// A collapsible section header: a ▾/▸ arrow + title that toggles the
-    /// section, plus an optional trailing element (e.g. the Locations "+").
+    /// section, plus an optional trailing element (e.g. the Projects "+").
     fn section_header_el(
         &self,
         title: &'static str,
@@ -7950,7 +7962,7 @@ impl Schnauz {
                     .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(t.text_dim))
                     .hover(|s| s.text_color(rgb(t.text)))
-                    .when(!matches!(title, "PROJECTS" | "FAVOURITES"), |d| d.child(div().w(px(10.0)).child(arrow.to_string())))
+                    .when(title != "PROJECTS", |d| d.child(div().w(px(10.0)).child(arrow.to_string())))
                     .child(title.to_string())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.toggle_section(title_owned.clone(), cx);
@@ -8240,6 +8252,7 @@ impl Schnauz {
         let mut items = Vec::new();
         self.push_project_sidebar(&mut items, cx);
 
+        items.push(self.common_section(&mut key, cx));
         self.favourites_section(&mut items, &mut key, cx);
 
         // --- Groups (user-defined; only when the feature is enabled) ---
@@ -8327,16 +8340,12 @@ impl Schnauz {
             .children(items);
         let hint = (self.favourites_drop_hover && cx.has_active_drag()) || self.remote_drop_hover();
         sidebar.children(fixed).child(sections)
-            .on_drag_move::<ExternalPaths>(cx.listener(|this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| {
-                let hovered = ev.bounds.contains(&ev.event.position);
-                if this.favourites_drop_hover != hovered { this.favourites_drop_hover = hovered; cx.notify(); }
-            }))
             .drag_over::<ExternalPaths>(|s, _, _, _| s.bg(Theme::alpha(theme().accent, 0x18)))
             .on_drop(cx.listener(|this, drag: &ExternalPaths, _, cx| {
-                this.favourites_drop_hover = false;
-                this.add_dropped_favourites(this.projects.active, drag.paths().to_vec(), cx);
+                this.favourites_drop_hover = false; this.common_drop_hover = false;
+                this.add_dropped_favourites(this.projects.active, false, drag.paths().to_vec(), cx);
             }))
-            .when(hint, |d| d.child(div().absolute().left_2().right_2().bottom_3().p_2().rounded_md().bg(rgb(theme().surface)).border_1().border_color(rgb(theme().accent)).text_size(px(UI_SMALL_FONT_SIZE)).child("Drop to add to Favourites")))
+            .when(hint, |d| d.child(div().absolute().left_2().right_2().bottom_3().h(px(34.)).px_2().flex().items_center().whitespace_nowrap().overflow_hidden().rounded_md().bg(rgb(theme().surface)).border_1().border_color(rgb(theme().accent)).text_size(px(UI_SMALL_FONT_SIZE)).child(if self.common_drop_hover || self.favourite_drag.as_ref().is_some_and(|drag| self.common_bounds.borrow().is_some_and(|bounds| bounds.contains(&drag.position))) { "Drop to add to Common" } else { "Drop to add to Favourites" })))
     }
 
     /// The top bar for a pane: back/forward arrows then either the clickable
@@ -8873,8 +8882,9 @@ impl Schnauz {
         let mut body_row = div().flex().flex_1().min_h_0().min_w_0().child(browser);
         // Preview is independent. Todoist and Disk Usage share only the tools pane.
         if pane + 1 == self.panes.len() {
-            let tools = self.render_space_map(cx).or_else(|| self.todoist.open.then(|| self.render_todoist(cx)));
-            if let Some(panels) = self.render_side_panels(self.render_inspector(cx), tools, pane, cx) {
+            let preview = self.render_inspector(cx);
+            let tools = self.render_space_map(cx).or_else(|| self.todoist.open.then(|| self.render_todoist(preview_panel::tools_content_width(self, pane, preview.is_some()), cx)));
+            if let Some(panels) = self.render_side_panels(preview, tools, pane, cx) {
                 body_row = body_row.child(panels);
             }
         }
@@ -9553,6 +9563,15 @@ impl Render for Schnauz {
             }))
             // Track column drags anywhere in the window so the cursor can leave
             // the thin handle without dropping the resize.
+            .on_drag_move::<ExternalPaths>(cx.listener(|this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| {
+                let hovered = !prefs().sidebar_collapsed && this.sidebar_bounds.borrow().is_some_and(|bounds| {
+                    project_sidebar::drop_hover(bounds, ev.event.position, this.favourites_drop_hover)
+                });
+                let common = hovered && this.common_bounds.borrow().is_some_and(|bounds| bounds.contains(&ev.event.position));
+                if this.favourites_drop_hover != hovered || this.common_drop_hover != common {
+                    this.favourites_drop_hover = hovered; this.common_drop_hover = common; cx.notify();
+                }
+            }))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 let x = f64::from(ev.position.x) as f32;
                 let y = f64::from(ev.position.y) as f32;
@@ -9599,58 +9618,6 @@ impl Render for Schnauz {
             // lights, and it keeps the content clear of them.
             .child(self.render_schnauz_toolbar(cx));
 
-        // SFTP error bar (connection / transfer failure).
-        if let Some(err) = self.remote_error.clone() {
-            root = root.child(
-                div()
-                    .flex_none()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_4()
-                    .py_1p5()
-                    .bg(rgb(0xef4444))
-                    .text_color(rgb(0xffffff))
-                    .child(div().flex_none().child("⚠"))
-                    .child(div().flex_1().min_w_0().truncate().child(err))
-                    .child(
-                        div()
-                            .id("sftp-err-dismiss")
-                            .flex_none()
-                            .px_2()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgba(0xffffff33)))
-                            .child("✕")
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.remote_error = None;
-                                cx.notify();
-                            })),
-                    ),
-            );
-        }
-
-        root = root.children(self.render_favourite_drag());
-
-        // Cloud sync status (neutral; clears itself).
-        if let Some(msg) = self.notice.clone() {
-            root = root.child(
-                div()
-                    .flex_none()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_4()
-                    .py_1p5()
-                    .bg(rgb(t.accent))
-                    .text_color(rgb(0xffffff))
-                    .child(div().flex_none().child("↻"))
-                    .child(div().flex_1().min_w_0().truncate().child(msg)),
-            );
-        }
-
         root = root.child(main_row).child(self.render_schnauz_status(cx));
 
         if let Some(panel) = self.render_jobs_panel() {
@@ -9688,6 +9655,8 @@ impl Render for Schnauz {
         if prefs().show_fps {
             root = root.child(fps_overlay());
         }
+        // Paint drag feedback last so it stays above the sidebar and file panes.
+        root = root.children(self.render_favourite_drag());
         root
     }
 }
@@ -12944,6 +12913,11 @@ fn load_prefs() -> Prefs {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "--version") {
+        println!("Schnauz {}", env!("CARGO_PKG_VERSION")); return;
+    }
+    #[cfg(feature = "ui-checks")]
+    if args.get(1).is_some_and(|s| s == "--check-layout") || std::env::var_os("SCHNAUZ_UI_CHECK_VISIBLE").is_some() { ui_checks::run(); return; }
     if args.get(1).is_some_and(|s| s == "--text-preview-test") {
         match text_view::smoke_test() {
             Ok(message) => println!("{message}"),

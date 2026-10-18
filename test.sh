@@ -20,3 +20,5 @@ mkdir -p "$COMPOSER_TEST_DIR"
 xcrun swiftc -parse-as-library -module-cache-path "$COMPOSER_TEST_DIR/modules" \
     native/todoist/Core.swift native/todoist/Composer.swift native/todoist/ComposerTests.swift -o "$COMPOSER_TEST_DIR/run"
 "$COMPOSER_TEST_DIR/run"
+
+./test-ui.sh

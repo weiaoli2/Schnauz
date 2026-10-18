@@ -4718,9 +4718,10 @@ dependencies = [
 
 [[package]]
 name = "schnauz"
-version = "0.5.0-rc.1"
+version = "0.5.1"
 dependencies = [
  "chrono",
+ "futures",
  "gpui",
  "gpui-terminal",
  "image",

@@ -11,6 +11,7 @@ struct TDRequest: Decodable {
   let request_id: String?
   let expected_updated: String?
   let allow_create: Bool?
+  let interactive: Bool?
   let palette: [String: UInt32]?
 }
 struct TDResult: Encodable {
@@ -157,7 +158,7 @@ struct TDResult: Encodable {
       TDKeychain.remove(account.id)
       finish(TDResult(message: "Todoist disconnected from Schnauz."))
     }
-    let client = try TDClient(token: TDKeychain.read(account))
+    let client = try TDClient(token: TDKeychain.read(account, allowInteraction: request.interactive == true))
     if request.operation == "ensure-project" {
       guard let name = request.project_name, !name.isEmpty else {
         throw TDProblem(text: "No Schnauz project name was provided.")
@@ -170,6 +171,9 @@ struct TDResult: Encodable {
           if matches.count == 1 {
             selected = matches[0]
           } else if matches.count > 1 {
+            guard request.interactive == true else {
+              finish(TDResult(success: false, message: "Several Todoist projects match this name. Use Find or create matching project to choose one."))
+            }
             selected = choose(matches, name: name)
           }
           finish(
@@ -234,9 +238,8 @@ struct TDResult: Encodable {
     }
   }
   func addTask(client: TDClient, project: String) async -> Never {
-    // Read the captured destination first; the composer never offers a project picker.
-    let destination: TDProject
-    do { destination = try await client.project(project) } catch { fail(error) }
+    // Show immediately using the captured name; network validation happens on Save.
+    let destination = TDProject(id: project, name: request.project_name ?? "Todoist project", parent_id: nil)
     var draft = TDDraft()
     let creationID = request.request_id ?? UUID().uuidString
     let reminderID = UUID().uuidString, locationID = UUID().uuidString
@@ -262,6 +265,7 @@ struct TDResult: Encodable {
       do {
         progress(savedTask == nil ? "Saving task to \(destination.name)…" : "Saving reminder options…", cancellable: false)
         if savedTask == nil {
+          _ = try await client.project(project)
           if let date = draft.reminder, date <= Date() { throw TDProblem(text: "Choose a reminder time in the future.") }
           savedTask = try await client.add(projectID: project, content: draft.content,
             due: draft.due, section: nil, requestID: currentID, options: draft.options)

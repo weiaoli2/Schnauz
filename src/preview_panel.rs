@@ -34,7 +34,6 @@ pub(super) struct Drag {
 #[derive(Default)]
 pub(super) struct Expansion {
     visible: bool,
-    requested: f32,
     added: f32,
 }
 impl Expansion {
@@ -51,10 +50,11 @@ impl Expansion {
         } else if !self.visible {
             requested
         } else {
-            requested - self.requested
+            // A divider redistributes the existing window. Only opening tools
+            // adds window width; the outer edge belongs entirely to macOS.
+            0.
         };
         self.visible = visible;
-        self.requested = requested;
         if fullscreen {
             return None;
         }
@@ -131,6 +131,11 @@ fn layout(this: &Schnauz, pane: usize, preview: bool, tools: bool) -> Layout {
     )
 }
 
+/// Definite content width, excluding the tools frame's margins and borders.
+pub(super) fn tools_content_width(this: &Schnauz, pane: usize, preview: bool) -> f32 {
+    (layout(this, pane, preview, true).tools - 14.).max(1.)
+}
+
 pub(super) fn preview_width(this: &Schnauz, pane: usize) -> f32 {
     layout(
         this,
@@ -170,8 +175,11 @@ impl Schnauz {
                     drag.start.preview + drag.start_x - x,
                     pane_width - 220. - drag.start.tools,
                 ),
-                // Tools resize from their outer right edge, growing the window.
-                Kind::Tools => (drag.start.tools + x - drag.start_x).clamp(220., 720.),
+                Kind::Tools => bounded_width(
+                    drag.start.tools + drag.start_x - x,
+                    (pane_width - 220. - drag.start.preview).max(drag.start.tools.min(220.)),
+                )
+                .min(720.),
             };
             cx.notify();
         }
@@ -235,6 +243,7 @@ impl Schnauz {
                 .flex_1()
                 .min_h_0()
                 .min_w_0()
+                .w(px((width - 12.).max(0.)))
                 .m_1p5()
                 .border_1()
                 .border_color(rgb(t.border))
@@ -257,6 +266,11 @@ impl Schnauz {
             .overflow_hidden()
             .bg(rgb(t.sidebar))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .children(ui_checks::probe(if kind == Kind::Preview {
+                "preview-frame"
+            } else {
+                "tools-frame"
+            }))
             .child(framed)
             .child(
                 div()
@@ -266,11 +280,15 @@ impl Schnauz {
                         "tools-resize"
                     })
                     .absolute()
-                    .when(kind == Kind::Preview, |d| d.left_0())
-                    .when(kind == Kind::Tools, |d| d.right_0())
+                    .left_0()
                     .top_0()
                     .bottom_0()
                     .w(px(7.))
+                    .children(ui_checks::probe(if kind == Kind::Preview {
+                        "preview-divider"
+                    } else {
+                        "tools-divider"
+                    }))
                     .cursor(CursorStyle::ResizeLeftRight)
                     .hover(|s| s.bg(Theme::alpha(t.accent, 0x33)))
                     .when(
@@ -280,7 +298,7 @@ impl Schnauz {
                     .tooltip(tip(if kind == Kind::Preview {
                         "Drag left edge to resize preview · double-click to reset"
                     } else {
-                        "Drag right edge to resize tools · double-click to reset"
+                        "Drag left edge to resize tools · double-click to reset"
                     }))
                     .on_mouse_down(
                         MouseButton::Left,
@@ -345,9 +363,11 @@ mod tests {
         assert_eq!(state.update(true, 360., 1280., 1000., false), Some(1640.));
         // Preview selection or Todoist/Disk Usage replacement does not grow again.
         assert_eq!(state.update(true, 360., 1640., 640., false), None);
-        assert_eq!(state.update(true, 500., 1640., 640., false), Some(1780.));
-        assert_eq!(state.update(false, 0., 1880., 400., false), Some(1380.));
-        assert_eq!(state.update(false, 0., 1380., 900., false), None);
+        // Moving the LEFT tools divider changes panel width, not window width.
+        assert_eq!(state.update(true, 500., 1640., 640., false), None);
+        // Native window resizing is independent; close removes only opening growth.
+        assert_eq!(state.update(false, 0., 1880., 400., false), Some(1520.));
+        assert_eq!(state.update(false, 0., 1520., 900., false), None);
     }
     #[test]
     fn expansion_respects_screen_edges_and_fullscreen() {

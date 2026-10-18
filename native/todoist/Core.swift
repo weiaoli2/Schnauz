@@ -3,6 +3,7 @@ import Darwin
 // except in memory for HTTPS requests to the fixed Todoist API host.
 import Foundation
 import Security
+import LocalAuthentication
 
 struct TDProblem: LocalizedError {
   let text: String
@@ -431,13 +432,17 @@ enum TDKeychain {
       throw TDProblem(text: "Could not save Todoist access in macOS Keychain.")
     }
   }
-  static func read(_ account: TDAccount) throws -> String {
+  static func read(_ account: TDAccount, allowInteraction: Bool = true) throws -> String {
     var item: CFTypeRef?
-    let query: [String: Any] = [
+    var query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
       kSecAttrAccount as String: account.id, kSecReturnData as String: true,
       kSecMatchLimit as String: kSecMatchLimitOne,
     ]
+    if !allowInteraction {
+      let context = LAContext(); context.interactionNotAllowed = true
+      query[kSecUseAuthenticationContext as String] = context
+    }
     guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
       let data = item as? Data,
       let value = try JSONSerialization.jsonObject(with: data) as? [String: String],

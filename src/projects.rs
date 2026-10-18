@@ -145,28 +145,32 @@ impl Sidebar {
         shortcut.is_home() || self.shortcuts.iter().any(|s| s.same_place(shortcut))
     }
 
-    pub fn set_shortcut(&mut self, mut shortcut: Shortcut, add: bool) {
-        // Home is shown once in every project without storing a duplicate shortcut.
-        if shortcut.is_home() {
-            return;
-        }
-        // Favourites describe destinations, never ownership of a live SSH session.
-        if let Some(server) = &mut shortcut.server {
-            server.control_path = None;
-        }
-        if let Some(index) = self.shortcuts.iter().position(|s| s.same_place(&shortcut)) {
-            if add {
-                self.shortcuts[index] = shortcut;
-            } else {
-                self.shortcuts.remove(index);
-            }
-        } else if add {
-            self.shortcuts.push(shortcut);
-        }
+    pub fn set_shortcut(&mut self, shortcut: Shortcut, add: bool) {
+        update_shortcuts(&mut self.shortcuts, shortcut, add);
     }
 
     pub fn set_path(&mut self, section: Section, path: PathBuf, add: bool) {
         self.set_shortcut(Shortcut::local(path, section), add);
+    }
+}
+
+fn update_shortcuts(shortcuts: &mut Vec<Shortcut>, mut shortcut: Shortcut, add: bool) {
+    // Home is shown once in every project without storing a duplicate shortcut.
+    if shortcut.is_home() {
+        return;
+    }
+    // Favourites describe destinations, never ownership of a live SSH session.
+    if let Some(server) = &mut shortcut.server {
+        server.control_path = None;
+    }
+    if let Some(index) = shortcuts.iter().position(|s| s.same_place(&shortcut)) {
+        if add {
+            shortcuts[index] = shortcut;
+        } else {
+            shortcuts.remove(index);
+        }
+    } else if add {
+        shortcuts.push(shortcut);
     }
 }
 
@@ -235,6 +239,13 @@ pub(crate) struct Project {
     pub sidebar: Sidebar,
 }
 
+fn default_common_shortcuts() -> Vec<Shortcut> {
+    ["Desktop", "Downloads"]
+        .into_iter()
+        .map(|name| Shortcut::local(crate::home_dir().join(name), Section::Folders))
+        .collect()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub(crate) struct Library {
     version: u32,
@@ -245,6 +256,8 @@ pub(crate) struct Library {
     pub personal_layout: Option<Layout>,
     #[serde(default)]
     pub personal_sidebar: Sidebar,
+    #[serde(default = "default_common_shortcuts")]
+    pub common_shortcuts: Vec<Shortcut>,
     #[serde(default)]
     sidebar_migrated: bool,
 }
@@ -257,12 +270,19 @@ impl Default for Library {
             active: None,
             personal_layout: None,
             personal_sidebar: Sidebar::default(),
+            common_shortcuts: default_common_shortcuts(),
             sidebar_migrated: false,
         }
     }
 }
 
 impl Library {
+    pub fn set_common_shortcut(&mut self, shortcut: Shortcut, add: bool) {
+        update_shortcuts(&mut self.common_shortcuts, shortcut, add);
+    }
+    pub fn common_contains(&self, shortcut: &Shortcut) -> bool {
+        shortcut.is_home() || self.common_shortcuts.iter().any(|s| s.same_place(shortcut))
+    }
     pub fn load(path: &Path) -> io::Result<Self> {
         let bytes = match fs::read(path) {
             Ok(bytes) => bytes,
@@ -295,6 +315,10 @@ impl Library {
                 io::ErrorKind::InvalidData,
                 "Invalid project library",
             ));
+        }
+        let common = std::mem::take(&mut library.common_shortcuts);
+        for shortcut in common {
+            library.set_common_shortcut(shortcut, true);
         }
         library.active = library
             .active
@@ -491,6 +515,76 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn common_defaults_migrate_once_and_removals_survive_project_switch_and_reload() {
+        let mut library = Library::default();
+        let defaults = library.common_shortcuts.clone();
+        assert_eq!(
+            defaults
+                .iter()
+                .map(|s| s.path.file_name().unwrap().to_string_lossy())
+                .collect::<Vec<_>>(),
+            vec!["Desktop", "Downloads"]
+        );
+        for shortcut in defaults {
+            library.set_common_shortcut(shortcut, false);
+        }
+        let home = Shortcut::local(crate::home_dir(), Section::Folders);
+        library.set_common_shortcut(home.clone(), false);
+        assert!(library.common_contains(&home));
+        let id = library
+            .create(
+                "Work",
+                Layout {
+                    panes: vec![SavedPane {
+                        tabs: vec![tab(PathBuf::from("/tmp"))],
+                        active: 0,
+                    }],
+                    active_pane: 0,
+                    split_ratio: 0.5,
+                },
+            )
+            .unwrap();
+        library.active = Some(id);
+        assert!(library.common_shortcuts.is_empty());
+        let restored: Library =
+            serde_json::from_str(&serde_json::to_string(&library).unwrap()).unwrap();
+        assert!(restored.common_shortcuts.is_empty());
+        let mut legacy = serde_json::to_value(&library).unwrap();
+        legacy.as_object_mut().unwrap().remove("common_shortcuts");
+        let migrated: Library = serde_json::from_value(legacy).unwrap();
+        assert_eq!(migrated.common_shortcuts.len(), 2);
+    }
+
+    #[test]
+    fn common_keeps_local_and_remote_references_separate_without_live_transports() {
+        let mut library = Library::default();
+        let local = Shortcut::local(PathBuf::from("/shared"), Section::Folders);
+        let mut remote = local.clone();
+        remote.server = Some(SftpServer {
+            host: "example.test".into(),
+            user: "test".into(),
+            control_path: Some(PathBuf::from("/tmp/live-session")),
+            ..Default::default()
+        });
+        library.set_common_shortcut(local.clone(), true);
+        library.set_common_shortcut(remote.clone(), true);
+        library.set_common_shortcut(remote.clone(), true);
+        assert_eq!(library.common_shortcuts.len(), 4);
+        assert!(library.common_contains(&local) && library.common_contains(&remote));
+        assert!(library
+            .common_shortcuts
+            .last()
+            .unwrap()
+            .server
+            .as_ref()
+            .unwrap()
+            .control_path
+            .is_none());
+        library.set_common_shortcut(local, false);
+        assert!(library.common_contains(&remote));
+    }
+
     #[test]
     fn home_is_always_a_favourite_without_project_records() {
         let home = super::Shortcut::local(crate::home_dir(), super::Section::Folders);

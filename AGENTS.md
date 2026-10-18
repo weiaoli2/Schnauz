@@ -63,6 +63,11 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   access there; never change permissions/TCC or probe protected folders to infer
   a grant. The central file_access_intro_seen preference records acknowledgement
   only. Do not force a restart or block normal browsing without Full Disk Access.
+  There is no supported API to prepopulate only the Full Disk Access list; do
+  not probe protected data to force an entry. On 2026-10-18 the enabled lowercase
+  schnauz entry was traced to the current app's Contents/MacOS/schnauz binary.
+  Its generic icon does not mean it is obsolete or prove the whole bundle grant.
+  The user can add the complete current Schnauz.app manually with +.
   Hide native previews while the introduction is open.
 - Folder navigation resets its vertical/horizontal scroll state and recomputes
   visible results. Local listing functions return Result; permission/read failures
@@ -139,10 +144,16 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 
 - Projects replace workspaces. Each owns Favourites, saved connection settings,
   Todoist routing and autosaved local tabs/layout. Personal has its own profile;
-  new projects start with only the built-in local Home favourite. Home is pinned
-  first inside Favourites → Folders in every project, with a blue Home badge matching the
-  drive capacity badge. Never show it twice or offer removal / project visibility
-  actions; do not duplicate it in projects.json. Recents remains removed.
+  new projects start with empty project Favourites. Common is shared across every
+  project/window and lives in Library.common_shortcuts in projects.json. Migrate
+  missing Common data once with Desktop and Downloads; an explicitly empty list
+  means the user removed them and must stay empty. Home is pinned first in Common
+  → Folders, shown once with the blue Home badge, never persisted or removable.
+  Common accepts local/cloud/SSH folder/file references, with the same provider
+  badges and no copies/transfers. Drop on Common targets Common; other sidebar
+  space targets the captured project's Favourites. View in… includes Common.
+  Common/Favourites are fixed headings; discard the obsolete FAVOURITES collapse
+  flag. Common Home stays visible even if other Common folders are folded.
   All Schnauz browser windows share one active project; switching in any window
   switches every window. Within a project, each window browses independently.
   Share project metadata and the folder-view cache in memory, preserve per-window
@@ -153,7 +164,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Successful project switching, creation and removal are silent: the toolbar
   project name, dialog and sidebar already show the result. Do not allocate
   success notices or their dismissal timers for these actions; retain errors.
-  The expanded sidebar is Devices → Projects → Favourites, with compact 24 pt
+  The expanded sidebar is Devices → Projects → Common → Favourites, with compact 24 pt
   rows and Folders / Files subsections shown only when they contain favourites.
   Remove empty-section drop messages and the Favourites + button/picker code.
   Keep the transient drag-hover hint and whole-sidebar drop target.
@@ -353,7 +364,9 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Preview consumes browser width without growing the window. Opening tools grows
   the window to the right, within the display; switching tools must not grow it
   twice. Closing removes only the added width, preserving manual window resizing.
-  Resize preview from its left edge; tools from their outer right edge. Keep
+  Resize both preview and tools from their own left edges. The outer right edge
+  is exclusively the native window resize border. Changing tools width only
+  redistributes existing space; automatic window growth occurs on opening tools. Keep
   split proportions based on the browser/preview area before the tool extension.
   Pane/viewport measurements are per window, never process-wide. In full screen
   or at screen edges, fit panels beside each other without overlap.
@@ -378,3 +391,31 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   and an inset plus; keep all strokes clear of the icon canvas edges.
 - Settings uses the main app's transparent native titlebar and 56 pt themed
   header, with traffic-light clearance and independently scrolling content.
+
+- General notices, cloud progress and SSH errors belong in the existing fixed-height
+  footer, centered in a rounded blue badge matching Home; never allocate a top
+  banner or shift browser content. Keep the path/count and mode/settings visible,
+  truncate long messages with full tooltips and retain SSH error dismissal.
+- Todoist uses definite pixel widths from the actual framed tools allocation,
+  including text/status rows and the virtual list. test-ui.sh checks the complete
+  real GPUI window with empty and populated synthetic tasks, without showing a
+  window or reading an account. The ui-checks feature is excluded from normal builds.
+  Helper waits and snapshot sorting run on dedicated worker threads, never on the
+  UI thread or GPUI's shared file-work pool. Automatic refresh/linking cannot
+  display a Keychain prompt, project chooser or activate a window. Explicit Add
+  Task opens from the captured project name before any network validation; validate
+  that fixed project on Save. Confirmed tasks populate even an uninitialized cache.
+- Drag hover is tracked from the root against stable sidebar geometry, with a
+  small exit tolerance; the fixed-size hint must not change layout. Paint the
+  internal SSH drag preview last, above the sidebar. Preserve reference-only drops
+  and live SSH sessions. Native drag QA must use disposable folders, not live data.
+
+- Show only the compiled app VERSION in subtle grey on the upper Schnauz title
+  row, clear of native window controls. --version prints the same version.
+  Oliver explicitly removed date/build/source identifiers from the UI. Keep the
+  app filename Schnauz.app and bump the ordinary version for delivered test stands;
+  no per-build app copies or releases. The current local testing version is 0.5.1.
+- Todoist task rows use completion circles, thin separators and dates below the
+  title. The indigo + Add task row is last in the virtual list, even when empty.
+  Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
+  task-title/status-text bounds, not merely the enclosing panel width.

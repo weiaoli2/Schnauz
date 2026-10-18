@@ -114,22 +114,26 @@ continue without it, with some folders restricted. The guide remains under
 
 Click **+ beside Projects** or press **⌘⇧S** to create a project from the current tabs.
 Each project keeps its own **Favourites**, connection settings, Todoist link and
-last tabs/layout. **Personal** has its own profile. Every project includes your
-local home folder, pinned first inside **Favourites → Folders** with a small blue **Home** badge.
-It stays visible once, cannot be removed, and needs no per-project saved copy.
+last tabs/layout. **Personal** has its own profile. The shared **Common** list
+appears above Favourites in every project. It initially includes **Home**, **Desktop**
+and **Downloads**. Desktop and Downloads can be removed; Home stays pinned first
+under Common → Folders with a blue badge and cannot be removed. Removed defaults
+stay removed after restarting. Common folders/files are stored once centrally.
 New projects otherwise start empty. All Schnauz windows share the active project;
 changing projects in one changes it everywhere. Each window can browse its own
 folder within that project. Folder context menus offer **Open**, **Open in New
 Tab** and **Open in New Window**, including SSH folders and sidebar favourites.
 New windows open the chosen folder without duplicating terminal sessions.
 
-The compact sidebar shows **Devices**, **Projects**, then **Favourites → Folders /
-Files**. Empty Folders / Files subsections are hidden, with no placeholder
+The compact sidebar shows **Devices**, **Projects**, **Common**, then **Favourites**.
+Common and Favourites group references under **Folders / Files**, hiding empty
+subsections, with no placeholder
 messages or + button beside Favourites. Its width follows the visible names,
 with a cap for very long names and full paths in tooltips. Project rows no longer show tab counts. Cloud, Servers,
 Locations and Tagged Items are replaced by this single favourites list.
 
-Drop local or SSH folders/files anywhere in the expanded sidebar: Schnauz sorts
+Drop local or SSH folders/files on Common to share them across all projects, or
+elsewhere in the expanded sidebar for project Favourites: Schnauz sorts
 them into **Folders** or **Files**, without moving, copying or downloading them.
 **Drop to add to Favourites** identifies the target. Duplicates are kept once,
 and identical paths on different servers stay separate. Escape or dropping
@@ -149,7 +153,7 @@ Settings. Cloud and network icons never initiate a connection.
 
 Right-click any favourite and choose **View in… → All projects** or an individual
 project. Checkmarks show membership. This changes references only; All includes
-current projects and Personal, while future projects still start with Home only. The file
+current projects and Personal, while Common also applies to future projects automatically. The file
 context menu **Tags** separately applies Finder colour labels, shown as coloured
 dots in the native menu.
 Existing saved workspaces are imported automatically;
@@ -225,12 +229,15 @@ all views the order is files → preview → Todoist / Disk Usage. Preview takes
 space from the file list without enlarging the window. Tools instead extend the
 window to the right when display space permits, and share one extension when
 switching between them. Closing tools removes that extension while preserving
-manual window resizing. The preview resizes from the left edge; tools from the
-outer right edge. Panels remain side by side at screen edges or in full screen.
+manual window resizing. Preview and tools each resize from their left edge;
+changing the tools divider redistributes existing space. The outer right border
+only resizes the native app window. Panels remain side by side at screen edges or in full screen.
 
 Selecting another Schnauz project switches Tasks with it. Existing unlinked
 projects first search by name; **Find or create matching project** can create a
-missing counterpart. Tasks show sections/subtasks and due dates. Click the circle
+missing counterpart. Tasks show completion circles, fine separators and due dates
+below their titles, plus named sections/subtasks. The indigo **+ Add task** row
+stays at the end of the list even when no tasks exist. Click the circle
 to complete, the task text to open Todoist, or **Add task…** for a compact native
 composer with Schnauz colours and the little toolbar dog. The fixed project cannot
 be changed. Add a title, description, date, deadline, priority and labels; optional
@@ -384,3 +391,13 @@ Click the current breadcrumb or press **⌘L** to edit the full path. Mouse/Shif
 selection, double-clicking components, select-all, cut/copy/paste and deletion are
 supported. **Enter** opens the path; invalid text stays editable. **Escape** or an
 outside click dismisses editing. Ancestor breadcrumbs continue to navigate.
+
+Status messages appear centered in the existing bottom status bar, in a rounded
+blue badge. They do not change the file area's height. Long messages have a full
+tooltip; connection errors can still be dismissed. Todoist refresh runs silently
+in the background, with its processing separate from file work. The task composer
+opens using the fixed project name before online validation; validation occurs on
+Save. Confirmed new tasks appear even before the first complete list has loaded.
+
+The toolbar displays only the running app's version beside the Schnauz title;
+`schnauz --version` shows the same version. The app filename stays Schnauz.app. Reopening an already-running macOS app does not replace its process.

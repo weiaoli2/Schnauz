@@ -123,7 +123,9 @@ Apple Development signing is available; Developer ID/notarization is not yet set
   folders. Actual Documents access is still controlled by macOS and tested by Oliver.
 - Current breadcrumb / Cmd+L opens an editable path with mouse selection,
   Cut/Copy/Paste, select-all, delete and scrolling. Invalid paths remain editable.
-- The pinned Home favourite now belongs in Favourites → Folders.
+- Oliver confirmed Home and Documents browsing work. Home now moves to Common
+  → Folders, a shared list above project Favourites. Common starts with Desktop
+  and Downloads; both can be removed permanently, while Home stays pinned.
 - Todoist status/empty text and task rows keep their width. Native Todoist links
   fall back to the browser if the app is absent. Oliver confirmed task creation
   reaches the correct Todoist project.
@@ -133,16 +135,45 @@ Apple Development signing is available; Developer ID/notarization is not yet set
   uses Apple Maps on the user's search action. Optional reminders depend on the
   Todoist account/plan; failed optional writes cannot create a second task on retry.
 
-Validation passed: 66 Rust tests, six Nextcloud and six Todoist offline fixture
-groups, and native light/dark composer layout plus partial-save retry checks.
-The normal local bundle was rebuilt and its deep/strict signature verified.
-No live account or Keychain reads were used for testing. Oliver performs manual
-UI and account checks. Release publication and new web-kit images remain on hold.
+Validation passed: 71 Rust tests, six Nextcloud and six Todoist offline fixture
+groups, native light/dark composer and partial-save retry checks, and the complete
+real GPUI window layout with synthetic empty/populated Todoist data. The normal
+local bundle is rebuilt after the current fixes with its deep/strict signature
+verified before replacement. No live account or Keychain reads were used for testing. A disposable
+separate app successfully received a native local-folder drop, kept Home first
+and displayed the blue notice in the fixed footer. Held-drag flicker and the SSH
+drag preview were not visually verified; live Todoist task listing remains
+Oliver's manual check. Release publication and new web-kit images remain on hold.
 Never restart his live app or sessions.
 
-At the last read-only process check, only the older Schnauz-Demo was running.
-The normal updated bundle is ready to reopen; do not assume that demo results
-reflect the new build, or infer macOS access from terminal reads.
+Further reported fixes: notices/SSH errors use the fixed footer's centered blue
+badge. Todoist has definite pane/row/text widths, confirmed additions populate
+before the first snapshot, and the composer opens before online validation.
+Helper waits/sorting stay separate from file work; silent refresh cannot open
+modal windows. Tasks use round completion controls, separators, secondary due
+labels and an always-present + Add task row at the list end. Both preview/tools
+resize from the LEFT; tools divider movement never grows the window. Only opening
+tools adds space; the normal right border remains a native window resize handle.
+The complete hidden GPUI layout check covers empty/populated/error states. A
+separate visible fixture confirmed horizontal titles/dates, the Add task row,
+Common defaults, independent preview, left divider drag and native right-border
+resize. Its data is synthetic; live Todoist remains Oliver's verification.
+
+Only the compiled version (currently 0.5.1) appears beside the Schnauz title
+and in --version. Oliver removed date/build/source IDs; the app stays Schnauz.app. At inspection the user's process had
+started at 13:04, before the prior 13:06 build finished, so old observations did
+not verify the new binary. Do not restart his live sessions automatically.
+
+Full Disk Access identity was inspected read-only in System Settings. Its enabled
+lowercase `schnauz` entry resolves through Show in Finder to the current
+`/Users/oliw/CurrentProjects/Schnauz/Schnauz.app/Contents/MacOS/schnauz`, not an old
+development build. The generic executable icon is consistent with that individual
+binary entry; the complete app bundle has the correct Schnauz name and AppIcon.
+This observation does not prove that every launch uses that grant. No permission
+was changed and no protected files were probed. Apple documents no supported API
+for prepopulating only the Full Disk Access list:
+https://developer.apple.com/forums/thread/670923 . The user can manually add the
+whole current Schnauz.app with + for an unambiguous app-bundle entry.
 
 ## Where changes belong
 
@@ -160,6 +191,8 @@ reflect the new build, or infer macOS access from terminal reads.
 | Saved folder views and list columns | `src/folder_views.rs`, `src/list_ui.rs` |
 | Todoist API bridge, cache and Tasks pane | `src/todoist.rs`, `src/todoist_ui.rs`, `native/todoist/` |
 | Compact native task composer and layout checks | `native/todoist/Composer.swift`, `native/todoist/ComposerTests.swift` |
+| Running app version | `Cargo.toml`, `src/schnauz.rs`, `--version` |
+| Complete GPUI layout regression checks | `src/ui_checks.rs`, `test-ui.sh` (optional `ui-checks` feature) |
 | Inline name editor and click-to-rename timing | `src/rename_ui.rs`, click dispatch in `src/main.rs` and `src/search_ui.rs` |
 | Preview layout, selectable text and media | `src/preview_panel.rs`, `src/previews.rs`, `src/text_view.rs`, `src/native_preview.rs`, `src/video_preview.rs` |
 | Terminal and SSH following | `src/schnauz_terminal.rs`, `src/ssh_sync.rs`, `src/terminal-shell/` |
@@ -170,8 +203,9 @@ Keep browsing fast: no automatic recursive size scans or home indexing. The
 collapsed sidebar contains only its reopen button; obsolete compact-rail controls
 are removed from the source. Devices stays above Projects with background capacity
 updates and adjustable 80/90%-used colour thresholds. The compact sidebar has
-Projects without count badges, then Favourites with a pinned local Home entry
-(blue Home badge) first inside Favourites → Folders in every project. Drive capacity
+Projects without count badges, then shared Common and project Favourites. Home
+(blue badge) stays first in Common → Folders. Desktop/Downloads are shared defaults,
+removable without being restored on restart. Drive capacity
 badges toggle saved GB / percent free without navigation. Folder menus open in
 place, a new tab or a new Schnauz window. Windows share the active project and
 view cache; project switches propagate while live tabs/PTYs stay per window. Empty
@@ -212,9 +246,10 @@ reference and display identity; project links and stable creation-request IDs li
 in `projects.json`. Existing projects migrate without links. Disconnect removes
 Schnauz access without revoking a personal token used by other apps.
 
-Oliver confirmed that Todoist was connected and working on 2026-10-18. Panel
-layout and text-preview refinements are in the current build; visual verification
-remains his manual workflow.
+Oliver confirmed the account is connected and new tasks reach the correct
+Todoist project. He subsequently reported missing tasks and one-letter status
+wrapping in the pane. The latest local build addresses width allocation and cache
+updates; live account and visual verification remain his manual workflow.
 
 The **Todoist** button toggles the framed tools pane, below the full-width navigation
 and filter bars, independently of file preview. It follows Schnauz project switching
