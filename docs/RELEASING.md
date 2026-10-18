@@ -1,22 +1,20 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Planned first candidate: **v0.5.0-rc.1**, with public source and public downloads.
+Current release: **v0.5.5**, public Apple Silicon + Intel early preview.
 
-## Current status — publication on hold
+## Current authorization — resumed for 0.5.5
 
-On 2026-10-18 Oliver asked to save and reuse this release workflow, fix the main
-bugs first, and publish the release only afterwards. Do not run the publishing
-steps until he explicitly resumes the release. Oliver separately authorized a
-website product-info and screenshot refresh on 2026-10-18; that refresh does not
-authorize release publication, tags, installers or uploads.
+On 2026-10-18 Oliver resumed GitHub publication after the transfer footer and
+stable tab-drag feedback fixes. He requested a concise, attractive overview,
+no new screenshots, and a link to https://techguyzone.com/apps/.
+The earlier publication hold and unpublished v0.5.0-rc.1 candidate are superseded.
+Reuse this workflow; rebuild both targets from the final tested source. Publish
+as a prerelease because this is an early preview with Apple Development signing
+and no Apple notarization. Never replace/restart the user's live app or terminals.
 
-The public repository and source already exist at the URL above. No GitHub
-release/tag was published during preparation. Both architectures were built into
-the chat's outputs/Schnauz-0.5.0-rc.1 directory, and tests passed. Those are
-pre-fix artifacts, not the final release; rebuild after the approved bug fixes.
-Keep the existing compiler caches, target installations, certificates, notices,
-README and packaging scripts. Do not recreate the repository or release tooling.
+The repository already exists. Keep existing caches, targets, certificates and
+notices. Do not recreate release tooling or upload app profiles, tokens or keys.
 
 Homepage: https://techguyzone.com/apps/
 Local branch: schnauz. Public destination: origin/main. Shuffle upstream is reference only.
@@ -71,7 +69,7 @@ actually executed; cross-compilation alone is not an Intel hardware smoke test.
 Keep the source commit/tag with the artifacts and publish both architectures
 together. Never upload signing keys, tokens, live settings or compiler caches.
 
-The first candidate uses Apple Development signing, not Developer ID or Apple
+This preview uses Apple Development signing, not Developer ID or Apple
 notarization. Keep this limitation explicit on the download page and in the
 installer. Moving to Developer ID/notarization is a separate future improvement.
 Do not disable system security checks or modify user privacy databases.
@@ -81,13 +79,12 @@ the Schnauz origin; the Shuffle upstream remote is read-only reference material.
 
 ## Reuse this workflow after the bug fixes
 
-1. Finish Oliver's reported bugs and let him test the main app. Preserve live
+1. Finish and verify Oliver's reported fixes before publication. Preserve live
    settings, terminals and SSH sessions. The screenshot demo has a separate
    profile under /private/tmp/Schnauz-Website-Demo; never substitute it for the
    real app's profile. The web kit stays frozen unless Oliver requests changes.
 2. Review and commit the fixes locally. Confirm the intended Cargo version
-   (currently 0.5.0-rc.1) in both Cargo.toml and Cargo.lock. Since no candidate
-   tag/release exists yet, the same candidate version can be kept. Do not move
+   (currently 0.5.5) in both Cargo.toml and Cargo.lock. Never reuse an old published version for changed artifacts. Do not move
    any existing tag or overwrite already published assets in later releases.
 3. Run ./test.sh. Reuse the existing Apple Silicon and Intel targets and caches.
    Run the existing native text-preview smoke check on both release binaries;
@@ -104,13 +101,13 @@ the Schnauz origin; the Shuffle upstream remote is read-only reference material.
 6. Write release notes in the output directory with the features/fixes, source
    commit, macOS 14+ requirement, Apple Silicon/Intel choices and validation
    scope. Clearly state Apple Development signing and no Apple notarization.
-7. Only after Oliver resumes publication, use the existing origin, push the
+7. With user-authorized publication, use the existing origin, push the
    reviewed source, create the version tag and prepare a draft GitHub release.
    Upload all artifacts together, verify the draft and then publish it as a
    prerelease. No new repository, updater, account setup or screenshots needed.
 
-The publication commands below are a saved procedure, not permission to execute
-them while the release is on hold. Run from the repository after committing fixes:
+The publication commands below require a user-authorized release. Oliver has
+authorized 0.5.5. Run from the repository after committing and verifying the fixes:
 
 ```sh
 VERSION=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1)

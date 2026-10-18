@@ -923,8 +923,9 @@ impl Schnauz {
             .child(div().flex_none().size(px(6.)).rounded_full().bg(rgb(t.accent)))
             .child(div().flex_none().child(label))
             ;
+        let transfer = self.render_transfer_status(cx);
         let middle = div().flex_1().min_w_0().flex().items_center().justify_center()
-            .children(status.map(|(text, dismiss_remote)| {
+            .children(transfer.or_else(|| status.map(|(text, dismiss_remote)| {
                 div().id("footer-status").flex().items_center().min_w_0().max_w_full()
                     .h(px(21.)).px_2().gap_1().rounded_md()
                     .bg(rgb(0x3478c5)).text_color(rgb(0xffffff))
@@ -937,7 +938,7 @@ impl Schnauz {
                             .tooltip(tip("Dismiss connection error"))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| { this.remote_error = None; cx.notify(); }))
                     ))
-            }));
+            }).map(IntoElement::into_any_element)));
         let right = div().flex_1().min_w_0().flex().items_center().justify_end().gap_3()
             .child(
                 div()

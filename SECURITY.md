@@ -7,7 +7,7 @@ Please avoid posting credentials, personal paths or private file contents in iss
 
 Official source and downloads are at [weiaoli2/Schnauz](https://github.com/weiaoli2/Schnauz).
 Releases identify their source tag and commit and include SHA-256 checksums.
-The 0.5.0-rc.1 Mac builds are signed locally with Oliver's **Apple Development**
+The 0.5.5 preview Mac builds are signed locally with Oliver's **Apple Development**
 certificate. They are **not Apple-notarized** and do not yet use Developer ID
 distribution signing. A valid bundle signature checks integrity; it does not
 mean that Gatekeeper will automatically allow the app or that Apple reviewed it.

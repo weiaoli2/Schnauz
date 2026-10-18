@@ -421,9 +421,20 @@ the path. File drags do not recolour the browser/sidebar background.
 The website kit (separate from GitHub) prioritizes project-specific work,
 seamless terminal use, pasted-path navigation and Todoist. Its description,
 brief and new sample-data captures are in the existing outputs/Schnauz-Website-Kit.
-Public release publication remains on hold. The opt-in ui-checks build supports
+Release status is recorded in docs/RELEASING.md. The opt-in ui-checks build supports
 --website-preview; its separately named preview bundle always uses an isolated
 profile even when LaunchServices drops arguments. --website-preview-scene=N
 selects reproducible start scenes (0 light, 1 another project, 2 pasted path,
 3 dark); this fixture is excluded from the normal app. The current four captures
 are 3200x1640 JPEGs and are documented in the handoff ASSETS.md.
+
+## Transfer feedback — 0.5.5
+
+Local copies/moves and SSH uploads/downloads show progress in the fixed footer,
+with a compact bar, percentage and Cancel. Network progress refers to the current
+file (also named), so a folder's next file starts its own percentage. Preparing
+shows an indeterminate state; completion is confirmed after the process succeeds.
+Cancelling a network copy can leave partial destination files; source files stay.
+The transfer owns a separate SFTP process/PTY and never uses a live shell.
+The old floating progress panel is removed. Hovered destination tabs remain blue
+without moving the mouse and stay marked after their 650 ms dwell activates them.

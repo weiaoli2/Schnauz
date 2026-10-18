@@ -154,6 +154,7 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
         cx.update(|cx| {
             window.update(cx, |fixture, _, cx| fixture.browser.update(cx, |b, _| {
                 assert_eq!(b.file_drag.label().as_deref(),Some("Move 1 item"));
+                assert!(b.file_drag.tab_hovered(0,b.panes[0].tabs[1].id),"Hover is retained without pointer movement");
             })).unwrap();
             native_file_drag::fixture_feedback(true);
             event(window,gpui::FileDropEvent::Pending{position},cx);
@@ -171,6 +172,7 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
             window.update(cx, |fixture, _, cx| fixture.browser.update(cx, |b, _| {
                 assert_eq!(b.panes[0].active,1,"Dwell must activate the target tab");
                 assert_eq!(b.tab(0).current_dir,target);
+                assert!(b.file_drag.tab_hovered(0,b.tab(0).id),"Dwell must retain the blue tab after activation");
             })).unwrap();
             paint(window,cx);
             let position=center("drag-folder");

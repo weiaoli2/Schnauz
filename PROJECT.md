@@ -74,20 +74,20 @@ folder views; tools width is saved separately in central preferences. Terminal
 and Preview have visible toolbar labels. Text preview is read-only native text
 at the file-name size (12 pt), with mouse selection, Cmd+A and Cmd+C.
 
-## Release hold and saved workflow
+## Release workflow — resumed for 0.5.5
 
-Oliver paused release work on 2026-10-18: save the existing workflow, fix the main
-bugs first, then publish when he asks to resume. Public source is already at
+Oliver initially paused release work on 2026-10-18, then explicitly resumed it
+for 0.5.5 after the transfer-footer/tab-hover fixes. Reuse the saved workflow. Public source is already at
 https://github.com/weiaoli2/Schnauz (origin/main, preparation commit ad01fb5).
-No release or candidate tag was published. Existing build outputs are pre-fix
-artifacts and must be rebuilt before publishing. Reuse release.sh and the complete
+The original 0.5.0-rc.1 preparation published no tag or release. Its outputs
+predate subsequent fixes; 0.5.5 is rebuilt separately before publication. Reuse release.sh and the complete
 procedure in docs/RELEASING.md; do not redo account/repository/tooling setup.
 
 The separate website kit is at
 /Users/oliw/Documents/Codex/2026-10-17/what/outputs/Schnauz-Website-Kit.
 Oliver explicitly authorized a product-info and screenshot refresh on 2026-10-18,
 prioritizing projects, terminal, path paste and Todoist. That supersedes only the
-website-kit freeze; release publication remains on hold. The current kit includes
+website-kit freeze; release publication was later resumed for 0.5.5. The kit includes
 four verified sample-data screenshots, the existing logo, complete English copy
 and a website-Codex brief. Older images are archived separately, not presented as
 the current captures.
@@ -112,8 +112,9 @@ never replace them with test fixtures. For necessary isolated UI verification,
 use fresh `SCHNAUZ_CONFIG_DIR` and `SCHNAUZ_START_DIR` paths without changing HOME.
 
 On 2026-10-18 Oliver explicitly requested public source and public downloads on
-GitHub, superseding the earlier Gitea/private-repository idea. The release target
-is **weiaoli2/Schnauz**, version **0.5.0-rc.1**, for both Apple Silicon and Intel.
+GitHub, superseding the earlier Gitea/private-repository idea. The release destination
+is **weiaoli2/Schnauz** for both Apple Silicon and Intel. The original 0.5.0-rc.1
+preparation is superseded by the authorized 0.5.5 preview.
 Release packaging uses separate output paths and must preserve the running app.
 See docs/RELEASING.md for signing, source notices and publication checks.
 Apple Development signing is available; Developer ID/notarization is not yet set up.
@@ -163,7 +164,7 @@ separate visible fixture confirmed horizontal titles/dates, the Add task row,
 Common defaults, independent preview, left divider drag and native right-border
 resize. Its data is synthetic; live Todoist remains Oliver's verification.
 
-Only the compiled version (currently 0.5.4) appears beside the Schnauz title
+Only the compiled version (currently 0.5.5) appears beside the Schnauz title
 and in --version. Oliver removed date/build/source IDs; the app stays Schnauz.app. At inspection the user's process had
 started at 13:04, before the prior 13:06 build finished, so old observations did
 not verify the new binary. Do not restart his live sessions automatically.
@@ -200,6 +201,7 @@ whole current Schnauz.app with + for an unambiguous app-bundle entry.
 | Inline name editor and click-to-rename timing | `src/rename_ui.rs`, click dispatch in `src/main.rs` and `src/search_ui.rs` |
 | Preview layout, selectable text and media | `src/preview_panel.rs`, `src/previews.rs`, `src/text_view.rs`, `src/native_preview.rs`, `src/video_preview.rs` |
 | Terminal and SSH following | `src/schnauz_terminal.rs`, `src/ssh_sync.rs`, `src/terminal-shell/` |
+| Footer transfer progress and owned SFTP meter | `src/transfer_status.rs`, `JobProgress` / upload / download in `src/main.rs` |
 | Remote directory names and listings | `src/remote_listing.rs` |
 | Search and storage map | `src/file_search.rs`, `src/search_ui.rs`, `src/space_map.rs`, `src/space_ui.rs` |
 
@@ -335,7 +337,7 @@ Deep/strict verification and --version passed. It was not launched or substitute
 for Oliver's running app. Logs: /private/tmp/schnauz-053-tests.log and
 /private/tmp/schnauz-053-build.log. No push, release, installer or website-kit update.
 
-## Current development preview — 0.5.4
+## Previous development preview — 0.5.4
 
 Terminal can now start directly in the current SSH folder. Preparation and
 saved-profile resolution run in the background; a new SSH PTY starts in the
@@ -375,3 +377,34 @@ No live tokens, tasks, private file contents or user terminal sessions were used
 The separate preview app was closed after capture. The 13-file ZIP and SHA-256
 manifest were verified; older screenshots are retained in a sibling archive.
 No pushes, tags, releases, installers or website deployment were performed.
+
+## Current work — 0.5.5 release
+
+Oliver confirmed file copies work locally/SSH and SSH/SSH; missing visible feedback
+was the issue. Existing SFTP transfer paths are retained. transfer_status.rs adds
+real per-file network meter output via a separate owned PTY, private mode-0600
+batch file and cancellation. Local copy/move jobs share the footer bar. No floating
+progress overlay remains. Completion requires success; partial network destinations
+are disclosed on cancellation. Existing user PTYs and SSH masters are untouched.
+
+Tab hover uses stable app state/bounds rather than transient GPUI drag-over styles;
+it stays blue without pointer motion and through dwell activation. The hidden
+native drag test covers stationary hover, dwell and actual copy/move. The real
+footer layout probe verifies progress stays in the 30 pt footer without shifting
+files. Local SFTP-server tests cover quoted paths, recursion, real percentage
+output and owned-process cancellation; no live server or account is accessed.
+
+Oliver authorized public GitHub source + both Mac installers for 0.5.5, with an
+English overview linking https://techguyzone.com/apps/, and no new images. The
+prior hold is superseded. Reuse release.sh; never overwrite an existing release
+or restart live sessions. Apple Development signing, not Apple notarization;
+Intel execution here is Rosetta, not physical Intel hardware. Record actual
+artifact/build/publication results after verification.
+
+0.5.5 validation passed: 82 Rust tests, six Nextcloud fixture groups, six Todoist
+fixture groups, native composer checks and complete hidden layout/drag checks.
+After removing an unnecessary newer SFTP flag, the three real transfer/meter/
+cancellation tests passed again. The normal 0.5.5 optimized app is built and
+passes deep/strict certificate verification; it was not launched or substituted
+for Oliver's live process. Separate architecture artifacts are being verified
+through the existing release workflow.

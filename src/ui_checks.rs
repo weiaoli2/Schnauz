@@ -174,6 +174,21 @@ pub(super) fn run() {
                 window.refresh();
             }).unwrap();
         }
+        // Progress lives inside the existing footer, never above the files.
+        let body_before = BOUNDS.with(|all| *all.borrow().get("drag-file-body").unwrap());
+        window.update(cx, |fixture, _, cx| fixture.browser.update(cx, |b,cx| {
+            let progress=Arc::new(JobProgress::default());
+            progress.total.store(100,Ordering::Relaxed);progress.done.store(42,Ordering::Relaxed);
+            b.jobs.push(FileJob{id:999,label:"Copying 3 items to SSH".into(),prog:progress});cx.notify();
+        })).unwrap();
+        for _ in 0..3 { cx.update_window(*window, |_,window,cx| {window.refresh();window.draw(cx).clear();}).unwrap(); }
+        BOUNDS.with(|all| {
+            let all=all.borrow();let footer=all.get("footer").unwrap();let progress=all.get("footer-transfer").unwrap();
+            assert!(f32::from(progress.size.width)>150. && f32::from(progress.size.height)==23.);
+            assert!(footer.contains(&progress.origin) && footer.contains(&progress.bottom_right()));
+            assert_eq!(*all.get("drag-file-body").unwrap(),body_before,"Transfer status cannot shift file content");
+        });
+        window.update(cx,|fixture,_,cx|fixture.browser.update(cx,|b,cx|{b.jobs.clear();cx.notify();})).unwrap();
         println!("PASS real Todoist empty/populated/error layouts, horizontal task/status text, always-visible Add task, left-only tools divider and fixed footer; no windows shown or accounts accessed");
         if !visible {
             drag_checks::run(window, cleanup, cx);

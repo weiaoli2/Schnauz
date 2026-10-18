@@ -110,6 +110,7 @@ mod preview_panel;
 mod window_chrome;
 mod native_file_drag;
 mod spring_drag;
+mod transfer_status;
 mod mascot;
 mod settings;
 mod about;
@@ -1965,23 +1966,35 @@ impl Schnauz {
         .detach();
     }
 
-    /// Upload local file(s) into a remote directory on `pane`.
+    /// Upload through the existing SFTP transport with real per-file progress.
     fn upload_to_remote(&mut self, pane: usize, remote_dir: PathBuf, locals: Vec<PathBuf>, cx: &mut Context<Self>) {
-        let Some(server) = self.tab(pane).remote.clone() else {
-            return;
-        };
-        let dir = remote_dir.to_string_lossy().into_owned();
+        let Some(server) = self.tab(pane).remote.clone() else { return; };
+        let tab_id = self.tab(pane).id;
         let use_system = prefs().ssh_use_system;
-        self.run_remote(
-            pane,
-            move || {
-                for local in &locals {
-                    sftp_upload(&server, local, &dir, use_system)?;
+        let prog = Arc::new(JobProgress::default());
+        *prog.network.lock().unwrap() = Some(transfer_status::Meter::default());
+        let id = self.begin_file_job(format!("Copying {} to {}", items_label(locals.len()), server.name), prog.clone(), cx);
+        cx.spawn(async move |this, cx| {
+            let destination = remote_dir.clone();
+            let result = cx.background_spawn(async move {
+                let mut commands = Vec::new();
+                for local in locals {
+                    let name = local.file_name().ok_or("Invalid source filename")?;
+                    let dest = destination.join(name);
+                    commands.push(format!("put {}{} {}", if local.is_dir() {"-R "} else {""}, sftp_path_arg(local.to_str().ok_or("Unsupported local path")?)?, sftp_path_arg(dest.to_str().ok_or("Unsupported remote path")?)?));
                 }
-                Ok(())
-            },
-            cx,
-        );
+                transfer_status::sftp(&server, &commands.join("\n"), use_system, &prog)
+            }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.jobs.retain(|job| job.id != id);
+                match result {
+                    Ok(()) => { this.remote_error = None; this.set_notice("Copy complete · 100%".into(), cx); }
+                    Err(e) => { this.notice = None; this.remote_error = Some(e); }
+                }
+                if pane < this.panes.len() && this.tab(pane).id == tab_id && this.tab(pane).current_dir == remote_dir { this.reload_pane(pane, cx); }
+                cx.notify();
+            });
+        }).detach();
     }
 
     /// Re-apply this tab's sort criterion to its entries.
@@ -2140,36 +2153,28 @@ impl Schnauz {
         let local = unique_child(&dest_dir, &name);
         let remote = remote_path.to_string_lossy().into_owned();
         let use_system = prefs().ssh_use_system;
+        let prog = Arc::new(JobProgress::default());
+        *prog.network.lock().unwrap() = Some(transfer_status::Meter::default());
+        let id = self.begin_file_job(format!("Copying {} to {}", name, path_label(&dest_dir)), prog.clone(), cx);
         cx.spawn(async move |this, cx| {
-            let s = server.clone();
-            let r = remote.clone();
-            let l = local.clone();
-            let result = cx
-                .background_spawn(async move {
-                    let _ = fs::create_dir_all(l.parent().unwrap_or(&l));
-                    // sftp `get "remote" "local"`.
-                    let script = format!(
-                        "get \"{}\" \"{}\"",
-                        r.replace('"', ""),
-                        l.to_string_lossy().replace('"', "")
-                    );
-                    sftp_batch(&s, &script, use_system).map(|_| l)
-                })
-                .await;
+            let result = cx.background_spawn(async move {
+                fs::create_dir_all(local.parent().unwrap_or(&local)).map_err(|e|e.to_string())?;
+                let script = format!("get -R {} {}", sftp_path_arg(&remote)?, sftp_path_arg(local.to_str().ok_or("Unsupported local path")?)?);
+                transfer_status::sftp(&server, &script, use_system, &prog).map(|_|local)
+            }).await;
             let _ = this.update(cx, |this, cx| {
+                this.jobs.retain(|job|job.id != id);
                 match result {
                     Ok(local) => {
                         this.remote_error = None;
-                        if open_after {
-                            let _ = Command::new("open").arg(&local).spawn();
-                        }
+                        this.set_notice("Copy complete · 100%".into(), cx);
+                        if open_after { let _ = Command::new("open").arg(&local).spawn(); }
                     }
-                    Err(e) => this.remote_error = Some(format!("Download failed: {e}")),
+                    Err(e) => {this.notice=None; this.remote_error=Some(format!("Download failed: {e}"));}
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }).detach();
     }
 
     /// Ask to move the current selection (or the focused item) to Trash.
@@ -2294,8 +2299,8 @@ impl Schnauz {
         self.start_transfer(pairs, TransferKind::Copy, label, true, cx);
     }
 
-    /// Run a copy/move off the main thread. The progress panel shows it once
-    /// it has taken longer than a blink; when it finishes the panes reload and
+    /// Run a copy/move off the main thread with fixed-footer progress.
+    /// When it finishes the panes reload and
     /// (if `undoable`) the completed part lands on the undo stack.
     fn start_transfer(
         &mut self,
@@ -2306,26 +2311,12 @@ impl Schnauz {
         cx: &mut Context<Self>,
     ) {
         let prog = Arc::new(JobProgress::default());
-        self.next_job_id += 1;
-        let id = self.next_job_id;
-        let was_idle = self.jobs.is_empty();
-        self.jobs.push(FileJob { id, label, started: Instant::now(), prog: prog.clone() });
-        if was_idle {
-            // Repaint the progress panel while anything is running.
-            cx.spawn(async move |this, cx| loop {
-                cx.background_executor().timer(Duration::from_millis(150)).await;
-                let running = this.update(cx, |this, cx| {
-                    cx.notify();
-                    !this.jobs.is_empty()
-                });
-                if !matches!(running, Ok(true)) {
-                    break;
-                }
-            })
-            .detach();
-        }
+        let id = self.begin_file_job(label, prog.clone(), cx);
         cx.spawn(async move |this, cx| {
-            let (done, err) = cx.background_spawn(async move { run_transfer(&pairs, kind, &prog) }).await;
+            let (done, err, cancelled) = cx.background_spawn(async move {
+                let (done, err) = run_transfer(&pairs, kind, &prog);
+                (done, err, prog.cancel.load(Ordering::Relaxed))
+            }).await;
             let _ = this.update(cx, |this, cx| {
                 this.jobs.retain(|j| j.id != id);
                 if undoable && !done.is_empty() {
@@ -2333,6 +2324,10 @@ impl Schnauz {
                 }
                 if let Some(e) = err {
                     this.remote_error = Some(e);
+                } else if cancelled {
+                    this.set_notice("Transfer cancelled".into(), cx);
+                } else {
+                    this.set_notice("Transfer complete · 100%".into(), cx);
                 }
                 this.refresh_all_panes(cx);
             });
@@ -2894,82 +2889,6 @@ impl Schnauz {
         }
         self.set_notice(format!("Undid {what}"), cx);
         self.refresh_all_panes(cx);
-    }
-
-    /// Floating panel (bottom-right) listing copies/moves that have run for
-    /// more than a moment: label, bar, bytes, and a cancel button.
-    fn render_jobs_panel(&self) -> Option<AnyElement> {
-        let t = theme();
-        let visible: Vec<&FileJob> = self
-            .jobs
-            .iter()
-            .filter(|j| j.started.elapsed() >= Duration::from_millis(500))
-            .collect();
-        if visible.is_empty() {
-            return None;
-        }
-        let mut panel = div()
-            .absolute()
-            .bottom(px(16.0))
-            .right(px(16.0))
-            .w(px(340.0))
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_3()
-            .rounded_lg()
-            .bg(rgb(t.surface))
-            .border_1()
-            .border_color(rgb(t.border_strong))
-            .shadow_lg()
-            .text_size(px(UI_SMALL_FONT_SIZE))
-            .text_color(rgb(t.text));
-        for j in visible {
-            let total = j.prog.total.load(Ordering::Relaxed);
-            let done = j.prog.done.load(Ordering::Relaxed).min(total);
-            let frac = if total > 0 { done as f32 / total as f32 } else { 0.0 };
-            let detail = if total > 0 {
-                format!("{} of {}", format_size(false, done), format_size(false, total))
-            } else {
-                "Preparing…".to_string()
-            };
-            let prog = j.prog.clone();
-            panel = panel.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().flex_1().min_w_0().truncate().child(j.label.clone()))
-                            .child(
-                                div()
-                                    .id(("job-cancel", j.id as usize))
-                                    .flex_none()
-                                    .px_1()
-                                    .rounded_sm()
-                                    .cursor_pointer()
-                                    .text_color(rgb(t.text_dim))
-                                    .hover(|s| s.bg(rgb(t.hover)).text_color(rgb(t.text)))
-                                    .child("✕")
-                                    .on_click(move |_, _, _| prog.cancel.store(true, Ordering::Relaxed)),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .h(px(4.0))
-                            .w_full()
-                            .rounded_full()
-                            .bg(rgb(t.border))
-                            .child(div().h_full().w(relative(frac)).rounded_full().bg(rgb(t.accent))),
-                    )
-                    .child(div().text_color(rgb(t.text_dim)).child(detail)),
-            );
-        }
-        Some(panel.into_any_element())
     }
 
     /// Handle files dropped onto `dest_dir` in `pane`: upload to the server when
@@ -8684,7 +8603,7 @@ impl Schnauz {
                         })
                     })
                     // File hover highlights ONLY the tab, then spring-opens it.
-                    .drag_over::<ExternalPaths>(|s, _, _, _| s.bg(rgb(0x3478c5)).text_color(rgb(0xffffff)).border_color(rgb(0x3478c5)))
+                    .when(self.file_drag.tab_hovered(pane, tab_id), |s| s.bg(rgb(0x3478c5)).text_color(rgb(0xffffff)).border_color(rgb(0x3478c5)))
                     .on_drag_move::<ExternalPaths>(cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| { this.spring_tab(pane, tab_id, ev, cx); }))
                     .on_drop(cx.listener(move |this, drag: &ExternalPaths, _, cx| { this.drop_on_tab(pane, tab_id, drag.paths().to_vec(), cx); }))
                     // Drop another tab here → insert at this position.
@@ -9562,9 +9481,6 @@ impl Render for Schnauz {
 
         root = root.child(main_row).child(self.render_schnauz_status(cx));
 
-        if let Some(panel) = self.render_jobs_panel() {
-            root = root.child(panel);
-        }
         if self.palette_open && !self.file_search.inline {
             root = root.child(self.render_palette(cx));
         }
@@ -10501,13 +10417,14 @@ struct JobProgress {
     total: AtomicU64,
     done: AtomicU64,
     cancel: AtomicBool,
+    /// OpenSSH reports real percentages for the current file in a network copy.
+    network: Mutex<Option<transfer_status::Meter>>,
 }
 
 /// A copy/move in flight, as the progress panel sees it.
 struct FileJob {
     id: u64,
     label: String,
-    started: Instant,
     prog: Arc<JobProgress>,
 }
 
@@ -11760,23 +11677,6 @@ fn sftp_rename(server: &SftpServer, from: &str, to: &str, use_system: bool) -> R
         use_system,
     )
     .map(|_| ())
-}
-
-/// Upload a local file/folder into a remote directory (recursive for folders).
-fn sftp_upload(
-    server: &SftpServer,
-    local: &Path,
-    remote_dir: &str,
-    use_system: bool,
-) -> Result<(), String> {
-    let l = local.to_string_lossy().replace('"', "");
-    let name = local
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let dest = format!("{}/{}", remote_dir.trim_end_matches('/'), name).replace('"', "");
-    let recurse = if local.is_dir() { "-r " } else { "" };
-    sftp_batch(server, &format!("put {recurse}\"{l}\" \"{dest}\""), use_system).map(|_| ())
 }
 
 /// Permanently delete a remote path (files or folders, recursively) via ssh.

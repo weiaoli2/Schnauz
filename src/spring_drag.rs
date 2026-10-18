@@ -36,6 +36,7 @@ pub(super) struct State {
     count: usize,
     operation: Option<Operation>,
     copy_only: bool,
+    hovered_tab: Option<(usize, u64, Bounds<gpui::Pixels>)>,
     pending: Option<(Target, Bounds<gpui::Pixels>)>,
     timer: Option<gpui::Task<()>>,
     generation: u64,
@@ -46,6 +47,11 @@ impl State {
         self.timer = None;
         self.generation += 1;
     }
+    pub fn tab_hovered(&self, pane: usize, id: u64) -> bool {
+        self.hovered_tab
+            .as_ref()
+            .is_some_and(|(p, t, _)| *p == pane && *t == id)
+    }
     pub fn label(&self) -> Option<String> {
         self.operation
             .filter(|_| self.count > 0)
@@ -55,6 +61,14 @@ impl State {
         if self.drag != drag {
             self.cancel_hover();
             self.drag = drag;
+            self.hovered_tab = None;
+        }
+        if self
+            .hovered_tab
+            .as_ref()
+            .is_some_and(|(_, _, b)| !b.contains(&position))
+        {
+            self.hovered_tab = None;
         }
         if self
             .pending
@@ -83,7 +97,11 @@ impl Schnauz {
     ) {
         let drag = ev.dragged_item() as *const dyn std::any::Any as *const () as usize;
         let fresh = self.file_drag.drag != drag || self.file_drag.operation.is_none();
+        let hovered = self.file_drag.hovered_tab;
         self.file_drag.follow_pointer(drag, ev.event.position);
+        if hovered != self.file_drag.hovered_tab {
+            cx.notify();
+        }
         let view = native_file_drag::destination_id();
         self.file_drag.view = view;
         // Count the payload, never the destination's selection after activation.
@@ -224,6 +242,10 @@ impl Schnauz {
         else {
             return;
         };
+        if !self.file_drag.tab_hovered(pane, id) {
+            self.file_drag.hovered_tab = Some((pane, id, ev.bounds));
+            cx.notify();
+        }
         self.file_drag.copy_only = tab.remote.is_some();
         let op = native_file_drag::destination(self.file_drag.copy_only);
         if self.file_drag.operation != Some(op) {
@@ -277,6 +299,7 @@ mod tests {
         let bounds = Bounds::new(point(px(10.), px(10.)), size(px(120.), px(30.)));
         let target = Target::Tab { pane: 0, id: 42 };
         let mut state = State {
+            hovered_tab: Some((0, 42, bounds)),
             drag: 7,
             count: 3,
             operation: Some(Operation::Copy),
@@ -286,9 +309,16 @@ mod tests {
         state.follow_pointer(7, point(px(20.), px(20.)));
         assert!(state.pending.is_some());
         assert_eq!(state.generation, 0);
+        assert!(state.tab_hovered(0, 42));
+        state.cancel_hover();
+        assert!(
+            state.tab_hovered(0, 42),
+            "Finishing dwell keeps the tab blue"
+        );
         assert_eq!(state.label().as_deref(), Some("Copy 3 items"));
         state.follow_pointer(7, point(px(200.), px(20.)));
         assert!(state.pending.is_none());
+        assert!(!state.tab_hovered(0, 42));
         let generation = state.generation;
         state.follow_pointer(8, point(px(20.), px(20.)));
         assert!(state.generation > generation);

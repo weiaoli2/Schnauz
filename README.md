@@ -29,6 +29,7 @@ you need close at hand and expensive work started only when you ask for it.
 | **Paste a path and get there** | Paste a folder path into the file browser to open it. Paste a file path to open its folder and select the file. Text inputs and the terminal keep ordinary paste. |
 | **Todoist in context** | See, add and complete tasks for the matching project. Reuse or create a same-named Todoist project; background updates keep browsing free. |
 | **SSH in the current folder** | Start an interactive terminal directly in an SSH folder, or follow directories from `ssh host`. Existing authenticated transports can be reused without replacing their running sessions. |
+| **Visible copy progress** | A compact footer bar shows local and SSH copy progress, the current file and cancellation, without covering your files. |
 | **Smooth file dragging** | Hover a tab or folder to open it during a drag. Move normally, or hold Command to copy with a green + and a clear item count. |
 | **Focused search** | Start in the current folder. Search filenames or text-file contents, combine words, and stop a scan whenever you want. Results stay in the file pane. |
 | **Useful previews** | Select and copy text, inspect photos, and play muted-by-default video. Resize the preview and remember it with the folder view. |
@@ -47,20 +48,23 @@ Folder preferences live in central settings, rather than scattering configuratio
 files through your projects. Todoist and Nextcloud are optional; their credentials
 stay in macOS Keychain.
 
-## Availability for Mac
+## Download for Mac — 0.5.5 preview
 
-The current local development preview is **0.5.4**. Public release publication is
-on hold while testing continues. [Follow releases](https://github.com/weiaoli2/Schnauz/releases)
-for published downloads; the earlier candidate artifacts predate current fixes.
+**macOS 14 Sonoma or later.** Choose the build for your Mac:
 
-Schnauz targets **macOS 14 Sonoma or later**, on Apple Silicon and Intel. Future
-release downloads will include architecture labels and checksums. Current local
-builds use an Apple Development signature and are **not Apple-notarized**;
-Developer ID signing/notarization is not yet set up. See [security and verification](SECURITY.md).
+| Mac | Download |
+| --- | --- |
+| Apple Silicon — M1 and newer | [Apple Silicon DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.5.5/Schnauz-0.5.5-macos-arm64.dmg) |
+| Intel | [Intel DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.5.5/Schnauz-0.5.5-macos-x86_64.dmg) |
 
-The app explains macOS file-access permissions on first launch. Full Disk Access
-is optional for ordinary folders, but may be needed for protected locations.
-There is no automatic updater. You can build the current source locally below.
+Open the disk image and drag **Schnauz.app** to **Applications**. Checksums and
+release notes accompany the [release](https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.5).
+Explore the app on [TechGuyZone](https://techguyzone.com/apps/).
+
+This is an **early preview**, signed with an Apple Development certificate and
+**not Apple-notarized**. See [security and verification](SECURITY.md) for signature,
+checksum and first-launch information. The app explains macOS file-access
+permissions; macOS and you control any grants. There is no automatic updater.
 
 ## Build it yourself
 

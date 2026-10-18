@@ -298,17 +298,16 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   saved projects while the browser temporarily follows SSH.
 - About is 520×600 pt, with content following naturally and no flexible blank
   spacer above Close. Preserve scrolling for small windows.
-- Latest instruction, 2026-10-18: release publication is ON HOLD. Save and reuse
-  release.sh plus docs/RELEASING.md, address Oliver's main bugs first, and resume
-  publication only when he asks. Public source is already uploaded; do not create
-  tags, releases, uploads or further pushes during this hold. Refresh the website kit only when explicitly requested (the product-info and
-  screenshot refresh was authorized later on 2026-10-18). Do not regenerate
-  screenshots or rebuild release installers for each routine bug fix;
-  build the normal development app as needed and rebuild both release targets
-  only when release work resumes. Existing candidate artifacts predate bug fixes.
+- Oliver resumed publication on 2026-10-18: after footer transfer progress and
+  stable tab-drag highlighting are fixed, publish a small public GitHub release
+  0.5.5 with an English feature overview and https://techguyzone.com/apps/.
+  Reuse release.sh + docs/RELEASING.md for Apple Silicon and Intel. No new release
+  screenshots. Preserve all live apps/terminals, source attribution and credentials.
+  Publish the signed, verified artifacts as an early prerelease, clearly stating
+  Apple Development signing and no notarization. The previous hold is superseded.
 - On 2026-10-18 Oliver authorized publication to his GitHub account, and explicitly
-  chose PUBLIC source and PUBLIC downloads. Use weiaoli2/Schnauz and v0.5.0-rc.1
-  for the first Apple Silicon + Intel release candidate. This supersedes the
+  chose PUBLIC source and PUBLIC downloads. Use weiaoli2/Schnauz for Apple Silicon + Intel releases; 0.5.0-rc.1 was
+  the unpublished preparation candidate and is superseded by 0.5.5. This supersedes the
   earlier Gitea plan and private-repository answer. Preserve upstream attribution,
   complete dependency notices and publish source and both verified architectures.
   Use separate release output paths; never restart live terminals or replace the
@@ -415,7 +414,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The current local testing version is 0.5.4.
+  no per-build app copies or releases. The current local/release version is 0.5.5.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -462,8 +461,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 
 - Oliver explicitly authorized refreshing the website product info and screenshots
   on 2026-10-18, prioritizing project-specific work, seamless terminal use, pasted
-  file/folder paths and Todoist. This supersedes the screenshot/kit freeze only;
-  release publication, tags, pushes and installers remain on hold. Do not present
+  file/folder paths and Todoist. That request superseded only the screenshot/kit freeze; publication was later
+  separately resumed for 0.5.5. Do not present
   unpublished candidate asset URLs as working downloads. Retain the GitHub link.
 - Terminal in an SSH folder starts a NEW PTY and remote shell in that captured
   directory, using remote_terminal.rs. Reuse authenticated masters via an owned
@@ -487,3 +486,17 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   2 pasted file path, 3 dark overview. Only the preview's owned test shell may
   be restarted for captures. The final four 3200x1640 JPEGs and handoff are in
   outputs/Schnauz-Website-Kit; originals are raw CUA captures, not retouched UI.
+
+- Oliver confirmed both local/SSH and SSH/SSH copying work; the reported issue
+  was missing feedback. Retain the working transfer transport. Local jobs and
+  SFTP upload/download jobs use the fixed footer (transfer_status.rs): current
+  operation/file, real percentage, compact bar and explicit Cancel. Network
+  percentages are for the current file, labeled as such, not a fabricated batch
+  estimate. Preparation stays indeterminate, completion appears only after success.
+  The old floating jobs panel is removed. SFTP uses its own private batch/PTY,
+  never a live terminal; batch files are mode 0600 and removed. Cancellation
+  signals only the new transfer process group and explains possible partial files.
+- File-tab hover colour is stored in spring_drag::State with stable tab IDs and
+  pointer bounds. Do not use GPUI drag_over styling for it; hitbox hover state can
+  disappear on redraw without mouse movement. Keep blue after dwell activation,
+  clearing it only on pointer exit, a new drag, drop or drag completion.
