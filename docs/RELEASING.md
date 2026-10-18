@@ -56,7 +56,8 @@ The result is THIRD_PARTY_NOTICES.txt, copied into each app bundle.
 
 The unmodified MPL-2.0 components option-ext 0.2.0 (runtime) and cbindgen 0.28.0
 (build tool) are preserved under vendor/mpl-sources with their original licenses.
-The release script attaches their exact source archive. This supplies component
+The release script attaches their exact source archive. ZIP-incompatible dates
+before 1980 are clamped to the ZIP minimum without changing file contents. This supplies component
 source access without including compiler caches or personal app settings.
 All other components retain their own terms. Preserve the original Shuffle MIT
 LICENSE and all vendored terminal licenses.

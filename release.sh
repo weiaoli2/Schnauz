@@ -26,7 +26,7 @@ python3 - "$OUTPUT/Schnauz-$VERSION-MPL-sources.zip" <<'PY'
 from pathlib import Path
 import sys,zipfile
 base=Path('vendor/mpl-sources')
-with zipfile.ZipFile(sys.argv[1],'w',compression=zipfile.ZIP_DEFLATED) as archive:
+with zipfile.ZipFile(sys.argv[1],'w',compression=zipfile.ZIP_DEFLATED,strict_timestamps=False) as archive:
     for path in sorted(base.rglob('*')):
         if path.is_file():archive.write(path,Path('MPL-sources')/path.relative_to(base))
 PY

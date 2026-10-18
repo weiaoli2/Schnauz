@@ -408,3 +408,10 @@ cancellation tests passed again. The normal 0.5.5 optimized app is built and
 passes deep/strict certificate verification; it was not launched or substituted
 for Oliver's live process. Separate architecture artifacts are being verified
 through the existing release workflow.
+
+Both 0.5.5 architecture apps built successfully. Apple Silicon ran natively;
+Intel --version and the native text-preview smoke check passed under Rosetta.
+The release workflow was corrected to accept pre-1980 timestamps in unchanged
+MPL source files (ZIP metadata only). No source contents are altered. Both DMGs
+are built separately from the normal app; their final checksums/source archive
+are verified before the authorized GitHub draft is published.
