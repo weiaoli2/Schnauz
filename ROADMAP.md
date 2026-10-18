@@ -2,7 +2,8 @@
 
 ## Current focus
 
-- Public 0.5.0 release candidate for Apple Silicon and Intel Macs.
+- Fix Oliver's reported main bugs; release publication is on hold.
+- Reuse the saved workflow in docs/RELEASING.md when he resumes the 0.5 candidate.
 - Oliver's manual testing and reported bug fixes.
 - Keep browsing responsive, with explicit scans and background work.
 

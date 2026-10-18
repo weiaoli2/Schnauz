@@ -74,6 +74,27 @@ folder views; tools width is saved separately in central preferences. Terminal
 and Preview have visible toolbar labels. Text preview is read-only native text
 at the file-name size (12 pt), with mouse selection, Cmd+A and Cmd+C.
 
+## Release hold and saved workflow
+
+Oliver paused release work on 2026-10-18: save the existing workflow, fix the main
+bugs first, then publish when he asks to resume. Public source is already at
+https://github.com/weiaoli2/Schnauz (origin/main, preparation commit ad01fb5).
+No release or candidate tag was published. Existing build outputs are pre-fix
+artifacts and must be rebuilt before publishing. Reuse release.sh and the complete
+procedure in docs/RELEASING.md; do not redo account/repository/tooling setup.
+
+The separate website kit is at
+/Users/oliw/Documents/Codex/2026-10-17/what/outputs/Schnauz-Website-Kit.
+Keep its current copy, logo and pictures as they are; the requested GitHub link
+is included. No new captures or kit regeneration during debugging. Incomplete
+image-preview captures remain unfinished; do not represent them as final imagery.
+
+An isolated screenshot session exposed a blank/oversized picture preview; this
+has not been fixed. Suspected cause: percentage image width combined with GPUI's
+intrinsic pixel height. Reproduce and fix in the normal bug workflow when taken
+up; do not assume the root cause is confirmed. Oliver will provide further bugs.
+Never restart or substitute the demo for his live app.
+
 ## Current stage and user data
 
 Oliver is manually testing the current app and reporting individual fixes. Wait

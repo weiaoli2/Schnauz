@@ -262,6 +262,14 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   saved projects while the browser temporarily follows SSH.
 - About is 520×600 pt, with content following naturally and no flexible blank
   spacer above Close. Preserve scrolling for small windows.
+- Latest instruction, 2026-10-18: release publication is ON HOLD. Save and reuse
+  release.sh plus docs/RELEASING.md, address Oliver's main bugs first, and resume
+  publication only when he asks. Public source is already uploaded; do not create
+  tags, releases, uploads or further pushes during this hold. Keep the website kit
+  and its existing pictures as they are, apart from the requested GitHub link.
+  Do not regenerate screenshots or rebuild release installers for each bug fix;
+  build the normal development app as needed and rebuild both release targets
+  only when release work resumes. Existing candidate artifacts predate bug fixes.
 - On 2026-10-18 Oliver authorized publication to his GitHub account, and explicitly
   chose PUBLIC source and PUBLIC downloads. Use weiaoli2/Schnauz and v0.5.0-rc.1
   for the first Apple Silicon + Intel release candidate. This supersedes the

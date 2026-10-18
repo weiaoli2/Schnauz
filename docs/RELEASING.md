@@ -1,7 +1,24 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-First public candidate: **v0.5.0-rc.1**. Source and downloads are public.
+Planned first candidate: **v0.5.0-rc.1**, with public source and public downloads.
+
+## Current status — publication on hold
+
+On 2026-10-18 Oliver asked to save and reuse this release workflow, fix the main
+bugs first, and publish the release only afterwards. Do not run the publishing
+steps until he explicitly resumes the release. Do not make new website screenshots
+or otherwise rebuild the website kit during this bug-fix phase.
+
+The public repository and source already exist at the URL above. No GitHub
+release/tag was published during preparation. Both architectures were built into
+the chat's outputs/Schnauz-0.5.0-rc.1 directory, and tests passed. Those are
+pre-fix artifacts, not the final release; rebuild after the approved bug fixes.
+Keep the existing compiler caches, target installations, certificates, notices,
+README and packaging scripts. Do not recreate the repository or release tooling.
+
+Homepage: https://techguyzone.com/apps/
+Local branch: schnauz. Public destination: origin/main. Shuffle upstream is reference only.
 
 ## Requirements
 
@@ -60,3 +77,66 @@ Do not disable system security checks or modify user privacy databases.
 
 Publishing is a separate explicit action through GitHub Releases. Only push to
 the Schnauz origin; the Shuffle upstream remote is read-only reference material.
+
+## Reuse this workflow after the bug fixes
+
+1. Finish Oliver's reported bugs and let him test the main app. Preserve live
+   settings, terminals and SSH sessions. The screenshot demo has a separate
+   profile under /private/tmp/Schnauz-Website-Demo; never substitute it for the
+   real app's profile. The web kit stays frozen unless Oliver requests changes.
+2. Review and commit the fixes locally. Confirm the intended Cargo version
+   (currently 0.5.0-rc.1) in both Cargo.toml and Cargo.lock. Since no candidate
+   tag/release exists yet, the same candidate version can be kept. Do not move
+   any existing tag or overwrite already published assets in later releases.
+3. Run ./test.sh. Reuse the existing Apple Silicon and Intel targets and caches.
+   Run the existing native text-preview smoke check on both release binaries;
+   this Mac has Rosetta, so Intel can execute under translation. Record that as
+   Rosetta validation, not a physical Intel hardware test.
+4. Run the existing ./release.sh to build both architectures, signed app bundles,
+   verified DMGs, the exact MPL component-source ZIP and SHA256SUMS.txt. Output
+   defaults to dist/<version>; SCHNAUZ_RELEASE_OUTPUT can select another absolute
+   destination. Never point release output at the running Schnauz.app.
+5. Check each app/helper architecture and signature, installer checksums and
+   source correspondence. Review prospective committed files and Git history
+   for credentials without reading Keychain tokens. Live settings, tokens,
+   compiler caches, signing keys and the website kit do not belong in Git.
+6. Write release notes in the output directory with the features/fixes, source
+   commit, macOS 14+ requirement, Apple Silicon/Intel choices and validation
+   scope. Clearly state Apple Development signing and no Apple notarization.
+7. Only after Oliver resumes publication, use the existing origin, push the
+   reviewed source, create the version tag and prepare a draft GitHub release.
+   Upload all artifacts together, verify the draft and then publish it as a
+   prerelease. No new repository, updater, account setup or screenshots needed.
+
+The publication commands below are a saved procedure, not permission to execute
+them while the release is on hold. Run from the repository after committing fixes:
+
+```sh
+VERSION=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1)
+TAG="v$VERSION"
+OUT="${SCHNAUZ_RELEASE_OUTPUT:-$PWD/dist/$VERSION}"
+
+git status --short
+git push origin HEAD:main
+git tag -a "$TAG" -m "Schnauz $VERSION release candidate"
+git push origin "$TAG"
+
+gh release create "$TAG" \
+  "$OUT/Schnauz-$VERSION-macos-arm64.dmg" \
+  "$OUT/Schnauz-$VERSION-macos-x86_64.dmg" \
+  "$OUT/Schnauz-$VERSION-MPL-sources.zip" \
+  "$OUT/SHA256SUMS.txt" \
+  --repo weiaoli2/Schnauz --verify-tag --draft --prerelease \
+  --title "Schnauz $VERSION — Release Candidate" \
+  --notes-file "$OUT/RELEASE-NOTES.md"
+
+gh release view "$TAG" --repo weiaoli2/Schnauz \
+  --json tagName,isDraft,isPrerelease,url,assets
+
+# Final step, once the draft and its assets are verified:
+gh release edit "$TAG" --repo weiaoli2/Schnauz --draft=false --prerelease
+```
+
+For subsequent releases, reuse these scripts and update the version, release
+notes and changed validation details. Regenerate notices only when dependency
+changes require it. Keep the GitHub homepage set to https://techguyzone.com/apps/.
