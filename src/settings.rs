@@ -20,6 +20,7 @@ struct Settings {
     focus: FocusHandle,
     /// The action whose keystroke is currently being recorded, if any.
     recording: Option<KeyAction>,
+    file_access_error: Option<String>,
     /// In-progress hex color entry: (which color, typed hex digits).
     color_edit: Option<(ColorTarget, String)>,
 }
@@ -30,6 +31,7 @@ pub(super) fn tab_sections(tab: usize) -> &'static [&'static str] {
     match tab {
         0 => &[
             "Explorer",
+            "File Access",
             "Inspector",
             "Search",
             "Sidebar",
@@ -78,6 +80,7 @@ impl Settings {
             content_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             recording: None,
+            file_access_error: None,
             color_edit: None,
         }
     }
@@ -512,6 +515,23 @@ impl Settings {
                     )
                     .into_any_element(),
                 ],
+            ),
+            settings_section(
+                "File Access",
+                Some(file_access::HELP),
+                vec![div().flex().flex_col().gap_3()
+                    .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text)).child(file_access::STEPS))
+                    .child(div().flex().child(div().id("settings-file-access")
+                        .px_3().py_2().rounded_md().cursor_pointer()
+                        .bg(rgb(t.hover)).text_color(rgb(t.text))
+                        .hover(|s| s.bg(rgb(t.selected))).child("Open System Settings")
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.file_access_error = file_access::open_settings().err();
+                            cx.notify();
+                        }))))
+                    .children(self.file_access_error.clone().map(|error| div()
+                        .text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(0xc23a35)).child(error)))
+                    .into_any_element()],
             ),
             settings_section(
                 "Inspector",

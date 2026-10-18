@@ -115,6 +115,9 @@ pub(super) fn open(folder: Option<Shortcut>, cx: &mut App) -> Result<(), String>
                 });
                 let mut finder = Schnauz::new(location, cx);
                 if startup {
+                    if !prefs().file_access_intro_seen {
+                        finder.file_access_intro = Some(file_access::Intro::default());
+                    }
                     finder.restore_session();
                     cx.set_global(ProjectLibraryGlobal(
                         finder.projects.clone(),

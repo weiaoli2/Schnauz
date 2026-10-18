@@ -594,7 +594,7 @@ impl Schnauz {
         if !self.palette_items.is_empty() {
             panel = panel.child(div().relative().flex_1().min_h_0()
                 .child(uniform_list("file-search-results",self.palette_items.len(),cx.processor(move|this,range:std::ops::Range<usize>,_,cx| {
-                    let width = browser_width(pane).max(1.);
+                    let width = this.browser_width(pane).max(1.);
                     let cell_width = ((width-36.)/2.).max(0.);
                     range.filter_map(|i| {
                         let item = this.palette_items.get(i)?;

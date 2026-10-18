@@ -31,7 +31,8 @@ pub(super) fn frames(
 
 impl Schnauz {
     pub(super) fn native_preview_blocked(&self) -> bool {
-        self.confirm_delete.is_some()
+        self.file_access_intro.is_some()
+            || self.confirm_delete.is_some()
             || self.info_panel.is_some()
             || self.batch_rename.is_some()
             || self.ssh_ask

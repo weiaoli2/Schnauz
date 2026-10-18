@@ -258,7 +258,7 @@ impl Schnauz {
                 div().id(("inspect-storage", pane)).h(px(26.)).px_2().flex().items_center().gap_2().rounded_md().cursor_pointer()
                     .hover(|s| s.bg(rgb(t.hover))).tooltip(tip("Disk Usage…"))
                     .child(ui_icon(Icon::Storage, 16., rgb(t.text_muted)))
-                    .when(pane_width(pane) > 700., |d| d.child("Disk Usage"))
+                    .when(self.pane_width(pane) > 700., |d| d.child("Disk Usage"))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.inspect_folder(pane, this.tab(pane).current_dir.clone(), window, cx);
                     }))

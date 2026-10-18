@@ -19,7 +19,6 @@ pub(super) struct State {
     hovered: Option<usize>,
     selected: Option<usize>,
     geometry: Rc<RefCell<Geometry>>,
-    expanded_from: Option<(f32, f32)>,
 }
 impl Drop for State {
     fn drop(&mut self) {
@@ -48,19 +47,6 @@ impl Schnauz {
         }
         self.dismiss_space_map = false;
         self.todoist.open = false;
-        let mut expanded_from = self.space_map.as_ref().and_then(|s| s.expanded_from);
-        if self.space_map.is_none() && !window.is_fullscreen() {
-            if let Some(display) = window.display(cx) {
-                let bounds = window.bounds();
-                let width = f32::from(bounds.size.width);
-                let available = f32::from(display.bounds().right() - bounds.left());
-                let expanded = (width + 420.).min(available).max(width);
-                if expanded - width > 8. {
-                    expanded_from = Some((width, expanded));
-                    window.resize(size(px(expanded), window.viewport_size().height));
-                }
-            }
-        }
         let id = NEXT_INSPECTION.fetch_add(1, Ordering::Relaxed);
         let cancel = Arc::new(AtomicBool::new(false));
         self.space_map = Some(State {
@@ -75,7 +61,6 @@ impl Schnauz {
             hovered: None,
             selected: None,
             geometry: Default::default(),
-            expanded_from,
         });
         window.focus(&self.focus);
         cx.notify();
@@ -141,14 +126,8 @@ impl Schnauz {
         })
         .detach();
     }
-    pub(super) fn close_space_map(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(state) = self.space_map.take() {
-            if let Some((old, expanded)) = state.expanded_from {
-                if (f32::from(window.viewport_size().width) - expanded).abs() < 8. {
-                    window.resize(size(px(old), window.viewport_size().height));
-                }
-            }
-        }
+    pub(super) fn close_space_map(&mut self, cx: &mut Context<Self>) {
+        self.space_map = None;
         if self.active_tab().selection.len() == 1 {
             if let Some(path) = self.active_tab().selection.iter().next().cloned() { self.focus_entry(self.active_pane, path, cx); }
         }
@@ -262,8 +241,8 @@ impl Schnauz {
                     .child(
                         map_button("inspect-close", "×")
                             .tooltip(tip("Close folder inspection"))
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                this.close_space_map(window, cx)
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.close_space_map(cx)
                             })),
                     ),
             )

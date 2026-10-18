@@ -75,6 +75,7 @@ mod projects;
 mod legacy;
 mod project_sidebar;
 mod browser_windows;
+mod file_access;
 use browser_windows::{FolderViewsGlobal, ProjectLibraryGlobal};
 mod text_preview;
 mod text_view;
@@ -142,6 +143,8 @@ struct Prefs {
     drive_critical: u8,
     /// Show free drive capacity as a percentage instead of GB.
     drive_free_percent: bool,
+    /// The optional macOS file-access introduction has been acknowledged.
+    file_access_intro_seen: bool,
     /// How many Recents to show in the sidebar (0 hides the section).
     /// Give the command palette (Cmd+P) its own Up/Down query history.
     palette_history: bool,
@@ -179,6 +182,7 @@ impl Default for Prefs {
             drive_warning: 80,
             drive_critical: 90,
             drive_free_percent: false,
+            file_access_intro_seen: false,
             palette_history: false,
             groups_enabled: false,
             show_filter_button: true,
@@ -208,6 +212,7 @@ thread_local! {
         drive_warning: 80,
         drive_critical: 90,
         drive_free_percent: false,
+        file_access_intro_seen: false,
         palette_history: false,
         groups_enabled: false,
         show_filter_button: true,
@@ -1282,6 +1287,9 @@ struct Schnauz {
     dismiss_space_map: bool,
     preview_pending: RefCell<HashMap<PathBuf,Arc<AtomicBool>>>,
     preview_resize: Option<preview_panel::Drag>,
+    tools_expansion: preview_panel::Expansion,
+    pane_sizes: Rc<RefCell<[f32; 2]>>,
+    browser_sizes: Rc<RefCell<[f32; 2]>>,
     video_preview: Option<Rc<video_preview::Session>>,
     text_view: Option<Rc<text_view::Session>>,
     info_pending: RefCell<HashSet<PathBuf>>,
@@ -1373,6 +1381,7 @@ struct Schnauz {
     saved_session: String,
     projects: projects::Library,
     project_load_error: Option<String>,
+    file_access_intro: Option<file_access::Intro>,
     project_sessions: HashMap<Option<u64>, schnauz::ProjectSession>,
     project_dialog: Option<String>,
     project_dialog_error: Option<String>,
@@ -1586,6 +1595,9 @@ impl Schnauz {
             dismiss_space_map: false,
             preview_pending: RefCell::new(HashMap::new()),
             preview_resize: None,
+            tools_expansion: preview_panel::Expansion::default(),
+            pane_sizes: Rc::new(RefCell::new([0.; 2])),
+            browser_sizes: Rc::new(RefCell::new([0.; 2])),
             video_preview: None,
             text_view: None,
             info_pending: RefCell::new(HashSet::new()),
@@ -1634,6 +1646,7 @@ impl Schnauz {
             next_job_id: 0,
             undo_stack: Vec::new(),
             saved_session: String::new(),
+            file_access_intro: None,
             projects, project_load_error, project_sessions: HashMap::new(),
             project_dialog: None, project_dialog_error: None, new_text_file: None,
             info_panel: None,
@@ -1661,6 +1674,14 @@ impl Schnauz {
 
     fn active_tab(&self) -> &Tab {
         self.tab(self.active_pane)
+    }
+
+    fn pane_width(&self, pane: usize) -> f32 {
+        self.pane_sizes.borrow()[pane.min(1)]
+    }
+
+    fn browser_width(&self, pane: usize) -> f32 {
+        self.browser_sizes.borrow()[pane.min(1)]
     }
 
     // ----- right-click context menu -----
@@ -5410,6 +5431,15 @@ impl Schnauz {
         let ks = &ev.keystroke;
         let cmd = ks.modifiers.platform;
         let key = ks.key.as_str();
+        if self.file_access_intro.is_some() {
+            match key {
+                "escape" => self.dismiss_file_access_intro(cx),
+                "enter" => self.open_file_access_settings(cx),
+                _ => {}
+            }
+            cx.stop_propagation();
+            return;
+        }
         if self.favourite_drag.is_some() {
             if key == "escape" { self.favourite_drag = None; cx.notify(); }
             cx.stop_propagation(); return;
@@ -7143,7 +7173,7 @@ impl Schnauz {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.space_map.is_some() { self.close_space_map(window, cx); }
+        if self.space_map.is_some() { self.close_space_map(cx); }
         if self.suppress_entry_click || self.marquee_click_suppressed() {
             return;
         }
@@ -7550,7 +7580,7 @@ impl Schnauz {
 
     /// Columns across the grid in Icons view (from the last measured width).
     fn icon_cols(&self, pane: usize) -> usize {
-        let width = browser_width(pane).max(240.0);
+        let width = self.browser_width(pane).max(240.0);
         ((width / 108.0).floor() as usize).max(1)
     }
 
@@ -8581,7 +8611,7 @@ impl Schnauz {
         let view = self.tab(pane).view;
         let local = self.tab(pane).remote.is_none();
         let has_selection = !self.tab(pane).selection.is_empty();
-        let tiny = pane_width(pane) > 0. && pane_width(pane) < 470.;
+        let tiny = self.pane_width(pane) > 0. && self.pane_width(pane) < 470.;
         let mut row = div().flex_none().flex().items_center().gap_1().pl_2();
         if local && !tiny {
             row = row.child(button("tb-new-folder", pane, Icon::FolderPlus, false, true, "New folder · ⇧⌘N")
@@ -8771,7 +8801,9 @@ impl Schnauz {
 
     /// The canvas: one full-width pane, or two panes split by a draggable
     /// divider, plus a right-edge drop zone (shown while dragging a tab).
-    fn render_content(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_content(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+        let tools = preview_panel::tools_width(self);
+        let core_width = (f32::from(window.viewport_size().width) - self.sidebar_width(window) - tools - 6.).max(1.);
         let mut row = div().flex_1().flex().min_w_0().h_full().relative();
 
         if self.panes.len() == 1 {
@@ -8792,7 +8824,7 @@ impl Schnauz {
                             ("split-close", self.split_epoch),
                             Animation::new(Duration::from_millis(SPLIT_ANIM_MS))
                                 .with_easing(ease_out_quint()),
-                            move |el, t| el.w(relative(start_w + (1.0 - start_w) * t)),
+                            move |el, t| el.w(px(core_width * (start_w + (1.0 - start_w) * t) + tools)),
                         ),
                 );
             } else {
@@ -8821,7 +8853,7 @@ impl Schnauz {
                             ("split-open", self.split_epoch),
                             Animation::new(Duration::from_millis(SPLIT_ANIM_MS))
                                 .with_easing(ease_out_quint()),
-                            move |el, t| el.w(relative(1.0 + (ratio - 1.0) * t)),
+                            move |el, t| el.w(px(core_width * (1.0 + (ratio - 1.0) * t))),
                         ),
                 )
                 .child(self.render_divider(cx))
@@ -8914,7 +8946,7 @@ impl Schnauz {
         if self.panes.len() < 2 {
             return;
         }
-        let content_w = (pane_width(0) + pane_width(1)).max(1.0);
+        let content_w = (self.pane_width(0) + self.pane_width(1) - preview_panel::tools_width(self)).max(1.0);
         let delta = (x - start_x) / content_w;
         self.split_ratio = (start_ratio + delta).clamp(0.2, 0.8);
         cx.notify();
@@ -9058,6 +9090,8 @@ impl Schnauz {
         }};
 
         let browser_owner = cx.entity().downgrade();
+        let browser_sizes = self.browser_sizes.clone();
+        let pane_sizes = self.pane_sizes.clone();
         let browser = div()
             .relative()
             .flex()
@@ -9070,12 +9104,12 @@ impl Schnauz {
                 gpui::canvas(
                     move |bounds, window, _| {
                         let width = f32::from(bounds.size.width);
-                        let changed = BROWSER_W.with(|w| {
-                            let mut widths = w.borrow_mut();
+                        let changed = {
+                            let mut widths = browser_sizes.borrow_mut();
                             let old = widths[pane.min(1)];
                             widths[pane.min(1)] = width;
                             (old - width).abs() > 0.5
-                        });
+                        };
                         if changed {
                             window.on_next_frame(move |_, cx| {
                                 browser_owner.update(cx, |_, cx| cx.notify()).ok();
@@ -9120,12 +9154,12 @@ impl Schnauz {
                 gpui::canvas(
                     move |bounds, window, _| {
                         let width = f64::from(bounds.size.width) as f32;
-                        let changed = PANE_W.with(|w| {
-                            let mut widths = w.borrow_mut();
+                        let changed = {
+                            let mut widths = pane_sizes.borrow_mut();
                             let old = widths[pane.min(1)];
                             widths[pane.min(1)] = width;
                             (old-width).abs() > 0.5
-                        });
+                        };
                         // Re-render when the toolbar or preview bounds change.
                         if changed {
                             window.on_next_frame(move |_, cx| {
@@ -9498,7 +9532,7 @@ impl Schnauz {
         let tab = self.tab(pane);
         let scroll = tab.scroll_handle.clone();
         let pane_dir = tab.current_dir.clone();
-        let width = browser_width(pane).max(240.0);
+        let width = self.browser_width(pane).max(240.0);
         let cell_w = 108.0_f32;
         let cols = ((width / cell_w).floor() as usize).max(1);
         let n = if tab.is_filtered() {
@@ -9670,7 +9704,8 @@ impl Schnauz {
 
 impl Render for Schnauz {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if std::mem::take(&mut self.dismiss_space_map) { self.close_space_map(window, cx); }
+        if std::mem::take(&mut self.dismiss_space_map) { self.close_space_map(cx); }
+        self.sync_tools_window(window, cx);
         if self.todoist.open && window.is_window_active() {
             let owner = cx.entity().downgrade();
             window.on_next_frame(move |_, cx| { let _ = owner.update(cx, |this, cx| this.ensure_todoist(false, cx)); });
@@ -9689,7 +9724,7 @@ impl Render for Schnauz {
             .flex_1()
             .min_h_0()
             .child(self.render_sidebar(window, cx))
-            .child(self.render_content(cx));
+            .child(self.render_content(window, cx));
 
         let mut root = div()
             .relative()
@@ -9898,6 +9933,9 @@ impl Render for Schnauz {
         if self.new_text_file.is_some() { root = root.child(self.render_text_file_dialog(cx)); }
         if self.project_dialog.is_some() {
             root = root.child(self.render_project_dialog(cx));
+        }
+        if self.file_access_intro.is_some() {
+            root = root.child(self.render_file_access_intro(cx));
         }
         if prefs().show_fps {
             root = root.child(fps_overlay());
@@ -12142,21 +12180,6 @@ fn ns_view_ptr(window: &Window) -> Option<*mut std::ffi::c_void> {
 }
 
 thread_local! {
-    /// Full header width, including any preview (0 = not yet measured).
-    static PANE_W: RefCell<[f32; 2]> = const { RefCell::new([0.0; 2]) };
-    /// File viewport width, excluding the preview.
-    static BROWSER_W: RefCell<[f32; 2]> = const { RefCell::new([0.0; 2]) };
-}
-
-fn pane_width(pane: usize) -> f32 {
-    PANE_W.with(|w| w.borrow()[pane.min(1)])
-}
-
-fn browser_width(pane: usize) -> f32 {
-    BROWSER_W.with(|w| w.borrow()[pane.min(1)])
-}
-
-thread_local! {
     /// The open share picker, kept alive while its popover is showing.
     static SHARE_PICKER: RefCell<Option<objc2::rc::Retained<objc2_app_kit::NSSharingServicePicker>>> =
         const { RefCell::new(None) };
@@ -13153,6 +13176,7 @@ fn save_prefs(p: &Prefs) {
         );
         body.push_str(&format!("preview_width={}\ntools_width={}\n",p.preview_width,p.tools_width));
         body.push_str(&format!("drive_warning={}\ndrive_critical={}\ndrive_free_percent={}\n", p.drive_warning, p.drive_critical, p.drive_free_percent));
+        body.push_str(&format!("file_access_intro_seen={}\n", p.file_access_intro_seen));
         let _ = fs::write(&file, body);
     }
 }
@@ -13209,6 +13233,7 @@ fn load_prefs() -> Prefs {
                     "show_parent" => p.show_parent = on,
                     "sidebar_collapsed" => p.sidebar_collapsed = on,
                     "drive_free_percent" => p.drive_free_percent = on,
+                    "file_access_intro_seen" => p.file_access_intro_seen = on,
                     "drive_warning" => if let Ok(value) = v.trim().parse::<u8>() { p.drive_warning = value.clamp(1,98); },
                     "drive_critical" => if let Ok(value) = v.trim().parse::<u8>() { p.drive_critical = value.clamp(2,99); },
 

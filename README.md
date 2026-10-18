@@ -106,6 +106,12 @@ limit show an explicit partial-map notice. Closing the panel cancels the scan.
 The map starts below the path and filter bars. Selecting outside it closes it;
 navigation from inside its graphic keeps it open.
 
+**File access:** On first launch, Schnauz shows a skippable guide. **Open System
+Settings** opens macOS **Privacy & Security → Full Disk Access**. Enable Schnauz
+there, or use **+** to add this app, then restart it when convenient. You can
+continue without it, with some folders restricted. The guide remains under
+**Settings → General → File Access**. Acknowledging it does not grant access.
+
 Click **+ beside Projects** or press **⌘⇧S** to create a project from the current tabs.
 Each project keeps its own **Favourites**, connection settings, Todoist link and
 last tabs/layout. **Personal** has its own profile. Every project includes your
@@ -215,7 +221,12 @@ Todoist opens a project-specific Tasks pane on the right after connection.
 Use the **Todoist** toolbar button or **Settings → General → Connections →
 Todoist → Show tasks** to reopen it. Todoist and Disk Usage share a framed tools
 pane with its own saved width. File preview remains visible independently. In
-narrow split panes the tools and preview stack vertically to retain browsing room.
+all views the order is files → preview → Todoist / Disk Usage. Preview takes
+space from the file list without enlarging the window. Tools instead extend the
+window to the right when display space permits, and share one extension when
+switching between them. Closing tools removes that extension while preserving
+manual window resizing. The preview resizes from the left edge; tools from the
+outer right edge. Panels remain side by side at screen edges or in full screen.
 
 Selecting another Schnauz project switches Tasks with it. Existing unlinked
 projects first search by name; **Find or create matching project** can create a

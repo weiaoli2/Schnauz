@@ -46,6 +46,13 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   `/Users/oliw/Documents/Codex/2026-10-17/what/work/profile-backups/`.
   Treat preview profiles as user data too; never
   replace live state with QA fixtures or leave a testing view active for the user.
+- Show a skippable English File access for Schnauz introduction once, with a
+  persistent Settings → General → File Access section. Open macOS Privacy &
+  Security → Full Disk Access only on an explicit button click. The user grants
+  access there; never change permissions/TCC or probe protected folders to infer
+  a grant. The central file_access_intro_seen preference records acknowledgement
+  only. Do not force a restart or block normal browsing without Full Disk Access.
+  Hide native previews while the introduction is open.
 - User feedback: no automatic recursive folder-size calculations while browsing.
   Main text is 12 logical px/pt, small labels 11, file rows 26 px. Keep it compact.
 - Tabs have visible outlines and rounded top corners. Folder names use the same
@@ -295,8 +302,15 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - The interface language is English; call the storage map Disk Usage. File preview
   is independent of the framed tools pane, where Todoist and Disk Usage replace
   each other. Both start below the full-width navigation/filter rows. Keep both
-  visible side by side when space permits; stack vertically in a narrow split,
-  preserving browser space. Preview width stays in folder views; tools_width is
+  in the fixed order files → preview → Todoist / Disk Usage, never stacked.
+  Preview consumes browser width without growing the window. Opening tools grows
+  the window to the right, within the display; switching tools must not grow it
+  twice. Closing removes only the added width, preserving manual window resizing.
+  Resize preview from its left edge; tools from their outer right edge. Keep
+  split proportions based on the browser/preview area before the tool extension.
+  Pane/viewport measurements are per window, never process-wide. In full screen
+  or at screen edges, fit panels beside each other without overlap.
+  Preview width stays in folder views; tools_width is
   saved separately in central prefs, only after a drag. Use unique resize IDs.
   Always show scan progress or errors instead of an empty panel. Inspect closes
   Tasks; opening Tasks dismisses Disk Usage through the deferred close path.

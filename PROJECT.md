@@ -57,7 +57,10 @@ Schnauz Light uses black text and controls; saved stock light themes upgrade
 on load while native folder icons keep macOS blue. File preview is independent
 of the framed Todoist/Disk Usage tools pane, below the full-width path/filter
 rows. The two tools replace each other; preview remains visible for previewable
-selections. Narrow split panes stack tools and preview. Preview width stays in
+selections. Preview stays directly right of the files and uses their existing
+width; Todoist/Disk Usage extend the window to the right. They share one extension
+without stacking or repeated growth when switching tools. Width measurements are
+per window. Preview width stays in
 folder views; tools width is saved separately in central preferences. Terminal
 and Preview have visible toolbar labels. Text preview is read-only native text
 at the file-name size (12 pt), with mouse selection, Cmd+A and Cmd+C.
@@ -85,6 +88,7 @@ the server account/repository and current review status before proceeding.
 | Area | Source |
 |---|---|
 | Browser, navigation and file operations | `src/main.rs` |
+| Optional macOS file-access guide | `src/file_access.rs`, General → File Access settings |
 | Project persistence, shared windows and switching | `src/projects.rs`, `src/schnauz.rs`, `src/browser_windows.rs` |
 | Project folders, tags and connections | `src/project_sidebar.rs` |
 | Global drive capacity and cloud paths/menus | `src/volumes.rs`, `volumectl.swift`, `src/cloud_locations.rs`, `src/cloud_actions.rs` |
