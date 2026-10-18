@@ -406,8 +406,7 @@ fixture groups, native composer checks and complete hidden layout/drag checks.
 After removing an unnecessary newer SFTP flag, the three real transfer/meter/
 cancellation tests passed again. The normal 0.5.5 optimized app is built and
 passes deep/strict certificate verification; it was not launched or substituted
-for Oliver's live process. Separate architecture artifacts are being verified
-through the existing release workflow.
+for Oliver's live process. Separate architecture artifacts passed the existing release workflow.
 
 Both 0.5.5 architecture apps built successfully. Apple Silicon ran natively;
 Intel --version and the native text-preview smoke check passed under Rosetta.
@@ -415,3 +414,20 @@ The release workflow was corrected to accept pre-1980 timestamps in unchanged
 MPL source files (ZIP metadata only). No source contents are altered. Both DMGs
 are built separately from the normal app; their final checksums/source archive
 are verified before the authorized GitHub draft is published.
+
+## Published release — 0.5.5
+
+Public early prerelease published 2026-10-18:
+https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.5
+
+Source tag v0.5.5 points to 7c48f1432377c08899f114c70c831903c197d694.
+Both architecture apps/helpers have verified signatures and matching architectures;
+Apple Silicon ran natively and Intel's text-preview smoke test passed under
+Rosetta. Both DMGs, exact MPL sources and SHA256SUMS.txt were uploaded, and every
+GitHub asset digest matched its local SHA-256. Release overview links TechGuyZone;
+no new images. The release is Apple Development signed and not notarized.
+
+Artifacts/receipt: dist/0.5.5/RELEASE-VERIFICATION.json. Existing release.sh and
+docs/RELEASING.md are the reusable flow. This publication request is complete;
+future versions require a new user request. Never replace published assets or
+move v0.5.5. The user's live application/terminal sessions were not restarted.

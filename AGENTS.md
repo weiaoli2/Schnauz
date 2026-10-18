@@ -500,3 +500,10 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   pointer bounds. Do not use GPUI drag_over styling for it; hitbox hover state can
   disappear on redraw without mouse movement. Keep blue after dwell activation,
   clearing it only on pointer exit, a new drag, drop or drag completion.
+
+- 0.5.5 publication completed 2026-10-18 at
+  https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.5. All four uploaded asset
+  digests match local checksums. Release source is tag v0.5.5 / 7c48f14; later
+  documentation-only commits do not change that artifact provenance. This request
+  is complete, not continuing authorization for future releases. Reuse the saved
+  workflow on a new request; never move the existing tag or overwrite its assets.

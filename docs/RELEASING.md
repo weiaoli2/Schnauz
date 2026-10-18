@@ -3,12 +3,19 @@
 Official repository: https://github.com/weiaoli2/Schnauz (public).
 Current release: **v0.5.5**, public Apple Silicon + Intel early preview.
 
-## Current authorization — resumed for 0.5.5
+## Current status — 0.5.5 published
 
 On 2026-10-18 Oliver resumed GitHub publication after the transfer footer and
 stable tab-drag feedback fixes. He requested a concise, attractive overview,
 no new screenshots, and a link to https://techguyzone.com/apps/.
 The earlier publication hold and unpublished v0.5.0-rc.1 candidate are superseded.
+
+0.5.5 was published on 2026-10-18 at
+https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.5. Both DMGs, MPL sources
+and the checksum file passed local verification and matched GitHub asset digests.
+Source: v0.5.5 / 7c48f14. Receipt: dist/0.5.5/RELEASE-VERIFICATION.json.
+This request is complete; future releases need new authorization and a new version.
+Never rerun publication over the existing tag/assets.
 Reuse this workflow; rebuild both targets from the final tested source. Publish
 as a prerelease because this is an early preview with Apple Development signing
 and no Apple notarization. Never replace/restart the user's live app or terminals.
@@ -107,8 +114,9 @@ the Schnauz origin; the Shuffle upstream remote is read-only reference material.
    Upload all artifacts together, verify the draft and then publish it as a
    prerelease. No new repository, updater, account setup or screenshots needed.
 
-The publication commands below require a user-authorized release. Oliver has
-authorized 0.5.5. Run from the repository after committing and verifying the fixes:
+The publication commands below require a user-authorized release. 0.5.5 is
+already published. For a newly authorized future version, run from the repository
+after committing and verifying its fixes:
 
 ```sh
 VERSION=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1)
