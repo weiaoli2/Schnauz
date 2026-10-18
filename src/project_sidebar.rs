@@ -44,19 +44,23 @@ fn fitted_width(content: f32, window_width: f32) -> f32 {
         .clamp(170., (window_width * 0.3).clamp(170., 320.))
 }
 
-/// Discard the obsolete collapse flag of the fixed Favourites heading.
+/// Fixed shortcut headings never collapse, including legacy saved flags.
 pub(super) fn restored_sections(saved: Vec<String>) -> HashSet<String> {
     saved
         .into_iter()
-        .filter(|title| title != "FAVOURITES")
+        .filter(|title| {
+            !matches!(
+                title.as_str(),
+                "FAVOURITES" | "COMMON_FOLDERS" | "COMMON_FILES" | "FOLDERS" | "FILES"
+            )
+        })
         .collect()
 }
 
-/// Only Common pins Home, including when its remaining folders are folded.
+/// Only Common pins Home. All shortcut rows remain visible.
 fn shortcuts_in_section(
     shortcuts: &[Shortcut],
     kind: Section,
-    collapsed: bool,
     pin_home: bool,
 ) -> impl Iterator<Item = Shortcut> + '_ {
     (pin_home && kind == Section::Folders)
@@ -65,7 +69,7 @@ fn shortcuts_in_section(
         .chain(
             shortcuts
                 .iter()
-                .filter(move |s| !collapsed && s.kind == kind && !s.is_home())
+                .filter(move |s| s.kind == kind && !s.is_home())
                 .cloned(),
         )
 }
@@ -479,19 +483,10 @@ impl Schnauz {
                     .text_size(px(UI_SMALL_FONT_SIZE))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(rgb(theme().text))
-                    .cursor_pointer()
                     .child(label)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.toggle_section(key_name.into(), cx)
-                    }))
                     .into_any_element(),
             );
-            for shortcut in shortcuts_in_section(
-                shortcuts,
-                kind,
-                self.collapsed_sections.contains(key_name),
-                common,
-            ) {
+            for shortcut in shortcuts_in_section(shortcuts, kind, common) {
                 self.project_shortcut_row(items, key, &shortcut, common, cx);
             }
         }
@@ -579,6 +574,7 @@ impl Schnauz {
                         f32::from(ev.position.x),
                         f32::from(ev.position.y),
                         target.clone(),
+                        ev.modifiers.platform,
                         cx,
                     );
                     cx.stop_propagation();
@@ -706,21 +702,13 @@ impl Schnauz {
                 + text_width(window, "Home", 10.)
                 + 65.,
         );
-        for (common, shortcuts) in [
-            (false, &self.projects.sidebar().shortcuts),
-            (true, &self.projects.common_shortcuts),
+        for shortcuts in [
+            &self.projects.sidebar().shortcuts,
+            &self.projects.common_shortcuts,
         ] {
             for shortcut in shortcuts.iter().filter(|s| !s.is_home()) {
-                let section = match (common, shortcut.kind) {
-                    (true, Section::Folders) => "COMMON_FOLDERS",
-                    (true, Section::Files) => "COMMON_FILES",
-                    (false, Section::Folders) => "FOLDERS",
-                    (false, Section::Files) => "FILES",
-                };
-                if !self.collapsed_sections.contains(section) {
-                    width = width
-                        .max(text_width(window, &path_label(&shortcut.path), UI_FONT_SIZE) + 62.);
-                }
+                width =
+                    width.max(text_width(window, &path_label(&shortcut.path), UI_FONT_SIZE) + 62.);
             }
         }
         if prefs().groups_enabled {
@@ -752,21 +740,26 @@ mod tests {
         );
         library.set_common_shortcut(home.clone(), true);
         assert_eq!(library.common_shortcuts.len(), 4);
-        for collapsed in [false, true] {
-            let rows: Vec<_> =
-                shortcuts_in_section(&library.common_shortcuts, Section::Folders, collapsed, true)
-                    .collect();
-            assert_eq!(rows[0], home);
-            assert_eq!(rows.iter().filter(|s| s.is_home()).count(), 1);
-            assert!(shortcuts_in_section(
-                &library.sidebar().shortcuts,
-                Section::Folders,
-                collapsed,
-                false
-            )
-            .next()
-            .is_none());
-        }
+        let rows: Vec<_> =
+            shortcuts_in_section(&library.common_shortcuts, Section::Folders, true).collect();
+        assert_eq!(rows[0], home);
+        assert_eq!(rows.iter().filter(|s| s.is_home()).count(), 1);
+        assert!(rows.iter().any(|s| s.path == Path::new("/shared")));
+        assert!(
+            shortcuts_in_section(&library.sidebar().shortcuts, Section::Folders, false)
+                .next()
+                .is_none()
+        );
+        let saved = [
+            "FAVOURITES",
+            "COMMON_FOLDERS",
+            "COMMON_FILES",
+            "FOLDERS",
+            "FILES",
+            "PROJECTS",
+        ];
+        let sections = restored_sections(saved.iter().map(|s| (*s).into()).collect());
+        assert_eq!(sections, HashSet::from(["PROJECTS".into()]));
         let restored: projects::Library =
             serde_json::from_str(&serde_json::to_string(&library).unwrap()).unwrap();
         assert_eq!(restored.common_shortcuts, library.common_shortcuts);

@@ -7,7 +7,7 @@ pub(super) struct Location {
     pub name: String,
 }
 
-pub(super) fn identify(home: &Path, path: &Path) -> Option<Location> {
+fn direct_identify(home: &Path, path: &Path) -> Option<Location> {
     let storage = home.join("Library/CloudStorage");
     if let Ok(relative) = path.strip_prefix(&storage) {
         let account = relative.components().next()?;
@@ -37,6 +37,85 @@ pub(super) fn identify(home: &Path, path: &Path) -> Option<Location> {
         root,
         name: "iCloud".into(),
     })
+}
+
+// Discover symlink routing once at startup. Never canonicalize/probe mounts or
+// read desktop-client credentials while rendering a path or opening a menu.
+static ALIASES: OnceLock<Vec<(PathBuf, PathBuf)>> = OnceLock::new();
+fn discover_aliases(home: &Path) -> Vec<(PathBuf, PathBuf)> {
+    fs::read_dir(home)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            if !entry.file_type().ok()?.is_symlink() {
+                return None;
+            }
+            let target = fs::read_link(entry.path()).ok()?;
+            let target = if target.is_absolute() {
+                target
+            } else {
+                home.join(target)
+            };
+            direct_identify(home, &target)?;
+            Some((entry.path(), target))
+        })
+        .collect()
+}
+pub(super) fn initialize(home: &Path) {
+    ALIASES.get_or_init(|| discover_aliases(home));
+}
+
+fn resolve_alias(path: &Path, aliases: &[(PathBuf, PathBuf)]) -> PathBuf {
+    aliases
+        .iter()
+        .filter_map(|(alias, target)| {
+            path.strip_prefix(alias)
+                .ok()
+                .map(|relative| (alias, target.join(relative)))
+        })
+        .max_by_key(|(alias, _)| alias.components().count())
+        .map(|(_, path)| path)
+        .unwrap_or_else(|| path.into())
+}
+pub(super) fn physical_path(path: &Path) -> PathBuf {
+    resolve_alias(path, ALIASES.get().map(Vec::as_slice).unwrap_or(&[]))
+}
+fn identify_with_aliases(
+    home: &Path,
+    path: &Path,
+    aliases: &[(PathBuf, PathBuf)],
+) -> Option<Location> {
+    if let Some(location) = direct_identify(home, path) {
+        return Some(location);
+    }
+    let (alias, target) = aliases.iter().find(|(alias, _)| path.starts_with(alias))?;
+    let location = direct_identify(home, target)?;
+    Some(Location {
+        root: alias.clone(),
+        name: location.name,
+    })
+}
+
+pub(super) fn identify(home: &Path, path: &Path) -> Option<Location> {
+    identify_with_aliases(home, path, ALIASES.get().map(Vec::as_slice).unwrap_or(&[]))
+}
+pub(super) fn display_root(root: &Path, path: &Path) -> PathBuf {
+    let physical_root = physical_path(root);
+    if let Some(aliases) = ALIASES.get() {
+        for (alias, target) in aliases {
+            if !path.starts_with(alias) {
+                continue;
+            }
+            if let Ok(relative) = physical_root.strip_prefix(target) {
+                return alias.join(relative);
+            }
+            if target.starts_with(&physical_root) {
+                return alias.clone();
+            }
+        }
+    }
+    root.into()
 }
 
 impl Schnauz {
@@ -94,6 +173,48 @@ impl Schnauz {
 mod tests {
     use super::*;
     #[test]
+    fn real_nextcloud_symlink_is_detected_without_reading_credentials_or_target_files() {
+        let home = std::env::temp_dir().join(format!("schnauz-cloud-alias-{}", std::process::id()));
+        fs::create_dir_all(&home).unwrap();
+        let physical = home.join("Library/CloudStorage/Nextcloud-test");
+        std::os::unix::fs::symlink(&physical, home.join("Nextcloud")).unwrap();
+        let aliases = discover_aliases(&home);
+        assert_eq!(aliases.len(), 1);
+        let path = home.join("Nextcloud/Folder/file.png");
+        let location = identify_with_aliases(&home, &path, &aliases).unwrap();
+        assert_eq!(location.name, "Nextcloud");
+        assert_eq!(location.root, home.join("Nextcloud"));
+        assert_eq!(
+            resolve_alias(&path, &aliases),
+            physical.join("Folder/file.png")
+        );
+        assert!(
+            identify_with_aliases(&home, &home.join("Nextcloud-copy/file.png"), &aliases).is_none()
+        );
+        fs::remove_dir_all(home).unwrap();
+    }
+    #[test]
+    fn cloud_alias_paths_resolve_at_component_boundaries_without_io() {
+        let aliases = vec![(
+            PathBuf::from("/Users/example/Nextcloud"),
+            PathBuf::from("/Users/example/Library/CloudStorage/Nextcloud-account"),
+        )];
+        assert_eq!(
+            resolve_alias(
+                Path::new("/Users/example/Nextcloud/Folder/file.png"),
+                &aliases
+            ),
+            PathBuf::from("/Users/example/Library/CloudStorage/Nextcloud-account/Folder/file.png")
+        );
+        assert_eq!(
+            resolve_alias(
+                Path::new("/Users/example/Nextcloud-copy/file.png"),
+                &aliases
+            ),
+            PathBuf::from("/Users/example/Nextcloud-copy/file.png")
+        );
+    }
+    #[test]
     fn cloud_root_and_relative_path_do_not_match_similar_names_or_another_home() {
         let home = Path::new("/Users/example");
         let folder = home.join("Library/CloudStorage/Nextcloud-server-account/Projekte/Design");
@@ -114,4 +235,11 @@ mod tests {
             assert!(identify(home, &path).is_none(), "{}", path.display());
         }
     }
+}
+
+#[cfg(feature = "ui-checks")]
+pub(super) fn fixture_alias(alias: PathBuf, target: PathBuf) {
+    ALIASES
+        .set(vec![(alias, target)])
+        .expect("isolated cloud aliases initialized once");
 }

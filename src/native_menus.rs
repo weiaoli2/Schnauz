@@ -6,6 +6,7 @@ use objc2_foundation::{NSPoint, NSSize};
 use std::cell::Cell;
 
 thread_local! {
+    static APP_ICONS: RefCell<HashMap<PathBuf, Retained<NSImage>>> = RefCell::new(HashMap::new());
     static TAG_DOTS: RefCell<HashMap<u32, Retained<NSImage>>> = RefCell::new(HashMap::new());
 }
 
@@ -102,9 +103,23 @@ fn build(
                 checked,
                 hint,
                 dot,
+                app_icon,
                 ..
             } => {
                 if let Some(image) = dot.and_then(tag_dot) {
+                    item.setImage(Some(&image));
+                }
+                if let Some(path) = app_icon {
+                    let image = APP_ICONS.with(|cache| {
+                        if let Some(image) = cache.borrow().get(path) { return image.clone(); }
+                        let image = NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(&path.to_string_lossy()));
+                        image.setSize(NSSize::new(16., 16.));
+                        image.setTemplate(false);
+                        let mut cache = cache.borrow_mut();
+                        if cache.len() >= 128 { cache.clear(); }
+                        cache.insert(path.clone(), image.clone());
+                        image
+                    });
                     item.setImage(Some(&image));
                 }
                 if let Some(hint) = hint {
@@ -234,4 +249,20 @@ impl Schnauz {
         })
         .detach();
     }
+}
+
+#[cfg(feature = "ui-checks")]
+pub(super) fn check_application_icon(path: &Path) {
+    let mtm = objc2::MainThreadMarker::new().unwrap();
+    let allocated = Target::alloc(mtm).set_ivars(TargetState::default());
+    let target: Retained<Target> = unsafe { objc2::msg_send![super(allocated), init] };
+    let mut node = mi("Fixture Viewer", |_, _, _| {});
+    if let MenuNode::Item { app_icon, .. } = &mut node { *app_icon = Some(path.into()); }
+    let mut actions = Vec::new();
+    let menu = build(&[node], &target, &mut actions, mtm);
+    let item = menu.itemAtIndex(0).unwrap();
+    let image = item.image().expect("Native menu retains the application image");
+    assert_eq!(image.size(), NSSize::new(16., 16.));
+    assert!(!image.isTemplate());
+    assert_eq!(actions.len(), 1);
 }

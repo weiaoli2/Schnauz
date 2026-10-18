@@ -20,6 +20,9 @@ struct Settings {
     focus: FocusHandle,
     /// The action whose keystroke is currently being recorded, if any.
     recording: Option<KeyAction>,
+    recording_quick: Option<String>,
+    quick_actions: Vec<(String, String)>,
+    keybind_error: Option<String>,
     file_access_error: Option<String>,
     /// In-progress hex color entry: (which color, typed hex digits).
     color_edit: Option<(ColorTarget, String)>,
@@ -80,6 +83,9 @@ impl Settings {
             content_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             recording: None,
+            recording_quick: None,
+            quick_actions: quick_actions::assignable(),
+            keybind_error: None,
             file_access_error: None,
             color_edit: None,
         }
@@ -89,7 +95,7 @@ impl Settings {
     fn handle_settings_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
         if self.color_edit.is_some() {
             self.handle_hex_key(ev, cx);
-        } else if self.recording.is_some() {
+        } else if self.recording.is_some() || self.recording_quick.is_some() {
             self.handle_keybind_key(ev, cx);
         }
     }
@@ -154,6 +160,23 @@ impl Settings {
 
     /// Capture the next keystroke for the action being rebound.
     fn handle_keybind_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
+        if let Some(id) = self.recording_quick.clone() {
+            let key = ev.keystroke.key.as_str();
+            let mut km = keymap();
+            match key {
+                "escape" => { self.recording_quick = None; }
+                "backspace" | "delete" => { km.quick.remove(&id); apply_keymap(km, cx); self.recording_quick = None; }
+                "cmd" | "ctrl" | "alt" | "shift" | "function" => return,
+                _ => {
+                    let binding = canon_keystroke(&ev.keystroke);
+                    if let Err(error) = quick_actions::validate_binding(&id, &binding, &km) {
+                        self.keybind_error = Some(error); cx.notify(); return;
+                    }
+                    km.quick.insert(id, binding); apply_keymap(km, cx); self.recording_quick = None;
+                }
+            }
+            self.keybind_error = None; cx.notify(); return;
+        }
         let Some(action) = self.recording else {
             return;
         };
@@ -170,7 +193,12 @@ impl Settings {
             "cmd" | "ctrl" | "alt" | "shift" | "function" => return,
             _ => {
                 let mut km = keymap();
-                km.set(action, Some(canon_keystroke(ks)));
+                let binding = canon_keystroke(ks);
+                if km.quick.values().any(|key| *key == binding) {
+                    self.keybind_error = Some("Already assigned to a Quick Action. Clear that shortcut first.".into());
+                    cx.notify(); return;
+                }
+                km.set(action, Some(binding));
                 apply_keymap(km, cx);
             }
         }
@@ -755,6 +783,8 @@ impl Settings {
                             .hover(|s| s.border_color(rgb(t.accent)))
                             .child(chip_text)
                             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                this.recording_quick = None;
+                                this.keybind_error = None;
                                 this.recording = Some(action);
                                 window.focus(&this.focus);
                                 cx.notify();
@@ -763,6 +793,25 @@ impl Settings {
                     .into_any_element(),
             );
         }
+        let mut quick_rows = Vec::new();
+        for (index, (id, name)) in self.quick_actions.iter().enumerate() {
+            let recording = self.recording_quick.as_ref() == Some(id);
+            let text = if recording { "Press keys… (⌫ clear, esc cancel)".into() }
+                else { km.quick.get(id).map(|key| pretty_keystroke(key)).unwrap_or_else(|| "Unbound".into()) };
+            let id = id.clone();
+            quick_rows.push(div().flex().items_center().justify_between().gap_4().py_1()
+                .child(div().flex_1().min_w_0().truncate().child(name.clone()))
+                .child(div().id(("quick-kb", index)).flex_none().min_w(px(150.)).px_2().py(px(2.))
+                    .rounded_md().cursor_pointer().text_size(px(UI_SMALL_FONT_SIZE))
+                    .bg(rgb(t.surface)).border_1().border_color(rgb(if recording { t.accent } else { t.border }))
+                    .child(text).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.recording = None; this.recording_quick = Some(id.clone()); this.keybind_error = None;
+                        window.focus(&this.focus); cx.notify();
+                    }))).into_any_element());
+        }
+        if let Some(error) = &self.keybind_error {
+            quick_rows.insert(0, div().text_color(rgb(0xc23a35)).child(error.clone()).into_any_element());
+        }
         vec![
             settings_header(
                 "Keybinds",
@@ -770,13 +819,14 @@ impl Settings {
             )
             .into_any_element(),
             settings_section("Shortcuts", None, rows),
+            settings_section("Quick Actions", Some("⌘-right-click a file or folder to open its actions directly. Shortcuts act on one selected local item; include Command, Control or Option."), quick_rows),
             div()
                 .pt_1()
                 .child(reset_button(
                     "reset-keybinds",
                     "Reset Shortcuts to Default",
                     cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.recording = None;
+                        this.recording = None; this.recording_quick = None; this.keybind_error = None;
                         apply_keymap(Keymap::defaults(), cx);
                         cx.notify();
                     }),
@@ -1021,28 +1071,7 @@ pub(super) fn swatch_dot(color: u32) -> impl IntoElement {
     div().w(px(14.0)).h(px(14.0)).rounded_full().bg(rgb(color))
 }
 
-/// A label/value line in the Information inspector.
-pub(super) fn info_row(label: &str, value: &str) -> impl IntoElement {
-    let t = theme();
-    div()
-        .flex()
-        .justify_between()
-        .gap_3()
-        .text_size(px(UI_SMALL_FONT_SIZE))
-        .child(
-            div()
-                .flex_none()
-                .text_color(rgb(t.text_dim))
-                .child(label.to_string()),
-        )
-        .child(
-            div()
-                .min_w_0()
-                .truncate()
-                .text_color(rgb(t.text))
-                .child(value.to_string()),
-        )
-}
+
 
 /// Pretty-print a stored keystroke string ("cmd-shift-p") with Mac symbols.
 pub(super) fn pretty_keystroke(s: &str) -> String {
@@ -1081,11 +1110,19 @@ pub(super) fn key_symbol(k: &str) -> String {
 }
 
 /// A section heading inside Settings.
-pub(super) fn settings_title(text: &str) -> impl IntoElement {
+pub(super) fn settings_title(text: &str, width: f32) -> impl IntoElement {
     div()
+        .relative()
+        .w(px(width))
+        .flex()
+        .min_w_0()
+        .flex_none()
+        .whitespace_nowrap()
+        .overflow_hidden()
+        .when(text == "Information", |d| d.children(ui_checks::probe("preview-info-heading")))
         .text_color(rgb(theme().text_muted))
         .text_size(px(UI_SMALL_FONT_SIZE))
-        .child(text.to_uppercase())
+        .child(ui_checks::text("section-heading", text.to_uppercase()))
 }
 
 /// The large title + one-line description shown at the top of a settings tab.
@@ -1263,4 +1300,32 @@ pub(super) fn open_settings_window(cx: &mut App) {
     )
     .ok();
     cx.activate(true);
+}
+
+#[cfg(feature = "ui-checks")]
+pub(super) fn check_quick_keybinds(cx: &mut App) {
+    let original = keymap();
+    let settings = cx.new(Settings::new);
+    let event = |key: &str| KeyDownEvent { keystroke: gpui::Keystroke::parse(key).unwrap(), is_held: false };
+    let id = "workflow:/tmp/disposable/Measure=Render.workflow".to_string();
+    settings.update(cx, |settings, cx| {
+        settings.recording_quick = Some(id.clone());
+        settings.handle_keybind_key(&event("cmd-c"), cx);
+        assert!(settings.keybind_error.is_some() && settings.recording_quick.is_some());
+        settings.handle_keybind_key(&event("cmd-alt-m"), cx);
+        assert!(settings.keybind_error.is_none() && settings.recording_quick.is_none());
+        assert_eq!(keymap().quick.get(&id).map(String::as_str), Some("cmd-alt-m"));
+        assert_eq!(load_keymap().quick.get(&id).map(String::as_str), Some("cmd-alt-m"));
+        settings.recording = Some(KeyAction::Duplicate);
+        settings.handle_keybind_key(&event("cmd-alt-m"), cx);
+        assert!(settings.keybind_error.is_some() && settings.recording.is_some());
+        settings.recording = None; settings.recording_quick = Some(id.clone());
+        settings.handle_keybind_key(&event("escape"), cx);
+        assert_eq!(keymap().quick.get(&id).map(String::as_str), Some("cmd-alt-m"));
+        settings.recording_quick = Some(id.clone());
+        settings.handle_keybind_key(&event("backspace"), cx);
+        assert!(!load_keymap().quick.contains_key(&id));
+    });
+    apply_keymap(original, cx);
+    println!("PASS Quick Action shortcut recording, conflicts in both directions, escaped persistence, cancel and clear; no workflows run");
 }

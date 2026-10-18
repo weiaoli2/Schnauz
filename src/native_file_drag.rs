@@ -160,6 +160,11 @@ extern "C-unwind" fn submit(this: &AnyObject, _: Sel, info: &AnyObject) -> objc2
         .superclass()
         .expect("owned drop view superclass");
     let result = unsafe { objc2::msg_send![super(this, parent), performDragOperation: info] };
+    // GPUI does not clear external_files_dragged from its conclude callback.
+    // Retire only this destination's native tracking after the delivered drop.
+    unsafe {
+        let _: () = objc2::msg_send![super(this, parent), draggingExited: info];
+    }
     ended();
     result
 }
@@ -237,5 +242,126 @@ mod tests {
         assert_eq!(choose(true, NSDragOperation::None, false), None);
         assert_eq!(Operation::Copy.label(3), "Copy 3 items");
         assert_eq!(Operation::Move.label(1), "Move 1 item");
+    }
+}
+
+/// Dwell must also run inside AppKit's NSEventTrackingRunLoopMode. GPUI's
+/// foreground executor is dispatched to the main queue and pauses in that loop.
+use objc2::{define_class, msg_send, rc::Retained, DeclaredClass};
+use objc2_foundation::{NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes, NSTimer};
+struct TimerState {
+    callback: RefCell<Option<Box<dyn FnOnce()>>>,
+}
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "SchnauzDragDwellTarget"]
+    #[ivars = TimerState]
+    struct TimerTarget;
+    unsafe impl NSObjectProtocol for TimerTarget {}
+    impl TimerTarget {
+        #[unsafe(method(fire:))]
+        fn fire(&self, _: &NSTimer) {
+            let callback = self.ivars().callback.borrow_mut().take();
+            if let Some(callback) = callback { callback(); }
+        }
+    }
+);
+pub(super) struct DwellTimer(Retained<NSTimer>);
+impl DwellTimer {
+    pub fn new(delay: Duration, callback: impl FnOnce() + 'static) -> Self {
+        let mtm = objc2::MainThreadMarker::new().expect("drag timer on main thread");
+        let allocated = TimerTarget::alloc(mtm).set_ivars(TimerState {
+            callback: RefCell::new(Some(Box::new(callback))),
+        });
+        let target: Retained<TimerTarget> = unsafe { msg_send![super(allocated), init] };
+        let timer = unsafe {
+            NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(
+                delay.as_secs_f64(),
+                &target,
+                objc2::sel!(fire:),
+                None,
+                false,
+            )
+        };
+        unsafe {
+            NSRunLoop::currentRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes);
+        }
+        Self(timer)
+    }
+}
+impl Drop for DwellTimer {
+    fn drop(&mut self) {
+        self.0.invalidate();
+    }
+}
+
+thread_local! {
+    static SOURCE_VIEW: RefCell<Option<Retained<objc2_app_kit::NSView>>> = const { RefCell::new(None) };
+    static SOURCE_COMPLETION: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+}
+pub(super) fn source_completion(callback: impl FnOnce() + 'static) {
+    SOURCE_COMPLETION.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+/// Release only this owned view's GPUI pointer tracking when AppKit takes over.
+/// The off-view release cannot click/drop an item. Passing through GPUI's native
+/// entry point retires its repeating source-motion task as well as AnyDrag.
+pub(super) fn release_pointer_tracking(view: &objc2_app_kit::NSView) {
+    let Some(window) = view.window() else {
+        return;
+    };
+    let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        objc2_app_kit::NSEventType::LeftMouseUp,
+        objc2_foundation::NSPoint::new(-10000., -10000.),
+        NSEventModifierFlags::empty(), 0., window.windowNumber(), None, 0, 0, 0.);
+    if let Some(event) = event {
+        view.mouseUp(&event);
+    }
+}
+pub(super) fn source_started(view: &objc2_app_kit::NSView) {
+    release_pointer_tracking(view);
+    SOURCE_VIEW.with(|slot| {
+        *slot.borrow_mut() =
+            unsafe { Retained::retain(view as *const _ as *mut objc2_app_kit::NSView) }
+    });
+}
+pub(super) fn source_ended() {
+    ended();
+    let view = SOURCE_VIEW.with(|slot| slot.borrow_mut().take());
+    if let Some(view) = view {
+        release_pointer_tracking(&view);
+        if let Some(window) = view.window() {
+            // GPUI's exit callback also clears its external-files flag. No
+            // NSDraggingInfo fields are read by the exit forwarding path.
+            let info = NSObject::new();
+            unsafe {
+                let _: () = msg_send![&*window, draggingExited: &*info];
+            }
+        }
+    }
+    let callback = SOURCE_COMPLETION.with(|slot| slot.borrow_mut().take());
+    if let Some(callback) = callback {
+        callback();
+    }
+}
+
+pub(super) fn destination_view(window: &Window) -> Option<Retained<objc2_app_kit::NSView>> {
+    let ptr = ns_view_ptr(window)?;
+    // raw-window-handle identifies GPUI's view; NSWindow.contentView may be a
+    // plain AppKit wrapper which does not implement GPUI's layer delegate.
+    unsafe { Retained::retain(ptr.cast::<objc2_app_kit::NSView>()) }
+}
+pub(super) fn present_tracking_frame(view: &objc2_app_kit::NSView) {
+    if view.window().is_none() {
+        return;
+    }
+    // GPUI's display link also uses the paused main queue. Ask its existing
+    // layer delegate to draw/present this one changed frame after releasing the
+    // App borrow. No custom rendering loop or global view changes.
+    unsafe {
+        let layer: Option<Retained<AnyObject>> = msg_send![view, layer];
+        if let Some(layer) = layer {
+            let _: () = msg_send![view, displayLayer: &*layer];
+        }
     }
 }

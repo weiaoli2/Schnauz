@@ -33,6 +33,8 @@ with a suggested USD 2.50 amount; the user completes any payment on PayPal.
   App bundles appear under **Files**, while **Folders** shows ordinary directories.
 - **All · Folders · Files** controls for every tab. Active filters tint the top bar,
   show the visible item count, and are remembered in sessions and projects.
+- **Reload folder** beside those controls re-reads the current local or SSH folder
+  (⌘R), using the existing refresh action without restarting terminals.
 - Search, split/join panes, preview and project controls in the toolbar.
 - **List** and **Icons** with matching vector toolbar controls. Right-click a list
   header or use **View options → List columns** to choose columns. Drag headers to
@@ -438,3 +440,41 @@ Cancelling a network copy can leave partial destination files; source files stay
 The transfer owns a separate SFTP process/PTY and never uses a live shell.
 The old floating progress panel is removed. Hovered destination tabs remain blue
 without moving the mouse and stay marked after their 650 ms dwell activates them.
+
+### Schnauz app choices
+
+Open With shows native application icons and marks the current app. Other
+Application… opens a native chooser for apps not suggested by macOS. Choosing a
+different app asks “Always open .ext with App?”: OK remembers that extension in
+Schnauz, Only Now opens once, Cancel/Escape does neither. The choice applies to
+normal file opening, multiple selected files, palette results and downloaded SSH
+files, across projects and windows. macOS/Finder defaults remain unchanged.
+Use macOS Default Again removes the Schnauz override. Choices are stored centrally
+in file-apps.json; folders, app bundles and extensionless files retain normal behavior.
+
+Image and document previews support wheel zoom and dragging to pan an enlarged
+image. Selecting another file resets the preview zoom; text previews scale their
+native selectable text. Image layout retains the source aspect ratio at pane width.
+Quick Actions also lists matching installed Automator file actions from the user
+and system Services folders, including Finder-scoped image workflows. Actions run
+only when chosen; no-input workflows and Finder extensions are separate facilities.
+
+Hold Command while right-clicking a local file or folder to open Quick Actions
+directly. Assign action keys under Settings → Keybinds → Quick Actions; click a
+binding, press a combination with Command/Control/Option, or Backspace to clear.
+Conflicting keys are rejected. Shortcuts run on one selected local item.
+Preview Information places two label/value pairs on each row, with 12 pt side
+padding and tooltips for long values, shared by image and video previews.
+
+Information headings stay horizontal. Created, Modified and Last opened show the
+system-local date on one line and time below it, with compact spacing. The preview
+has a 253 pt minimum width when space permits. Sidebar Folders/Files subsections
+always stay expanded. Right-click a sidebar folder and choose Apply Current View
+& Sorting to This Folder & Subfolders to copy the main file view into that tree;
+this leaves the sidebar appearance unchanged.
+
+Dragging over another tab or folder activates it after a short dwell. Canceling
+back into the original folder restores immediate file selection.
+Home-folder aliases pointing into CloudStorage (such as ~/Nextcloud) retain cloud
+identity, provider menus and file/folder badges. Nextcloud sharing requires an
+explicit Schnauz connection; the desktop client's credentials are not reused.

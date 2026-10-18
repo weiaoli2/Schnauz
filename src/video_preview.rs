@@ -66,6 +66,7 @@ pub(super) fn is_picture(path: &Path) -> bool {
 #[derive(Clone, Copy, PartialEq)]
 struct Snapshot {
     aspect: f32,
+    dimensions: Option<(u32, u32)>,
     muted: bool,
     playing: bool,
     ready: bool,
@@ -120,6 +121,7 @@ impl Session {
                 blocked: Cell::new(false),
                 state: Cell::new(Snapshot {
                     aspect: 16. / 9.,
+                    dimensions: None,
                     muted: true,
                     playing: false,
                     ready: false,
@@ -132,7 +134,7 @@ impl Session {
         unsafe {
             let item: Option<Retained<objc2::runtime::AnyObject>> =
                 msg_send![&*self.player, currentItem];
-            let (aspect, status) = item
+            let (aspect, status, dimensions) = item
                 .map(|item| {
                     let presentation: NSSize = msg_send![&*item, presentationSize];
                     let status: isize = msg_send![&*item, status];
@@ -141,13 +143,16 @@ impl Session {
                     } else {
                         self.state.get().aspect
                     };
-                    (aspect.clamp(0.1, 10.), status)
+                    let dimensions = (presentation.width > 0. && presentation.height > 0.)
+                        .then_some((presentation.width.round() as u32, presentation.height.round() as u32));
+                    (aspect.clamp(0.1, 10.), status, dimensions)
                 })
-                .unwrap_or((16. / 9., 0));
+                .unwrap_or((16. / 9., 0, None));
             let rate: f32 = msg_send![&*self.player, rate];
             let muted: bool = msg_send![&*self.player, isMuted];
             let next = Snapshot {
                 aspect,
+                dimensions,
                 muted,
                 playing: rate > 0.,
                 ready: status == 1,
@@ -270,6 +275,8 @@ impl Schnauz {
         let t = theme();
         let width = preview_panel::preview_width(self, self.panes.len() - 1).max(1.);
         let height = (width / state.aspect).max(40.);
+        let information = prefs().info.then(|| native_preview::information(&session.path,
+            state.dimensions.map(|(w, h)| format!("{w} × {h}")), width - 1.));
         let play = session.clone();
         let mute = session.clone();
         let owner = cx.entity().downgrade();
@@ -289,8 +296,10 @@ impl Schnauz {
                     .child("This video format cannot be played by macOS. Double-click the file to open it in another app.").into_any_element()
             } else {
                 div().id("video-preview-scroll").flex_1().min_h_0().overflow_y_scroll()
-                    .child(gpui::canvas(|bounds, _, _| bounds, move |_, bounds, window, _| session.paint(bounds, window))
-                        .w_full().h(px(height)))
+                    .child(div().flex().flex_col().gap_3()
+                        .child(gpui::canvas(|bounds, _, _| bounds, move |_, bounds, window, _| session.paint(bounds, window))
+                            .w_full().h(px(height)))
+                        .children(information))
                     .into_any_element()
             }).into_any_element())
     }

@@ -83,6 +83,7 @@ use browser_windows::{FolderViewsGlobal, ProjectLibraryGlobal};
 mod text_preview;
 mod text_view;
 mod native_preview;
+mod quick_actions;
 mod new_text_file;
 mod entry_filter;
 use entry_filter::EntryFilter;
@@ -102,6 +103,7 @@ mod folder_watch;
 mod folder_views;
 mod list_ui;
 mod native_menus;
+mod file_apps;
 mod toolbar_icons;
 use folder_views::{Column, ListLayout, ViewMode};
 use toolbar_icons::{ui_icon, Icon};
@@ -510,11 +512,13 @@ impl KeyAction {
 #[derive(Clone)]
 struct Keymap {
     binds: Vec<Option<String>>,
+    quick: std::collections::BTreeMap<String, String>,
 }
 
 impl Keymap {
     fn defaults() -> Self {
         Keymap {
+            quick: Default::default(),
             binds: KeyAction::ALL
                 .iter()
                 .map(|a| a.default_binding().map(String::from))
@@ -747,6 +751,8 @@ enum MenuNode {
         hint: Option<&'static str>,
         /// Leading color dot (Finder tag colors).
         dot: Option<u32>,
+        /// Native application icon for Open With.
+        app_icon: Option<PathBuf>,
         /// Leading ✓ (e.g. the item is already in that group).
         checked: bool,
         /// Destructive — rendered red (Move to Trash, Delete from Server).
@@ -769,6 +775,7 @@ fn mi(
         label: label.into(),
         hint: None,
         dot: None,
+        app_icon: None,
         checked: false,
         danger: false,
         on: Rc::new(on),
@@ -781,8 +788,8 @@ fn mi_hint(
     on: impl Fn(&mut Schnauz, &mut Window, &mut Context<Schnauz>) + 'static,
 ) -> MenuNode {
     match mi(label, on) {
-        MenuNode::Item { label, dot, checked, danger, on, .. } => {
-            MenuNode::Item { label, hint: Some(hint), dot, checked, danger, on }
+        MenuNode::Item { label, dot, app_icon, checked, danger, on, .. } => {
+            MenuNode::Item { label, hint: Some(hint), dot, app_icon, checked, danger, on }
         }
         other => other,
     }
@@ -794,8 +801,8 @@ fn mi_danger(
     on: impl Fn(&mut Schnauz, &mut Window, &mut Context<Schnauz>) + 'static,
 ) -> MenuNode {
     match mi(label, on) {
-        MenuNode::Item { label, dot, checked, on, .. } => {
-            MenuNode::Item { label, hint, dot, checked, danger: true, on }
+        MenuNode::Item { label, dot, app_icon, checked, on, .. } => {
+            MenuNode::Item { label, hint, dot, app_icon, checked, danger: true, on }
         }
         other => other,
     }
@@ -807,8 +814,8 @@ fn mi_dot(
     on: impl Fn(&mut Schnauz, &mut Window, &mut Context<Schnauz>) + 'static,
 ) -> MenuNode {
     match mi(label, on) {
-        MenuNode::Item { label, hint, checked, danger, on, .. } => {
-            MenuNode::Item { label, hint, dot: Some(dot), checked, danger, on }
+        MenuNode::Item { label, hint, app_icon, checked, danger, on, .. } => {
+            MenuNode::Item { label, hint, dot: Some(dot), app_icon, checked, danger, on }
         }
         other => other,
     }
@@ -820,8 +827,8 @@ fn mi_check(
     on: impl Fn(&mut Schnauz, &mut Window, &mut Context<Schnauz>) + 'static,
 ) -> MenuNode {
     match mi(label, on) {
-        MenuNode::Item { label, hint, dot, danger, on, .. } => {
-            MenuNode::Item { label, hint, dot, checked, danger, on }
+        MenuNode::Item { label, hint, dot, app_icon, danger, on, .. } => {
+            MenuNode::Item { label, hint, dot, app_icon, checked, danger, on }
         }
         other => other,
     }
@@ -929,6 +936,8 @@ enum CloudSync {
     Local,
     /// Online-only: content is in the cloud, not materialized on disk.
     OnlineOnly,
+    /// Cloud item is available locally; provider membership remains visible.
+    Available,
     /// Actively downloading (we kicked off a materialize; clears once local).
     Syncing,
 }
@@ -1335,6 +1344,7 @@ struct Schnauz {
     dismiss_space_map: bool,
     preview_pending: RefCell<HashMap<PathBuf,Arc<AtomicBool>>>,
     preview_resize: Option<preview_panel::Drag>,
+    preview_zoom: native_preview::Zoom,
     tools_expansion: preview_panel::Expansion,
     pane_sizes: Rc<RefCell<[f32; 2]>>,
     browser_sizes: Rc<RefCell<[f32; 2]>>,
@@ -1428,6 +1438,7 @@ struct Schnauz {
     projects: projects::Library,
     project_load_error: Option<String>,
     file_access_intro: Option<file_access::Intro>,
+    file_app_choice: Option<file_apps::Choice>,
     project_sessions: HashMap<Option<u64>, schnauz::ProjectSession>,
     project_dialog: Option<String>,
     project_dialog_error: Option<String>,
@@ -1641,6 +1652,7 @@ impl Schnauz {
             dismiss_space_map: false,
             preview_pending: RefCell::new(HashMap::new()),
             preview_resize: None,
+            preview_zoom: native_preview::Zoom::default(),
             tools_expansion: preview_panel::Expansion::default(),
             pane_sizes: Rc::new(RefCell::new([0.; 2])),
             browser_sizes: Rc::new(RefCell::new([0.; 2])),
@@ -1695,6 +1707,7 @@ impl Schnauz {
             undo_stack: Vec::new(),
             saved_session: String::new(),
             file_access_intro: None,
+            file_app_choice: None,
             projects, project_load_error, project_sessions: HashMap::new(),
             project_dialog: None, project_dialog_error: None, new_text_file: None,
             info_panel: None,
@@ -1734,10 +1747,16 @@ impl Schnauz {
 
     // ----- right-click context menu -----
 
-    fn open_context_menu(&mut self, pane: usize, x: f32, y: f32, target: Option<(PathBuf, bool)>, cx: &mut Context<Self>) {
+    fn open_context_menu(&mut self, pane: usize, x: f32, y: f32, target: Option<(PathBuf, bool)>, direct_actions: bool, cx: &mut Context<Self>) {
         self.active_pane = pane.min(self.panes.len() - 1);
         let pane = self.active_pane;
         self.rename = None;
+        if direct_actions {
+            if let Some((path, is_dir)) = target {
+                self.open_quick_actions(pane, x, y, path, is_dir, cx);
+                return;
+            }
+        }
         // Remote (SFTP) tabs get a reduced menu — the local-only actions
         // (Quick Actions, Compress, Tags, aliases, Reveal in Finder…) don't
         // apply to a remote path.
@@ -2128,7 +2147,7 @@ impl Schnauz {
             // Remote file → download to ~/Downloads, then open it.
             self.download_remote(pane, path, None, true, cx);
         } else {
-            let _ = Command::new("open").arg(&path).spawn();
+            self.open_local_file(path.clone(), cx);
         }
     }
 
@@ -2168,7 +2187,7 @@ impl Schnauz {
                     Ok(local) => {
                         this.remote_error = None;
                         this.set_notice("Copy complete · 100%".into(), cx);
-                        if open_after { let _ = Command::new("open").arg(&local).spawn(); }
+                        if open_after { this.open_local_file(local, cx); }
                     }
                     Err(e) => {this.notice=None; this.remote_error=Some(format!("Download failed: {e}"));}
                 }
@@ -3340,12 +3359,6 @@ impl Schnauz {
         .detach();
     }
 
-    /// Open `path` with a specific application.
-    fn open_with(&mut self, app: &Path, path: &Path, cx: &mut Context<Self>) {
-        let _ = Command::new("open").arg("-a").arg(app).arg(path).spawn();
-        self.close_context_menu(cx);
-    }
-
     /// Set (or clear, index 0) the Finder color label / tag on `path`.
     fn set_tag(&mut self, pane: usize, path: PathBuf, label: u8, cx: &mut Context<Self>) {
         let script = format!(
@@ -3411,12 +3424,14 @@ impl Schnauz {
     /// online-only if it's a cloud placeholder, else local (no badge). Only
     /// files under a cloud root are stat'd (cheap, cached) — everything else is
     /// free.
-    fn cloud_state(&self, path: &Path, is_dir: bool) -> CloudSync {
+    fn cloud_state(&self, path: &Path, is_dir: bool, cx: &App) -> CloudSync {
         if self.cloud_busy.contains(path) {
             return CloudSync::Syncing;
         }
-        if !is_dir && cloud_kind(path).is_some() && cached_dataless(path) {
-            return CloudSync::OnlineOnly;
+        let provider = cloud_kind(path).is_some() || nextcloud::location(path, cx).is_some();
+        if provider {
+            if !is_dir && cached_dataless(path) { return CloudSync::OnlineOnly; }
+            return CloudSync::Available;
         }
         CloudSync::Local
     }
@@ -3626,7 +3641,7 @@ impl Schnauz {
             .or_else(|| on_background.then(|| self.tab(pane).current_dir.clone()));
         if let Some(folder) = inspect {
             let view_folder = folder.clone();
-            nodes.push(mi("Apply view to folder + subfolders", move |this, _, cx| this.apply_view_to_tree(pane, view_folder.clone(), cx)));
+            nodes.push(mi("Apply Current View & Sorting to This Folder & Subfolders", move |this, _, cx| this.apply_view_to_tree(pane, view_folder.clone(), cx)));
             nodes.push(mi("Disk Usage…", move |this,window,cx| this.inspect_folder(pane,folder.clone(),window,cx)));
             push_menu_sep(&mut nodes);
         }
@@ -3655,9 +3670,9 @@ impl Schnauz {
                     if ts.len() == 1 {
                         this.open_path(pane, ts[0].clone(), is_dir, cx);
                     } else {
-                        // Multi-open goes through LaunchServices, like Finder.
+                        // Apply Schnauz preferences independently to each extension.
                         for p in &ts {
-                            let _ = Command::new("open").arg(p).spawn();
+                            this.open_local_file(p.clone(), cx);
                         }
                     }
                 }));
@@ -3978,20 +3993,9 @@ impl Schnauz {
         nodes
     }
 
-    /// "Open With" flyout — apps that can open the target (via LaunchServices).
+    /// Native application icons and Schnauz-only extension preferences.
     fn open_with_nodes(&self, path: &Path) -> Vec<MenuNode> {
-        let apps = apps_for_file(path);
-        if apps.is_empty() {
-            return vec![MenuNode::Disabled("No applications".into())];
-        }
-        apps.into_iter()
-            .map(|(name, app)| {
-                let p = path.to_path_buf();
-                mi(name, move |this, _, cx| {
-                    this.open_with(&app, &p, cx);
-                })
-            })
-            .collect()
+        file_apps::nodes(path)
     }
 
     /// "Add to Group" flyout — one row per group, ✓ when already a member.
@@ -4085,6 +4089,11 @@ impl Schnauz {
                     this.remove_background(pane, p.clone(), cx);
                 }));
             }
+        }
+        let installed = quick_actions::nodes(path);
+        if !installed.is_empty() {
+            if !items.is_empty() { items.push(MenuNode::Sep); }
+            items.extend(installed);
         }
         if items.is_empty() {
             items.push(MenuNode::Disabled("No quick actions".into()));
@@ -4923,7 +4932,7 @@ impl Schnauz {
             items.push(MenuNode::Sep);
             let view_folder = folder.clone();
             let view_pane = match &target { SidebarTarget::NavBar(p) | SidebarTarget::Tab(p, _) => *p, _ => self.active_pane };
-            items.push(mi("Apply view to folder + subfolders", move |this, _, cx| this.apply_view_to_tree(view_pane, view_folder.clone(), cx)));
+            items.push(mi("Apply Current View & Sorting to This Folder & Subfolders", move |this, _, cx| this.apply_view_to_tree(view_pane, view_folder.clone(), cx)));
             items.push(mi("Disk Usage…", move|this,window,cx|{
                 this.inspect_folder(this.active_pane,folder.clone(),window,cx);
             }));
@@ -5178,7 +5187,7 @@ impl Schnauz {
                 } else {
                     // Enter opens the file itself (Spotlight-style); ⌘K offers
                     // "Show in enclosing folder" for the old navigate behavior.
-                    let _ = Command::new("open").arg(&path).spawn();
+                    self.open_local_file(path.clone(), cx);
                 }
             }
 
@@ -5219,7 +5228,7 @@ impl Schnauz {
                 if is_dir {
                     self.navigate_to(path, cx);
                 } else {
-                    let _ = Command::new("open").arg(&path).spawn();
+                    self.open_local_file(path.clone(), cx);
                 }
             }
             PaletteAction::RevealSchnauz => {
@@ -5375,6 +5384,12 @@ impl Schnauz {
         let ks = &ev.keystroke;
         let cmd = ks.modifiers.platform;
         let key = ks.key.as_str();
+        if self.file_app_choice.is_some() {
+            if key == "escape" { self.file_app_choice = None; cx.notify(); }
+            else if key == "enter" { self.finish_file_app_choice(true, cx); }
+            cx.stop_propagation();
+            return;
+        }
         if self.file_access_intro.is_some() {
             match key {
                 "escape" => self.dismiss_file_access_intro(cx),
@@ -5471,6 +5486,11 @@ impl Schnauz {
         // so keybindings can't fire underneath it.
         if self.native_menu_pending { return; }
 
+        if (!self.palette_open || (self.search_in_pane(self.active_pane) && !self.file_search.editing))
+            && self.run_quick_action_key(&canon_keystroke(ks), window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         // Search results are ordinary rows; clicking one leaves text-editing
         // focus and enables selection, previews, copying and Quick Look.
         if self.search_in_pane(self.active_pane) && !self.file_search.editing {
@@ -7166,6 +7186,7 @@ impl Schnauz {
             let items = paths.into_iter().map(|p| self.shortcut_for_path(pane, p)).collect();
             self.favourite_drag = Some(project_sidebar::RemoteDrag { items, position: point(px(x), px(y)) });
         } else if let Some(view) = ns_view_ptr(window) {
+            self.arm_native_file_drag_cleanup(cx);
             start_os_file_drag(view, &paths);
         }
         cx.notify();
@@ -7342,7 +7363,8 @@ impl Schnauz {
             .flex_none()
             .w_full()
             .h_full()
-            .overflow_y_scroll()
+            .overflow_scroll()
+            .track_scroll(&self.preview_zoom.scroll)
             .flex()
             .flex_col()
             .gap_3()
@@ -7375,24 +7397,50 @@ impl Schnauz {
             let handle = page_img.or_else(|| lookup_preview(&sel).flatten());
             let body: AnyElement = match handle {
                 Some(handle) => {
-                    let image = img(ImageSource::Render(handle)).object_fit(ObjectFit::Contain);
-                    if video_preview::is_picture(&sel) { image.w_full().into_any_element() }
-                    else { image.max_w_full().max_h(px(600.)).into_any_element() }
+                    let picture = video_preview::is_picture(&sel);
+                    let available = preview_panel::preview_width(self, self.panes.len() - 1)
+                        - if picture { 1. } else { 49. };
+                    let dimensions = native_preview::image_size(
+                        handle.size(0), available, picture, self.preview_zoom.scale,
+                    );
+                    div().relative().flex_none().w(dimensions.width).h(dimensions.height)
+                        .children(ui_checks::probe("preview-image"))
+                        .child(img(ImageSource::Render(handle))
+                            .object_fit(ObjectFit::Contain)
+                            .w(dimensions.width).h(dimensions.height))
+                        .into_any_element()
                 },
                 // Not ready yet or unavailable → show the file's icon.
                 None => icon_element_sized(&sel, false, 96.0),
             };
             let preview_box = div()
+                .id("visual-preview")
+                .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+                    let delta = f32::from(event.delta.pixel_delta(window.line_height()).y);
+                    this.zoom_visual_preview(delta, cx);
+                    cx.stop_propagation();
+                }))
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    this.preview_zoom.pan = Some((event.position, this.preview_zoom.scroll.offset()));
+                    cx.stop_propagation();
+                }))
+                .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                    if event.pressed_button == Some(MouseButton::Left) {
+                        if let Some((start, offset)) = this.preview_zoom.pan {
+                            this.preview_zoom.scroll.set_offset(offset + event.position - start);
+                            cx.notify();
+                        }
+                    } else { this.preview_zoom.pan = None; }
+                }))
+                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.preview_zoom.pan = None))
+                .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, _| this.preview_zoom.pan = None))
                 .relative()
                 .flex_none()
                 .flex()
                 .items_center()
                 .justify_center()
-                .w_full()
-                .min_h(px(120.0))
-                // Clip so a tall preview can't paint over the title above or the
-                // "Information" section below.
-                .when(!video_preview::is_picture(&sel), |d| d.max_h(px(620.)).p_2())
+                .min_w_full()
+                .when(!video_preview::is_picture(&sel), |d| d.p_2())
                 .overflow_hidden()
                 .rounded_md()
                 // White "page" so document/text previews (black text, often
@@ -7479,32 +7527,7 @@ impl Schnauz {
         }
 
         if p.info {
-            col = col.child(settings_title("Information"));
-            if let Some(info) = lookup_info(&sel) {
-                let mut rows = div().flex().flex_col().gap_1();
-                rows = rows.child(info_row("Kind", &info.kind));
-                rows = rows.child(info_row("Size", &info.size));
-                rows = rows.child(info_row("Created", &info.created));
-                rows = rows.child(info_row("Modified", &info.modified));
-                rows = rows.child(info_row("Last opened", &info.accessed));
-                if let Some(d) = &info.dimensions {
-                    rows = rows.child(info_row("Dimensions", d));
-                }
-                if let Some(c) = &info.color {
-                    rows = rows.child(info_row("Color", c));
-                }
-                if let Some(s) = &info.signed {
-                    rows = rows.child(info_row("Signature", s));
-                }
-                col = col.child(rows);
-            } else {
-                col = col.child(
-                    div()
-                        .text_size(px(UI_SMALL_FONT_SIZE))
-                        .text_color(rgb(t.text_dim))
-                        .child("Loading…"),
-                );
-            }
+            col = col.child(native_preview::information(&sel, None, preview_panel::preview_width(self, self.panes.len() - 1) - if video_preview::is_picture(&sel) { 1. } else { 33. }));
         }
 
         Some(col.into_any_element())
@@ -7707,7 +7730,24 @@ impl Schnauz {
         }
     }
 
-    fn open_sidebar_menu(&mut self, x: f32, y: f32, target: SidebarTarget, cx: &mut Context<Self>) {
+    fn open_sidebar_menu(&mut self, x: f32, y: f32, target: SidebarTarget, direct_actions: bool, cx: &mut Context<Self>) {
+        if direct_actions {
+            let shortcut = match &target {
+                SidebarTarget::Favourite(s) | SidebarTarget::Common(s) => Some(s.clone()),
+                SidebarTarget::GroupMember(_, p) => Some(projects::Shortcut::local(p.clone(), if cached_is_dir(p) { projects::Section::Folders } else { projects::Section::Files })),
+                _ => None,
+            };
+            if let Some(shortcut) = shortcut {
+                self.sidebar_menu = None;
+                if shortcut.server.is_some() {
+                    self.context_menu = Some(ContextMenu { x, y, target: None, nodes: vec![MenuNode::Disabled("Quick Actions require a local file or folder".into())] });
+                    cx.notify();
+                } else {
+                    self.open_quick_actions(self.active_pane, x, y, shortcut.path, shortcut.kind == projects::Section::Folders, cx);
+                }
+                return;
+            }
+        }
         self.sidebar_menu = Some((x, y, target));
         cx.notify();
     }
@@ -8134,7 +8174,7 @@ impl Schnauz {
                                             x,
                                             y,
                                             SidebarTarget::GroupHeader(gidx),
-                                            cx,
+                                            ev.modifiers.platform, cx,
                                         );
                                         cx.stop_propagation();
                                     }),
@@ -8171,7 +8211,7 @@ impl Schnauz {
                             f64::from(ev.position.x) as f32,
                             f64::from(ev.position.y) as f32,
                         );
-                        this.open_sidebar_menu(x, y, SidebarTarget::Empty, cx);
+                        this.open_sidebar_menu(x, y, SidebarTarget::Empty, ev.modifiers.platform, cx);
                     }),
                 )
             })
@@ -8217,7 +8257,7 @@ impl Schnauz {
                         f64::from(ev.position.x) as f32,
                         f64::from(ev.position.y) as f32,
                     );
-                    this.open_sidebar_menu(x, y, SidebarTarget::NavBar(pane), cx);
+                    this.open_sidebar_menu(x, y, SidebarTarget::NavBar(pane), ev.modifiers.platform, cx);
                     cx.stop_propagation();
                 }),
             )
@@ -8604,7 +8644,7 @@ impl Schnauz {
                     })
                     // File hover highlights ONLY the tab, then spring-opens it.
                     .when(self.file_drag.tab_hovered(pane, tab_id), |s| s.bg(rgb(0x3478c5)).text_color(rgb(0xffffff)).border_color(rgb(0x3478c5)))
-                    .on_drag_move::<ExternalPaths>(cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| { this.spring_tab(pane, tab_id, ev, cx); }))
+                    .on_drag_move::<ExternalPaths>(cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, window, cx| { this.spring_tab(pane, tab_id, ev, window, cx); }))
                     .on_drop(cx.listener(move |this, drag: &ExternalPaths, _, cx| { this.drop_on_tab(pane, tab_id, drag.paths().to_vec(), cx); }))
                     // Drop another tab here → insert at this position.
                     .drag_over::<TabDrag>(|s, _, _, _| s.bg(Theme::alpha(theme().accent, 0x33)))
@@ -8622,7 +8662,7 @@ impl Schnauz {
                                 f64::from(ev.position.x) as f32,
                                 f64::from(ev.position.y) as f32,
                             );
-                            this.open_sidebar_menu(x, y, SidebarTarget::Tab(pane, i), cx);
+                            this.open_sidebar_menu(x, y, SidebarTarget::Tab(pane, i), ev.modifiers.platform, cx);
                             cx.stop_propagation();
                         }),
                     )
@@ -8916,7 +8956,7 @@ impl Schnauz {
                                                         f64::from(ev.position.x) as f32,
                                                         f64::from(ev.position.y) as f32,
                                                     );
-                                                    this.open_context_menu(pane, x, y, None, cx);
+                                                    this.open_context_menu(pane, x, y, None, ev.modifiers.platform, cx);
                                                 }),
                                             )
                                             // Press on blank space, or on a row's
@@ -8995,13 +9035,13 @@ impl Schnauz {
                                                 f64::from(ev.position.x) as f32,
                                                 f64::from(ev.position.y) as f32,
                                             );
-                                            this.open_context_menu(pane, x, y, None, cx);
+                                            this.open_context_menu(pane, x, y, None, ev.modifiers.platform, cx);
                                             cx.stop_propagation();
                                         }),
                                         cx.listener({ let parent = parent.clone(); move |this, drag: &ExternalPaths, _, cx| {
                                             this.drop_files(pane, parent.clone(), drag.paths().to_vec(), cx);
                                         }}),
-                                        cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| { this.spring_folder(pane, parent.clone(), ev, cx); }),
+                                        cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, window, cx| { this.spring_folder(pane, parent.clone(), ev, window, cx); }),
                                         // ".." isn't draggable — no drag candidate. Let the
                                         // press bubble so the row's click (navigate up)
                                         // registers; swallowing it here dead-ends clicks
@@ -9029,7 +9069,7 @@ impl Schnauz {
                             let name = entry.name.clone();
                             let is_dir = entry.is_dir;
                             let target = base_dir.join(&name);
-                            let cloud = this.cloud_state(&target, is_dir);
+                            let cloud = if tab.remote.is_none() { this.cloud_state(&target, is_dir, cx) } else { CloudSync::Local };
                             let ctx_target = target.clone();
                             let drop_target = target.clone();
                             let spring_target = target.clone();
@@ -9074,14 +9114,14 @@ impl Schnauz {
                                             x,
                                             y,
                                             Some((ctx_target.clone(), is_dir)),
-                                            cx,
+                                            ev.modifiers.platform, cx,
                                         );
                                         cx.stop_propagation();
                                     }),
                                     cx.listener(move |this, drag: &ExternalPaths, _, cx| {
                                         this.drop_files(pane, drop_target.clone(), drag.paths().to_vec(), cx);
                                     }),
-                                    cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| { this.spring_folder(pane, spring_target.clone(), ev, cx); }),
+                                    cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, window, cx| { this.spring_folder(pane, spring_target.clone(), ev, window, cx); }),
                                     cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                                         // Arm a file drag, but DON'T stop propagation:
                                         // the row's own click handler is an ANCESTOR of
@@ -9192,7 +9232,8 @@ impl Schnauz {
                                 let selected = tab.selection.contains(&target);
                                 let ctx_active = this.is_ctx_target(&target);
                                 let edit = this.rename_text(pane, &target);
-                                cells.push(icon_cell(pane, name, target, is_dir, selected, ctx_active, cell_w, edit, cx));
+                                let cloud = if this.tab(pane).remote.is_none() { this.cloud_state(&target, is_dir, cx) } else { CloudSync::Local };
+                                cells.push(icon_cell(pane, name, target, is_dir, selected, ctx_active, cell_w, edit, cloud, cx));
                             }
                             out.push(div().flex().w_full().px_2().children(cells).into_any_element());
                         }
@@ -9320,6 +9361,7 @@ impl Render for Schnauz {
             window.on_next_frame(move |_, cx| { let _ = owner.update(cx, |this, cx| this.ensure_todoist(false, cx)); });
         }
         self.sync_video_preview(cx);
+        self.sync_preview_zoom();
         self.sync_text_preview();
         let owner=cx.entity().downgrade();
         window.on_next_frame(move|_,cx|{let _=owner.update(cx,|this,cx|this.prewarm_icons(cx));});
@@ -9507,6 +9549,7 @@ impl Render for Schnauz {
         if self.project_dialog.is_some() {
             root = root.child(self.render_project_dialog(cx));
         }
+        if self.file_app_choice.is_some() { root = root.child(self.render_file_app_choice(cx)); }
         if self.file_access_intro.is_some() {
             root = root.child(self.render_file_access_intro(cx));
         }
@@ -9554,7 +9597,7 @@ fn push_group_member(
             if nav_target.is_dir() {
                 this.navigate_to(nav_target.clone(), cx);
             } else {
-                let _ = Command::new("open").arg(&nav_target).spawn();
+                this.open_local_file(nav_target.clone(), cx);
             }
         }),
         cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
@@ -9563,7 +9606,7 @@ fn push_group_member(
                 x,
                 y,
                 SidebarTarget::GroupMember(gidx, right_target.clone()),
-                cx,
+                ev.modifiers.platform, cx,
             );
             cx.stop_propagation();
         }),
@@ -10041,6 +10084,7 @@ fn cloud_busy_count(tool: &Path, dir: &Path) -> usize {
 /// Friendly name of the cloud store holding `path` ("Dropbox", "OneDrive",
 /// "iCloud Drive", …), for menu labels and sync notices.
 fn cloud_provider_name(path: &Path) -> String {
+    if let Some(location) = cloud_locations::identify(&home_dir(), path) { return location.name; }
     let cs = home_dir().join("Library/CloudStorage");
     match path.strip_prefix(&cs).ok().and_then(|r| r.components().next()) {
         Some(c) => pretty_cloud_name(&c.as_os_str().to_string_lossy()),
@@ -10052,6 +10096,8 @@ fn cloud_provider_name(path: &Path) -> String {
 /// Drive is `~/Library/Mobile Documents`; third-party File Provider stores live
 /// under `~/Library/CloudStorage`.
 fn cloud_kind(path: &Path) -> Option<CloudKind> {
+    let physical = cloud_locations::physical_path(path);
+    let path = physical.as_path();
     let home = home_dir();
     if path.starts_with(home.join("Library/Mobile Documents")) {
         return Some(CloudKind::ICloud);
@@ -10710,6 +10756,7 @@ fn icon_cell(
     ctx_active: bool,
     cell_w: f32,
     edit: Option<rename_ui::EditText>,
+    cloud: CloudSync,
     cx: &Context<Schnauz>,
 ) -> AnyElement {
     let t = theme();
@@ -10770,7 +10817,7 @@ fn icon_cell(
                 .h(px(56.0))
                 .flex()
                 .items_center()
-                .child(icon_element_sized(&target, is_dir, 52.0)),
+                .child(cloud_badged_icon(icon_element_sized(&target, is_dir, 52.0), cloud, 16.0)),
         )
         .child(
             div()
@@ -10795,13 +10842,13 @@ fn icon_cell(
                     f64::from(ev.position.x) as f32,
                     f64::from(ev.position.y) as f32,
                 );
-                this.open_context_menu(pane, x, y, Some((ctx_t.clone(), is_dir)), cx);
+                this.open_context_menu(pane, x, y, Some((ctx_t.clone(), is_dir)), ev.modifiers.platform, cx);
                 cx.stop_propagation();
             }),
         );
     if is_folder {
         cell = cell
-            .on_drag_move::<ExternalPaths>(cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| { this.spring_folder(pane, spring_t.clone(), ev, cx); }))
+            .on_drag_move::<ExternalPaths>(cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, window, cx| { this.spring_folder(pane, spring_t.clone(), ev, window, cx); }))
             .on_drop(cx.listener(move |this, d: &ExternalPaths, _, cx| {
                 this.drop_files(pane, drop_t.clone(), d.paths().to_vec(), cx);
             }));
@@ -10877,6 +10924,7 @@ fn cloud_badged_icon(icon: AnyElement, cloud: CloudSync, badge: f32) -> AnyEleme
     let (bg, glyph) = match cloud {
         CloudSync::OnlineOnly => (0x3b82f6u32, "\u{25BE}"), // blue ▾ — online-only
         CloudSync::Syncing => (0xf59e0bu32, "\u{25BE}"),    // amber ▾ — working
+        CloudSync::Available => (0x0078c9u32, ""),
         CloudSync::Local => unreachable!(),
     };
     div()
@@ -10899,7 +10947,7 @@ fn cloud_badged_icon(icon: AnyElement, cloud: CloudSync, badge: f32) -> AnyEleme
                 .border_color(rgb(t.bg))
                 .text_size(px(badge * 0.64))
                 .text_color(rgb(0xffffff))
-                .child(glyph),
+                .child(if cloud == CloudSync::Available { ui_icon(Icon::Cloud, (badge - 2.).max(8.), rgb(0xffffff)).into_any_element() } else { div().child(glyph).into_any_element() }),
         )
         .into_any_element()
 }
@@ -11742,7 +11790,7 @@ define_class!(
         fn ignore_modifiers(&self, _session: &NSDraggingSession) -> bool { true }
         #[unsafe(method(draggingSession:endedAtPoint:operation:))]
         fn ended(&self, _session: &NSDraggingSession, _point: objc2_foundation::NSPoint, _operation: NSDragOperation) {
-            native_file_drag::ended();
+            native_file_drag::source_ended();
         }
     }
 );
@@ -11862,6 +11910,7 @@ fn start_os_file_drag(view_ptr: *mut std::ffi::c_void, paths: &[PathBuf]) {
     }
     let array = NSArray::from_retained_slice(&items);
 
+    native_file_drag::source_started(view);
     let source = drag_source(mtm);
     let source_proto: &ProtocolObject<dyn NSDraggingSource> = ProtocolObject::from_ref(&*source);
     let _ = view.beginDraggingSessionWithItems_event_source(&array, &event, source_proto);
@@ -12715,11 +12764,16 @@ fn save_keymap(k: &Keymap) {
         if let Some(parent) = file.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let body: String = KeyAction::ALL
+        let mut body: String = KeyAction::ALL
             .iter()
             .map(|a| format!("{}={}\n", a.key(), k.get(*a).unwrap_or("")))
             .collect();
-        let _ = fs::write(&file, body);
+        for (id, binding) in &k.quick {
+            if let Ok(value) = serde_json::to_string(&(id, binding)) {
+                body.push_str(&format!("quick_action={value}\n"));
+            }
+        }
+        let _ = projects::atomic_write(&file, body.as_bytes());
     }
 }
 
@@ -12732,7 +12786,11 @@ fn load_keymap() -> Keymap {
                 let Some((name, val)) = line.split_once('=') else {
                     continue;
                 };
-                if let Some(a) = KeyAction::ALL.iter().copied().find(|a| a.key() == name.trim()) {
+                if name == "quick_action" {
+                    if let Ok((id, binding)) = serde_json::from_str::<(String, String)>(val) {
+                        k.quick.insert(id, binding);
+                    }
+                } else if let Some(a) = KeyAction::ALL.iter().copied().find(|a| a.key() == name.trim()) {
                     let v = val.trim();
                     k.set(a, if v.is_empty() { None } else { Some(v.to_string()) });
                 }
@@ -12755,7 +12813,7 @@ fn load_prefs() -> Prefs {
                 match k.trim() {
                     "preview" => p.preview = on,
                     "preview_pages" => p.preview_pages = on,
-                    "preview_width" => if let Ok(width) = v.trim().parse::<u16>() { p.preview_width = width.clamp(220,1200); },
+                    "preview_width" => if let Ok(width) = v.trim().parse::<u16>() { p.preview_width = width.clamp(folder_views::MIN_PREVIEW_WIDTH,1200); },
                     "tools_width" => if let Ok(width) = v.trim().parse::<u16>() { p.tools_width = width.clamp(220,720); },
                     "info" => p.info = on,
                     "show_parent" => p.show_parent = on,
@@ -13109,6 +13167,7 @@ fn main() {
         let saved_prefs = load_prefs();
         set_active_prefs(saved_prefs);
         cx.set_global(PrefsGlobal(saved_prefs));
+        cloud_locations::initialize(&home_dir());
         cx.set_global(nextcloud::State::load());
         cx.set_global(todoist::Global::load());
 

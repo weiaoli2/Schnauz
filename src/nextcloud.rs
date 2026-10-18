@@ -71,14 +71,15 @@ fn read_accounts() -> Result<Vec<Account>, String> {
     Ok(config.accounts)
 }
 fn matching<'a>(accounts: &'a [Account], path: &Path) -> Option<&'a Account> {
+    let physical = cloud_locations::physical_path(path);
     accounts
         .iter()
-        .filter(|a| path.starts_with(&a.root))
-        .max_by_key(|a| a.root.components().count())
+        .filter(|a| physical.starts_with(cloud_locations::physical_path(&a.root)))
+        .max_by_key(|a| cloud_locations::physical_path(&a.root).components().count())
 }
 pub(super) fn location(path: &Path, cx: &App) -> Option<cloud_locations::Location> {
     matching(&cx.global::<State>().accounts, path).map(|a| cloud_locations::Location {
-        root: a.root.clone(),
+        root: cloud_locations::display_root(&a.root, path),
         name: "Nextcloud".into(),
     })
 }
@@ -106,6 +107,14 @@ pub(super) fn launch<T: 'static>(
     let Some(config) = config_file("nextcloud.json") else {
         return;
     };
+    let path = path.map(|path| {
+        if let Some(root) = root.as_ref() {
+            let physical = cloud_locations::physical_path(&path);
+            let physical_root = cloud_locations::physical_path(root);
+            if let Ok(relative) = physical.strip_prefix(physical_root) { return root.join(relative); }
+        }
+        path
+    });
     let request = Request {
         operation: operation.into(),
         config,

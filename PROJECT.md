@@ -92,11 +92,9 @@ four verified sample-data screenshots, the existing logo, complete English copy
 and a website-Codex brief. Older images are archived separately, not presented as
 the current captures.
 
-An isolated screenshot session exposed a blank/oversized picture preview; this
-has not been fixed. Suspected cause: percentage image width combined with GPUI's
-intrinsic pixel height. Reproduce and fix in the normal bug workflow when taken
-up; do not assume the root cause is confirmed. Oliver will provide further bugs.
-Never restart or substitute the demo for his live app.
+The reported oversized picture preview is addressed in local 0.5.7: explicit
+width and aspect-ratio height replace percentage width with intrinsic pixel
+height. Preserve the user's live app while verifying in isolated fixtures.
 
 ## Current stage and user data
 
@@ -431,3 +429,119 @@ Artifacts/receipt: dist/0.5.5/RELEASE-VERIFICATION.json. Existing release.sh and
 docs/RELEASING.md are the reusable flow. This publication request is complete;
 future versions require a new user request. Never replace published assets or
 move v0.5.5. The user's live application/terminal sessions were not restarted.
+
+## Local 0.5.6 — Schnauz-only app choices
+
+Open With now shows native app icons and the current app. A different app opens
+a confirmation with OK (remember for this extension in Schnauz), Only Now and
+Cancel. Central file-apps.json choices apply across projects/windows and ordinary
+open paths, including downloaded SSH files; macOS defaults stay untouched. The
+menu can remove an override with Use macOS Default Again. No publication requested.
+
+Validation: 84 Rust tests passed with --test-threads=1, plus all native
+Nextcloud/Todoist/composer tests and hidden GPUI layout/drag checks. The new hidden
+fixture checks Only Now without creating/changing preferences, Always persistence,
+case-insensitive lookup, reset, actual NSMenuItem images/checkmarks, modal geometry
+and preview blocking, using disposable settings and without launching file apps.
+A parallel test run intermittently failed the pre-existing legacy-favourites
+migration fixture; the serialized full suite passed. Live windows were preserved.
+
+## Local folder reload control
+
+A compact vector reload button sits beside All / Folders / Files in each pane.
+It targets that pane and shares the existing ⌘R action for local/cloud and SSH
+listings, preserving the current terminal session. No publication requested.
+
+Reload-control validation: all 84 Rust tests and native Nextcloud/Todoist/composer
+checks passed, plus hidden GPUI layout/drag/SSH-terminal roundtrip checks. The
+normal optimized 0.5.6 app built and passed deep/strict signature verification
+and --version. No live windows, terminals or SSH sessions were restarted.
+
+## Local 0.5.7 — preview geometry, zoom and installed Quick Actions
+
+Image previews now have explicit aspect-ratio dimensions, removing the oversized
+white area. Wheel zoom scales images/documents and native text; a different file
+resets zoom. Drag enlarged images to pan. Native text selection/copy remains intact.
+
+Quick Actions previously contained only built-ins. File-input Automator workflows
+from ~/Library/Services and /Library/Services now join that menu, filtered by native
+UTType conformance, including Finder-scoped workflows such as Measure Render for
+PNG. Clicking runs the captured workflow/file via Automator on a worker thread;
+opening a menu never executes it. No workflows or system associations are modified.
+No-input actions, Shortcuts-only actions and third-party Finder extensions are not
+part of this integration. The current context menu exposes actions for one item.
+
+Command-right-click opens Quick Actions directly for local files/folders in List,
+Icons, search results and Common/Favourites. Settings → Keybinds → Quick Actions
+records shortcuts for built-ins and installed workflows, with modifier requirements,
+conflict checks, cancellation and clearing. Bindings persist in the existing central
+keymap.txt using escaped stable action IDs. Dispatch respects editor/modal focus,
+file type and a single local selection; normal app bindings take precedence.
+
+Image/video Information uses two label/value pairs per row (four columns), with
+explicit 12 pt left/right padding, a matching heading inset and full-value tooltips.
+Native video presentation dimensions populate the same grid when loaded.
+
+Validation: 87 Rust tests passed, including native UTType matching, shortcut
+conflicts and a real disposable Automator input/argument fixture. Native
+Nextcloud/Todoist/composer checks passed. Hidden GPUI checks passed for image
+aspect/zoom/reset, four-column information bounds and 12 pt side insets,
+Command menu routing, shortcut record/reload/cancel/clear, plus existing drag/PTY
+regressions. Native text smoke checks preserve selection/copy through zoom.
+The optimized normal Schnauz.app 0.5.7 is built; --version and deep/strict stable
+Apple Development signature verification passed. It was not launched into the
+user's live profile and no windows/terminals were restarted. Published release
+remains 0.5.5; no publication requested. Actual user-workflow execution and mouse
+interaction remain Oliver's manual check.
+
+## Local 0.5.8 — compact Information and permanent sidebar shortcut visibility
+
+Fixed the shared section-heading renderer to keep Information horizontal at a
+full definite width. Added heading-height/overlap regressions, since the earlier
+four-column tests did not catch its vertical wrapping. Created/Modified/Last
+opened use native locale-aware date and time formatters on two separate lines,
+with one-line labels, 13 pt line heights and 2 pt row gaps. Four columns and 12 pt
+side insets remain. Preview minimum width rises 15%, from 220 to 253 pt, consistently
+in drag bounds, allocation, central views and preference loading.
+
+Common/Favourites Folders/Files are permanently expanded, including when old
+collapse flags were saved. Headings no longer toggle; sidebar width measures all
+visible shortcuts. The sidebar folder menu explicitly offers Apply Current View
+& Sorting to This Folder & Subfolders, using existing central inherited rules.
+It copies the main pane's view/sorting, preserves unrelated folders and sidebar
+appearance, and never scans descendants.
+
+Validation: 87 Rust and all native fixture checks passed; hidden GPUI checks
+passed for heading bounds, tight date/time geometry at 253/360/420 pt, sidebar
+migration and the actual sidebar menu callback's inherited view/sorting scope.
+The normal optimized Schnauz.app 0.5.8 is built and passes --version plus
+deep/strict certificate signature verification. User sessions remain untouched.
+The separate visual QA capture was unusably small, so visual appearance is not
+claimed verified; the complete real GPUI layout bounds checks above passed.
+
+## Local 0.5.9 — visible Information, native drag recovery and Nextcloud aliases
+
+The 0.5.8 container checks missed zero-width shaped text. The new regression
+reproduced the missing heading/values. Information now derives explicit text
+widths from the actual pane allocation and avoids preliminary zero-width
+truncation. Checks assert complete heading/value strings and nonzero glyph
+bounds at 253/360/420 pt, alongside compact date/time rows and padding.
+
+Native drag dwell now runs in AppKit's tracking mode and presents the destination
+frame while the drag is active. Native handoff and completion retire GPUI pointer
+tracking and clear stale drag/click suppression state. A real tracking-mode test
+checks tab/folder activation, repaint, same-folder cancellation and immediate
+selection, plus disposable copy/move and the existing isolated terminal fixture.
+
+Home-level symlink aliases such as ~/Nextcloud are identified from cached startup
+routing to CloudStorage. Provider menus and linked-account routing handle alias
+paths; downloaded files and folders receive cloud badges in list, icons and
+search. Direct sharing still requires Schnauz's own explicit connection. No
+desktop credentials, live server or Keychain were accessed for testing.
+
+Validation: all 89 Rust tests, native Nextcloud/Todoist/composer fixtures and
+hidden real GPUI text/layout, alias/menu and native drag regressions passed.
+Live appearance and live cloud login remain user QA; no screenshot verification
+is claimed. Existing windows, settings, terminals and SSH sessions are preserved.
+The optimized Schnauz.app 0.5.9 is built with the stable Apple Development
+certificate and passes --version and deep/strict signature verification.

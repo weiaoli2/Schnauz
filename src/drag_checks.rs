@@ -42,6 +42,8 @@ define_class!(
         fn mask(&self) -> NSDragOperation { NSDragOperation::Copy | NSDragOperation::Move }
     }
 );
+thread_local! { static END_SOURCE_ON_DROP: std::cell::Cell<bool> = const {std::cell::Cell::new(false)}; }
+thread_local! { static SEED_SOURCE_MOTION: std::cell::Cell<bool> = const {std::cell::Cell::new(true)}; }
 thread_local! { static INFO: RefCell<Option<Retained<DragInfo>>> = const {RefCell::new(None)}; }
 fn prepare_info(paths: &[PathBuf]) {
     let mtm = objc2::MainThreadMarker::new().unwrap();
@@ -71,6 +73,7 @@ fn event(window: gpui::WindowHandle<Fixture>, event: gpui::FileDropEvent, cx: &m
             )
         })
         .unwrap();
+    let content_ptr = ptr as usize;
     let content = unsafe { &*(ptr as *const objc2_app_kit::NSView) };
     let native = content.window().unwrap();
     let ptr = (&*native as *const objc2_app_kit::NSWindow).cast::<std::ffi::c_void>();
@@ -97,6 +100,19 @@ fn event(window: gpui::WindowHandle<Fixture>, event: gpui::FileDropEvent, cx: &m
         unsafe {
             match event {
                 gpui::FileDropEvent::Entered { .. } => {
+                    if SEED_SOURCE_MOTION.with(|seed| seed.replace(false)) {
+                        // Match an internal drag's native mouseDragged before
+                        // entering a destination. This starts GPUI's repeating
+                        // source-motion task, absent from incoming-only tests.
+                        let content = objc2::rc::Retained::retain(content_ptr as *mut objc2_app_kit::NSView).unwrap();
+                        let number: isize = objc2::msg_send![view, windowNumber];
+                        let mouse = objc2_app_kit::NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                            objc2_app_kit::NSEventType::LeftMouseDragged, NSPoint::new(400., 200.),
+                            objc2_app_kit::NSEventModifierFlags::empty(), 0., number, None, 0, 1, 0.,
+                        ).unwrap();
+                        content.mouseDragged(&mouse);
+                        native_file_drag::source_started(&content);
+                    }
                     let op: NSDragOperation = objc2::msg_send![view,draggingEntered:&*info];
                     assert!(!op.is_empty());
                 }
@@ -108,6 +124,7 @@ fn event(window: gpui::WindowHandle<Fixture>, event: gpui::FileDropEvent, cx: &m
                     let accepted: objc2::runtime::Bool =
                         objc2::msg_send![view,performDragOperation:&*info];
                     assert!(accepted.as_bool());
+                    if END_SOURCE_ON_DROP.with(|end| end.replace(false)) { native_file_drag::source_ended(); }
                 }
                 gpui::FileDropEvent::Exited => {
                     let _: () = objc2::msg_send![view,draggingExited:&*info];
@@ -137,6 +154,7 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
         })
         .unwrap();
     paint(window, cx);
+    BOUNDS.with(|all| { all.borrow_mut().remove("drag-folder"); });
     prepare_info(&[source.join("a.txt")]);
     let position = center("drag-target-tab");
     native_file_drag::fixture_feedback(false);
@@ -167,10 +185,19 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
             native_file_drag::fixture_feedback(false);
             event(window,gpui::FileDropEvent::Pending{position},cx);
         }).unwrap();
-        cx.background_executor().timer(Duration::from_millis(700)).await;
+        cx.background_executor().timer(Duration::from_millis(30)).await;
+        // AppKit's real drag loop uses EventTracking mode. Incoming-only tests
+        // running in the default mode miss timers that stop during a real drag.
+        let tracking_start = Instant::now();
+        while tracking_start.elapsed() < Duration::from_millis(700) {
+            objc2_foundation::NSRunLoop::currentRunLoop().runMode_beforeDate(
+                unsafe { objc2_app_kit::NSEventTrackingRunLoopMode },
+                &objc2_foundation::NSDate::dateWithTimeIntervalSinceNow(0.01));
+        }
         cx.update(|cx| {
             window.update(cx, |fixture, _, cx| fixture.browser.update(cx, |b, _| {
                 assert_eq!(b.panes[0].active,1,"Dwell must activate the target tab");
+                assert!(BOUNDS.with(|all| all.borrow().contains_key("drag-folder")), "Tracking-mode dwell must also paint the destination before the pointer moves");
                 assert_eq!(b.tab(0).current_dir,target);
                 assert!(b.file_drag.tab_hovered(0,b.tab(0).id),"Dwell must retain the blue tab after activation");
             })).unwrap();
@@ -201,6 +228,37 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
         cx.background_executor().timer(Duration::from_millis(60)).await;
         cx.update(|cx| event(window,gpui::FileDropEvent::Submit{position:center("drag-target-tab")},cx)).unwrap();
         cx.background_executor().timer(Duration::from_millis(250)).await;
+        cx.update(|cx| {
+            fs::write(target.join("b.txt"), "select after cancel").unwrap();
+            window.update(cx, |fixture, _, cx| fixture.browser.update(cx, |b,cx| {
+                b.load_dir_in(0,target.clone(),cx);
+                b.arm_native_file_drag_cleanup(cx);
+                b.suppress_entry_click = true;
+                b.pending_click_rename = None;
+            })).unwrap();
+            prepare_info(&[target.join("a.txt")]);
+            paint(window,cx);
+            native_file_drag::fixture_feedback(false);
+            event(window,gpui::FileDropEvent::Entered{position:center("drag-file-body"),paths:ExternalPaths::default()},cx);
+        }).unwrap();
+        cx.background_executor().timer(Duration::from_millis(40)).await;
+        cx.update(|cx| {
+            END_SOURCE_ON_DROP.with(|end|end.set(true));
+            event(window,gpui::FileDropEvent::Submit{position:center("drag-file-body")},cx);
+        }).unwrap();
+        cx.background_executor().timer(Duration::from_millis(30)).await;
+        cx.update(|cx| {
+            assert!(!cx.has_active_drag(), "Returning to source must retire GPUI drag immediately");
+            assert_eq!(fs::read_to_string(target.join("a.txt")).unwrap(),"drag fixture");
+            assert!(!target.join("a 2.txt").exists(), "Returning a moved file cannot copy it");
+            window.update(cx, |fixture, window, cx| fixture.browser.update(cx, |b,cx| {
+                assert!(!b.suppress_entry_click && b.drag_candidate.is_none() && b.marquee.is_none());
+                assert!(b.file_drag.label().is_none());
+                let click = gpui::ClickEvent::Mouse(gpui::MouseClickEvent { down: gpui::MouseDownEvent::default(), up: gpui::MouseUpEvent { click_count:1, ..Default::default() } });
+                b.click_entry(0,target.join("b.txt"),false,false,&click,window,cx);
+                assert!(b.tab(0).selection.contains(&target.join("b.txt")),"First click after cancellation must select immediately");
+            })).unwrap();
+        }).unwrap();
         cx.update(|cx| {
             assert!(!source.join("a.txt").exists(),"Move removes only its source after success");
             assert!(target.join("a.txt").exists());
@@ -246,7 +304,7 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
                 b.tab_mut(0).terminal.take(); b.tab_mut(0).terminal_open=false;
             })).unwrap();
             native_file_drag::ended();
-            println!("PASS hidden tab/folder dwell, actual background copy/move, and SSH favourite roundtrip retaining the same terminal/tab/view; no live server, account or user session accessed");
+            println!("PASS tracking-mode tab/folder dwell, same-folder cancellation and immediate next selection, actual copy/move, and SSH favourite roundtrip retaining the same terminal/tab/view; no live server, account or user session accessed");
             fs::remove_dir_all(directory).unwrap(); std::process::exit(0);
         }).unwrap();
     }).detach();

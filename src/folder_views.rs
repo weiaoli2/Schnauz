@@ -1,5 +1,8 @@
 //! Folder presentation rules, loaded once. Inheritance never walks the disk.
 use serde::{Deserialize, Serialize};
+
+/// 15% wider than the former 220 pt preview minimum.
+pub(crate) const MIN_PREVIEW_WIDTH: u16 = 253;
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -249,7 +252,7 @@ impl Library {
             .into_iter()
             .map(|(p, mut rule)| {
                 rule.style.list.normalize();
-                rule.style.preview_width = rule.style.preview_width.clamp(220, 1200);
+                rule.style.preview_width = rule.style.preview_width.clamp(MIN_PREVIEW_WIDTH, 1200);
                 (normalized(&p), rule)
             })
             .collect();
@@ -277,7 +280,7 @@ impl Library {
             return;
         }
         style.list.normalize();
-        style.preview_width = style.preview_width.clamp(220, 1200);
+        style.preview_width = style.preview_width.clamp(MIN_PREVIEW_WIDTH, 1200);
         let inherited = self.data.folders.get(&path).is_some_and(|r| r.descendants);
         if descendants {
             self.data

@@ -1,6 +1,6 @@
 //! Read-only AppKit text selection, copying and scrolling inside the preview.
 use super::*;
-use objc2::{msg_send, rc::Retained};
+use objc2::{define_class, msg_send, rc::Retained, DeclaredClass};
 use objc2_app_kit::{NSAutoresizingMaskOptions, NSColor, NSFont, NSScrollView, NSTextView, NSView};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use std::cell::Cell;
@@ -9,11 +9,46 @@ pub(super) struct Session {
     path: PathBuf,
     source: Arc<text_preview::TextPreview>,
     text: Retained<NSTextView>,
-    scroll: Retained<NSScrollView>,
+    scroll: Retained<ZoomScrollView>,
     clip: Retained<NSView>,
     blocked: Cell<bool>,
     active: Cell<bool>,
     colors: Cell<(u32, u32)>,
+}
+
+#[derive(Default)]
+struct ZoomState {
+    scale: Cell<f32>,
+}
+define_class!(
+    #[unsafe(super(NSScrollView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "SchnauzPreviewZoomScrollView"]
+    #[ivars = ZoomState]
+    struct ZoomScrollView;
+    impl ZoomScrollView {
+        #[unsafe(method(scrollWheel:))]
+        fn wheel(&self, event: &objc2_app_kit::NSEvent) {
+            let delta = if event.hasPreciseScrollingDeltas() {
+                event.scrollingDeltaY()
+            } else { event.scrollingDeltaY() * 20. };
+            self.zoom(delta as f32);
+        }
+    }
+);
+impl ZoomScrollView {
+    fn zoom(&self, delta: f32) {
+        let scale = native_preview::zoom_step(self.ivars().scale.get(), delta);
+        self.ivars().scale.set(scale);
+        if let Some(view) = self.documentView() {
+            // This private scroll view always owns our read-only NSTextView.
+            let text = unsafe { &*(&*view as *const NSView).cast::<NSTextView>() };
+            let size = UI_FONT_SIZE as f64 * scale as f64;
+            let font = NSFont::fontWithName_size(&NSString::from_str("Menlo"), size)
+                .unwrap_or_else(|| NSFont::monospacedSystemFontOfSize_weight(size, 0.));
+            text.setFont(Some(&font));
+        }
+    }
 }
 
 fn color(rgb: u32) -> Retained<NSColor> {
@@ -48,7 +83,11 @@ impl Session {
             container.setContainerSize(NSSize::new(320., f64::MAX));
             container.setWidthTracksTextView(true);
         }
-        let scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), frame);
+        let allocated = ZoomScrollView::alloc(mtm).set_ivars(ZoomState {
+            scale: Cell::new(1.),
+        });
+        let scroll: Retained<ZoomScrollView> =
+            unsafe { msg_send![super(allocated), initWithFrame: frame] };
         scroll.setHasVerticalScroller(true);
         scroll.setHasHorizontalScroller(false);
         scroll.setAutohidesScrollers(true);
@@ -330,13 +369,23 @@ pub(super) fn smoke_test() -> Result<String, String> {
         {
             return Err("Copy All did not preserve text".into());
         }
+        session.scroll.zoom(20.);
+        if session.text.font().unwrap().pointSize() <= UI_FONT_SIZE as f64
+            || session.text.selectedRange().length != original.encode_utf16().count()
+        {
+            return Err("Wheel zoom failed or changed text selection".into());
+        }
+        session.scroll.zoom(-20.);
+        if (session.text.font().unwrap().pointSize() - UI_FONT_SIZE as f64).abs() > 0.001 {
+            return Err("Zoom out did not restore text size".into());
+        }
         session.scroll.setFrameSize(NSSize::new(240., 180.));
         if session.text.string().to_string() != original
             || session.text.selectedRange().length != original.encode_utf16().count()
         {
             return Err("Resize changed text or selection".into());
         }
-        Ok("Native text preview: read-only, file-name font size, Unicode selection, Copy All and resize passed".into())
+        Ok("Native text preview: read-only, file-name font size, Unicode selection, Copy All, wheel zoom and resize passed".into())
     })();
     unsafe {
         let _: () = msg_send![&*board, releaseGlobally];

@@ -423,6 +423,7 @@ pub(super) struct FileInfo {
     pub(super) created: String,
     pub(super) modified: String,
     pub(super) accessed: String,
+    pub(super) date_times: [(String, String); 3],
     pub(super) dimensions: Option<String>,
     pub(super) color: Option<String>,
     pub(super) signed: Option<String>,
@@ -437,9 +438,10 @@ pub(super) fn gather_info(path: &Path) -> FileInfo {
         .as_ref()
         .map(|m| format_size(is_dir, m.len()))
         .unwrap_or_else(|| "--".into());
-    let created = format_date(md.as_ref().and_then(|m| m.created().ok()));
-    let modified = format_date(md.as_ref().and_then(|m| m.modified().ok()));
-    let accessed = format_date(md.as_ref().and_then(|m| m.accessed().ok()));
+    let times = [md.as_ref().and_then(|m| m.created().ok()),
+        md.as_ref().and_then(|m| m.modified().ok()), md.as_ref().and_then(|m| m.accessed().ok())];
+    let [created, modified, accessed] = times.map(format_date);
+    let date_times = times.map(system_dates::parts);
 
     // Image dimensions + color, both from the header only (no full decode).
     let (mut dimensions, mut color) = (None, None);
@@ -465,6 +467,7 @@ pub(super) fn gather_info(path: &Path) -> FileInfo {
         created,
         modified,
         accessed,
+        date_times,
         dimensions,
         color,
         signed,

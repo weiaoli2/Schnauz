@@ -265,6 +265,13 @@ impl Schnauz {
                     .bg(rgb(t.surface))
                     .children(buttons),
             )
+            .child(
+                toolbar_icons::toolbar_button("reload-folder", pane, Icon::Reload, false, true, "Reload folder · ⌘R")
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.active_pane = pane;
+                        this.run_key_action(KeyAction::Refresh, window, cx);
+                    })),
+            )
             .child(div().flex_1())
             .when(tab.remote.is_none(), |d| d.child(
                 div().id(("inspect-storage", pane)).h(px(26.)).px_2().flex().items_center().gap_2().rounded_md().cursor_pointer()
@@ -770,7 +777,7 @@ impl Schnauz {
                                 f32::from(event.position.x),
                                 f32::from(event.position.y),
                                 SidebarTarget::Project(id),
-                                cx,
+                                event.modifiers.platform, cx,
                             );
                             cx.stop_propagation();
                         }),

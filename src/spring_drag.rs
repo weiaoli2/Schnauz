@@ -38,7 +38,7 @@ pub(super) struct State {
     copy_only: bool,
     hovered_tab: Option<(usize, u64, Bounds<gpui::Pixels>)>,
     pending: Option<(Target, Bounds<gpui::Pixels>)>,
-    timer: Option<gpui::Task<()>>,
+    timer: Option<native_file_drag::DwellTimer>,
     generation: u64,
 }
 impl State {
@@ -80,6 +80,23 @@ impl State {
     }
 }
 impl Schnauz {
+    pub(super) fn arm_native_file_drag_cleanup(&mut self, cx: &mut Context<Self>) {
+        let owner = cx.entity().downgrade();
+        let mut app = cx.to_async();
+        native_file_drag::source_completion(move || {
+            let _ = owner.update(&mut app, |this, cx| this.finish_native_file_drag(cx));
+        });
+    }
+    pub(super) fn finish_native_file_drag(&mut self, cx: &mut Context<Self>) {
+        self.drag_candidate = None;
+        self.pending_click_rename = None;
+        self.suppress_entry_click = false;
+        self.marquee = None;
+        self.favourites_drop_hover = false;
+        self.common_drop_hover = false;
+        self.clear_file_drag(cx);
+        cx.notify();
+    }
     pub(super) fn clear_file_drag(&mut self, cx: &mut Context<Self>) {
         let was_active = self.file_drag.operation.is_some();
         self.file_drag = State {
@@ -164,6 +181,7 @@ impl Schnauz {
         &mut self,
         target: Target,
         ev: &gpui::DragMoveEvent<ExternalPaths>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         if !ev.bounds.contains(&ev.event.position) {
@@ -182,9 +200,11 @@ impl Schnauz {
         let generation = self.file_drag.generation;
         let drag = self.file_drag.drag;
         let view = self.file_drag.view;
-        self.file_drag.timer = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(DWELL).await;
-            this.update(cx, |this, cx| {
+        let owner = cx.entity().downgrade();
+        let mut app = cx.to_async();
+        let content = native_file_drag::destination_view(window);
+        self.file_drag.timer = Some(native_file_drag::DwellTimer::new(DWELL, move || {
+            let _ = owner.update(&mut app, |this, cx| {
                 if this.file_drag.generation != generation
                     || this.file_drag.drag != drag
                     || !native_file_drag::active_in(view)
@@ -221,8 +241,10 @@ impl Schnauz {
                         this.navigate_in(pane, path, cx);
                     }
                 }
-            })
-            .ok();
+            });
+            if let Some(content) = &content {
+                native_file_drag::present_tracking_frame(content);
+            }
         }));
     }
     pub(super) fn spring_tab(
@@ -230,6 +252,7 @@ impl Schnauz {
         pane: usize,
         id: u64,
         ev: &gpui::DragMoveEvent<ExternalPaths>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         if !ev.bounds.contains(&ev.event.position) {
@@ -255,13 +278,14 @@ impl Schnauz {
         if self.tab(pane).id == id && self.active_pane == pane {
             return;
         }
-        self.arm_spring(Target::Tab { pane, id }, ev, cx);
+        self.arm_spring(Target::Tab { pane, id }, ev, window, cx);
     }
     pub(super) fn spring_folder(
         &mut self,
         pane: usize,
         path: PathBuf,
         ev: &gpui::DragMoveEvent<ExternalPaths>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         let tab = self.tab(pane);
@@ -271,7 +295,7 @@ impl Schnauz {
             parent: tab.current_dir.clone(),
             path,
         };
-        self.arm_spring(target, ev, cx);
+        self.arm_spring(target, ev, window, cx);
     }
     pub(super) fn drop_on_tab(
         &mut self,

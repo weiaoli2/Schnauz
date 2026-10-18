@@ -424,13 +424,17 @@ impl Schnauz {
         self.open_path(pane, path, is_dir, cx);
     }
 
-    fn search_result_menu(&mut self, row: usize, x: f32, y: f32, cx: &mut Context<Self>) {
+    fn search_result_menu(&mut self, row: usize, x: f32, y: f32, direct_actions: bool, cx: &mut Context<Self>) {
         self.select_search_result(row, cx);
         let Some(item) = self.palette_items.get(row) else {
             return;
         };
         let Action::Open(path, is_dir) = item.action.clone();
         let pane = self.file_search.pane;
+        if direct_actions {
+            self.open_quick_actions(pane, x, y, path, is_dir, cx);
+            return;
+        }
         let mut nodes = vec![
             mi("Show in Folder", |this, _, cx| {
                 this.close_context_menu(cx);
@@ -601,11 +605,12 @@ impl Schnauz {
                         let Action::Open(path,is_dir) = &item.action;
                         let selected = this.tab(pane).selection.contains(path);
                         let location = path.parent().map(display_path).unwrap_or_default();
+                        let cloud = if this.tab(pane).remote.is_none() { this.cloud_state(path, *is_dir, cx) } else { CloudSync::Local };
                         Some(div().id(("file-search-hit",i)).w(px(width)).h(px(ROW_H)).flex().items_center().px_3().gap_3()
                             .text_size(px(UI_FONT_SIZE)).cursor_pointer()
                             .when(selected,|s|s.bg(rgb(t.selected))).hover(|s|s.bg(rgb(t.hover)))
                             .child(div().flex_none().w(px(cell_width)).min_w_0().flex().items_center().gap_2()
-                                .child(div().flex_none().child(icon_element(path,*is_dir)))
+                                .child(div().flex_none().child(cloud_badged_icon(icon_element(path,*is_dir), cloud, 11.)))
                                 .child(div().id(("search-entry-name",i)).flex_1().min_w_0().flex()
                                     .child(rename_ui::entry_name(&item.title,this.rename_text(pane,path)))
                                     .on_click(cx.listener(move|this,ev:&ClickEvent,window,cx| {
@@ -618,7 +623,7 @@ impl Schnauz {
                             }))
                             .on_mouse_down(MouseButton::Right,cx.listener(move|this,ev:&MouseDownEvent,window,cx| {
                                 window.focus(&this.focus);
-                                this.search_result_menu(i,f32::from(ev.position.x),f32::from(ev.position.y),cx);
+                                this.search_result_menu(i,f32::from(ev.position.x),f32::from(ev.position.y),ev.modifiers.platform,cx);
                                 cx.stop_propagation();
                             })))
                     }).collect()

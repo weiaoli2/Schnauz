@@ -3,6 +3,15 @@
 Official repository: https://github.com/weiaoli2/Schnauz (public).
 Current release: **v0.5.5**, public Apple Silicon + Intel early preview.
 
+## Authorized next release — 0.5.9
+
+Oliver explicitly requested publication of 0.5.9 with both DMGs on 2026-10-18,
+including descriptions of the bug fixes. Use the same public repository and
+prerelease/signing policy. Preserve v0.5.5 and all live sessions. Release notes
+cover preview geometry/Information, drag activation and cancellation, Nextcloud
+aliases/badges, installed Quick Actions, permanent sidebar shortcuts, and the
+new preview zoom, action shortcuts and Schnauz-only Open With preferences.
+
 ## Current status — 0.5.5 published
 
 On 2026-10-18 Oliver resumed GitHub publication after the transfer footer and

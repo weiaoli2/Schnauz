@@ -152,8 +152,9 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Common accepts local/cloud/SSH folder/file references, with the same provider
   badges and no copies/transfers. Drop on Common targets Common; other sidebar
   space targets the captured project's Favourites. View in… includes Common.
-  Common/Favourites are fixed headings; discard the obsolete FAVOURITES collapse
-  flag. Common Home stays visible even if other Common folders are folded.
+  Common/Favourites and their Folders/Files subsections are fixed, always-visible
+  headings. Ignore legacy FAVOURITES/FOLDERS/FILES/COMMON_FOLDERS/COMMON_FILES
+  collapse flags; clicking subsection labels must never hide shortcuts.
   All Schnauz browser windows share one active project; switching in any window
   switches every window. Within a project, each window browses independently.
   Share project metadata and the folder-view cache in memory, preserve per-window
@@ -414,7 +415,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The current local/release version is 0.5.5.
+  no per-build app copies or releases. The current local version is 0.5.9; the published release remains 0.5.5.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -507,3 +508,52 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   documentation-only commits do not change that artifact provenance. This request
   is complete, not continuing authorization for future releases. Reuse the saved
   workflow on a new request; never move the existing tag or overwrite its assets.
+
+- Open With owns Schnauz-only, case-insensitive extension choices in central
+  file-apps.json (src/file_apps.rs), shared across projects/windows. Different
+  apps ask OK (always), Only Now or Cancel; never change LaunchServices defaults.
+  Other Application… permits an app outside macOS suggestions. Cache native menu
+  app icons by path and mark the effective app. Use macOS Default Again removes
+  the override. Ordinary, multi-file, palette and downloaded-SSH opens share the
+  resolver; folders/app bundles/extensionless files retain normal behavior.
+
+- Image previews use explicit aspect-ratio dimensions, never percentage width with
+  intrinsic pixel height. Wheel zoom applies to visual previews and native text;
+  selecting another file resets the transient zoom and image scroll. Drag images
+  to pan at enlarged sizes. Keep native text selection/copy and bounded reads.
+- Quick Actions includes installed file-input Automator workflows from user/system
+  Library/Services, matched with native UTType conformance (including Finder-scoped
+  actions). Launch only on the action click, with literal captured path arguments;
+  never run a user's workflow during QA. Use disposable workflow fixtures.
+
+- ⌘-right-click opens Quick Actions directly on local file/folder items, including
+  Common/Favourites and search results. Settings → Keybinds lists installed actions
+  and built-ins. Keep shortcuts central, persistent, conflict-checked and inactive
+  in editors/modals/remote selections. Never run a workflow while assigning a key.
+- Preview Information uses two label/value pairs per row (four columns), with
+  explicit 12 pt side padding for the heading and fields. Keep full-value tooltips
+  for truncated data. Video uses the same compact grid and loaded dimensions.
+
+- Shared section headings, especially Information, must be definite-width single
+  lines. Preview dates show the locale-formatted date above the locale-formatted
+  time, with one-line labels and tight 13 pt lines/2 pt row gaps. Keep the four
+  columns and 12 pt side insets. Cache native date-only/time-only formatters;
+  never split a localized combined date string on punctuation.
+- Preview minimum width is 253 pt (15% above 220), shared by allocation, divider
+  drags, saved views and preference loading, subject to available screen space.
+- Information text needs explicit pixel widths derived from the actual pane;
+  container bounds alone do not prove glyphs are visible. Avoid preliminary
+  zero-width truncation. UI checks must assert actual heading/value text and
+  nonzero shaped-text bounds as well as compact row geometry.
+- Native drag dwell uses a common-run-loop-mode timer so tabs/folders activate
+  and repaint during AppKit tracking. Retire GPUI pointer tracking at the native
+  handoff and clear source/destination drag state on cancellation or completion;
+  same-folder cancellation must allow immediate selection. Target the actual
+  GPUI view, not the plain NSWindow content wrapper. QA uses disposable files.
+- Recognize home-level cloud symlink aliases from cached startup routing, without
+  reading desktop credentials, probing targets or scanning descendants. Use
+  physical paths for linked-account matching and logical alias paths for display.
+  Mark downloaded cloud files/folders too; never apply local identity to SSH.
+- Sidebar folder context menus apply the main pane's current view and sorting to
+  that folder and descendants through central folder-view rules, never by scanning
+  the tree or changing the sidebar's appearance. Preserve unrelated overrides.

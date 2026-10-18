@@ -71,16 +71,16 @@ impl Expansion {
     }
 }
 
-fn bounded_width(requested: f32, available: f32) -> f32 {
+fn bounded_width(requested: f32, available: f32, minimum: f32) -> f32 {
     let max = available.clamp(0., 1200.);
-    requested.clamp(220_f32.min(max), max)
+    requested.clamp(minimum.min(max), max)
 }
 
 fn allocate(preview: Option<f32>, tools: Option<f32>, pane_width: f32) -> Layout {
     let available = (pane_width - 220.).max(0.);
     let tools = tools.map(|w| w.clamp(220., 720.)).unwrap_or(0.);
     if let Some(preview) = preview {
-        let preview = preview.clamp(220., 1200.);
+        let preview = preview.clamp(folder_views::MIN_PREVIEW_WIDTH as f32, 1200.);
         if tools > 0. && available <= tools {
             // At a screen edge or in full screen, keep both beside the files;
             // never stack them or replace the preview with the tool.
@@ -91,7 +91,7 @@ fn allocate(preview: Option<f32>, tools: Option<f32>, pane_width: f32) -> Layout
             }
         } else {
             Layout {
-                preview: bounded_width(preview, available - tools),
+                preview: bounded_width(preview, available - tools, folder_views::MIN_PREVIEW_WIDTH as f32),
                 tools,
             }
         }
@@ -174,10 +174,12 @@ impl Schnauz {
                 Kind::Preview => bounded_width(
                     drag.start.preview + drag.start_x - x,
                     pane_width - 220. - drag.start.tools,
+                    folder_views::MIN_PREVIEW_WIDTH as f32,
                 ),
                 Kind::Tools => bounded_width(
                     drag.start.tools + drag.start_x - x,
                     (pane_width - 220. - drag.start.preview).max(drag.start.tools.min(220.)),
+                    220.,
                 )
                 .min(720.),
             };
@@ -191,7 +193,7 @@ impl Schnauz {
             let width = (drag.width.round() as u16).clamp(220, 1200);
             match drag.kind {
                 Kind::Preview => {
-                    self.tab_mut(owner).preview_width = width;
+                    self.tab_mut(owner).preview_width = width.max(folder_views::MIN_PREVIEW_WIDTH);
                     self.remember_folder_view(owner, cx);
                 }
                 Kind::Tools => {
@@ -353,6 +355,8 @@ mod tests {
         assert!(tight.preview > 0. && tight.tools > 0.);
         assert!((tight.preview + tight.tools - 280.).abs() < 0.01);
         assert_eq!(allocate(Some(640.), None, 700.).preview, 480.);
+        assert_eq!(allocate(Some(1.), None, 1000.).preview, 253.);
+        assert_eq!(bounded_width(220., 700., folder_views::MIN_PREVIEW_WIDTH as f32), 253.);
         assert_eq!(allocate(None, Some(360.), 700.).tools, 360.);
         assert_eq!(allocate(Some(420.), None, 200.).preview, 0.);
     }
