@@ -90,10 +90,6 @@ impl<K: Eq + Hash + Clone, V> Cache<K, V> {
         self.bytes = self.bytes.saturating_sub(item.bytes);
         Some(item.value)
     }
-    pub fn clear(&mut self) {
-        self.items.clear();
-        self.bytes = 0;
-    }
     pub fn len(&self) -> usize {
         self.items.len()
     }
@@ -123,7 +119,5 @@ mod tests {
         assert!(cache.bytes <= 10);
         cache.retain(|k, _| k == "base");
         assert_eq!(cache.len(), 1);
-        cache.clear();
-        assert_eq!(cache.bytes, 0);
     }
 }

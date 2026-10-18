@@ -50,7 +50,8 @@ Use the normal build or tests for verification; avoid a separate expensive
 All current implementation names use Schnauz. `src/legacy.rs` retains only
 compatibility identifiers for earlier settings, user scripts and saved SFTP
 access. Original credits and license notices remain intact; the old updater
-has been removed.
+has been removed. App-icon customization and icon packs are also removed;
+Schnauz keeps its fixed app icon and uses native macOS file/application icons.
 
 ## Current stage and user data
 

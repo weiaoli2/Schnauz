@@ -230,35 +230,6 @@ fn apply_prefs(p: Prefs, cx: &mut App) {
     cx.refresh_windows();
 }
 
-// ----- icon packs ------------------------------------------------------------
-
-/// The active icon pack: a folder of images named `folder.png`, `file.png`, and
-/// per-extension (e.g. `pdf.png`, `png.png`) that override macOS icons.
-#[derive(Clone)]
-struct IconPackGlobal(Option<PathBuf>);
-impl gpui::Global for IconPackGlobal {}
-
-thread_local! {
-    static ACTIVE_ICON_PACK: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
-}
-
-fn icon_pack() -> Option<PathBuf> {
-    ACTIVE_ICON_PACK.with(|p| p.borrow().clone())
-}
-
-fn set_active_icon_pack(p: Option<PathBuf>) {
-    ACTIVE_ICON_PACK.with(|c| *c.borrow_mut() = p);
-}
-
-/// Apply an icon pack (or `None` to revert to macOS icons): persist, rebuild
-/// icons, and notify the explorer window.
-fn apply_icon_pack(p: Option<PathBuf>, cx: &mut App) {
-    set_active_icon_pack(p.clone());
-    save_icon_pack(&p);
-    cx.set_global(IconPackGlobal(p));
-    cx.refresh_windows();
-}
-
 // ----- menu style (right-click / dropdown menu appearance) -------------------
 
 /// Customizable look of pop-up menus (right-click menu, dropdowns).
@@ -318,197 +289,6 @@ fn apply_menu_style(m: MenuStyle, cx: &mut App) {
     save_menu_style(&m);
     cx.set_global(MenuStyleGlobal(m));
     cx.refresh_windows();
-}
-
-// ----- app icon background (the Dock icon) -----------------------------------
-
-/// The default app icon (the exact bundle icon: blue folder on a light rounded
-/// square with the standard macOS margin). We recolor only its background so a
-/// customized icon keeps the identical size, shape, margin, and logo.
-const ICON_BASE_PNG: &[u8] = include_bytes!("../icon_base.png");
-
-/// How the app icon's background is drawn behind the logo.
-#[derive(Clone, PartialEq)]
-enum IconBg {
-    /// Keep the built-in bundle icon (light) as-is.
-    Default,
-    /// Recolor the background to a solid color.
-    Color(u32),
-    /// Fill the background with a user-supplied image (copied to the config dir).
-    Image(PathBuf),
-}
-
-thread_local! {
-    static ACTIVE_ICON_BG: RefCell<IconBg> = const { RefCell::new(IconBg::Default) };
-    /// Cached decoded preview icon: (config it was built for, decoded image).
-    static ICON_PREVIEW: RefCell<Option<(IconBg, Option<Arc<RenderImage>>)>> =
-        const { RefCell::new(None) };
-}
-
-fn icon_bg() -> IconBg {
-    ACTIVE_ICON_BG.with(|b| b.borrow().clone())
-}
-
-fn set_active_icon_bg(b: IconBg) {
-    ACTIVE_ICON_BG.with(|c| *c.borrow_mut() = b);
-}
-
-/// The decoded icon for the settings preview (recolored base, cached per config).
-fn preview_icon_render() -> Option<Arc<RenderImage>> {
-    let bg = icon_bg();
-    ICON_PREVIEW.with(|c| {
-        {
-            let cache = c.borrow();
-            if let Some((cached, render)) = cache.as_ref() {
-                if *cached == bg {
-                    return render.clone();
-                }
-            }
-        }
-        let render = match &bg {
-            IconBg::Default => decode_icon(ICON_BASE_PNG),
-            _ => compose_icon_png(&bg).and_then(|png| decode_icon(&png)),
-        };
-        *c.borrow_mut() = Some((bg, render.clone()));
-        render
-    })
-}
-
-/// Apply the icon background: update the render copy, persist, redraw the Dock
-/// icon, and repaint (so the Settings preview updates).
-fn apply_icon_bg(bg: IconBg, cx: &mut App) {
-    set_active_icon_bg(bg.clone());
-    save_icon_bg(&bg);
-    refresh_dock_icon(&bg);
-    cx.refresh_windows();
-}
-
-/// Recolor the base icon per `bg` and hand it to the Dock. `Default` leaves the
-/// bundle's own icon untouched.
-fn refresh_dock_icon(bg: &IconBg) {
-    if matches!(bg, IconBg::Default) {
-        return; // keep the built-in AppIcon.icns
-    }
-    if let Some(png) = compose_icon_png(bg) {
-        set_dock_icon(&png);
-    }
-}
-
-/// Whether a base-icon pixel belongs to the (light, low-saturation) background
-/// rather than the (saturated blue) folder logo.
-fn is_icon_background(r: u8, g: u8, b: u8) -> bool {
-    let mx = r.max(g).max(b);
-    let mn = r.min(g).min(b);
-    mx >= 200 && (mx - mn) <= 26
-}
-
-/// Build the customized icon PNG by recoloring ONLY the base icon's background,
-/// preserving its exact shape, margin, corner radius, logo, and shading.
-fn compose_icon_png(bg: &IconBg) -> Option<Vec<u8>> {
-    use image::imageops;
-    let mut base = image::load_from_memory(ICON_BASE_PNG).ok()?.to_rgba8();
-    let (w, h) = base.dimensions();
-
-    // For an image background, cover-fit it to the icon so each background pixel
-    // has a source color.
-    let bg_img = match bg {
-        IconBg::Image(path) => {
-            let img = image::open(path).ok()?.to_rgba8();
-            let (iw, ih) = img.dimensions();
-            let scale = (w as f32 / iw as f32).max(h as f32 / ih as f32);
-            let (nw, nh) = ((iw as f32 * scale) as u32, (ih as f32 * scale) as u32);
-            Some(imageops::resize(&img, nw.max(1), nh.max(1), imageops::FilterType::Lanczos3))
-        }
-        _ => None,
-    };
-    let color = match bg {
-        IconBg::Color(c) => Some([(c >> 16) as u8, (c >> 8) as u8, *c as u8]),
-        _ => None,
-    };
-
-    for (x, y, px) in base.enumerate_pixels_mut() {
-        let [r, g, b, a] = px.0;
-        if a == 0 || !is_icon_background(r, g, b) {
-            continue; // transparent margin or the logo → leave untouched
-        }
-        if let Some(img) = &bg_img {
-            let (bw, bh) = img.dimensions();
-            let sp = img.get_pixel(x.min(bw - 1), y.min(bh - 1)).0;
-            px.0 = [sp[0], sp[1], sp[2], a];
-        } else if let Some([cr, cg, cb]) = color {
-            // Preserve the base's subtle gradient by scaling the color by this
-            // pixel's brightness (near-white → full color, slightly darker →
-            // slightly darker color).
-            let lum = r.max(g).max(b) as f32 / 255.0;
-            px.0 = [
-                (cr as f32 * lum) as u8,
-                (cg as f32 * lum) as u8,
-                (cb as f32 * lum) as u8,
-                a,
-            ];
-        }
-    }
-
-    let mut out = Vec::new();
-    base.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
-        .ok()?;
-    Some(out)
-}
-
-/// Hand a PNG to the running app as its Dock / cmd-tab icon.
-fn set_dock_icon(png: &[u8]) {
-    use objc2::AllocAnyThread;
-    use objc2_app_kit::{NSApplication, NSImage};
-    let Some(mtm) = objc2::MainThreadMarker::new() else {
-        return;
-    };
-    let data = objc2_foundation::NSData::with_bytes(png);
-    let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
-        return;
-    };
-    let app = NSApplication::sharedApplication(mtm);
-    unsafe { app.setApplicationIconImage(Some(&image)) };
-}
-
-/// The pack image overriding the icon for `key` (a file extension, FOLDER_KEY,
-/// or FILE_KEY), if the active pack provides one.
-fn pack_icon_path(key: &str) -> Option<PathBuf> {
-    // An application always keeps its own native icon, including with icon packs.
-    if key.starts_with(APP_ICON_PREFIX) {
-        return None;
-    }
-    let pack = icon_pack()?;
-    let name = if key == FOLDER_KEY {
-        "folder"
-    } else if key == FILE_KEY {
-        "file"
-    } else if let Some(rest) = key.strip_prefix("fav:") {
-        // Favorite/location icons (e.g. "fav:documents") map to <name>.png so a
-        // pack can override sidebar icons just like file/folder icons.
-        rest
-    } else {
-        key
-    };
-    for ext in ["png", "jpg", "jpeg", "gif", "tiff", "bmp", "webp"] {
-        let p = pack.join(format!("{name}.{ext}"));
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    None
-}
-
-/// Decode an image file from disk into a 128px GPUI icon (for pack icons).
-fn decode_image_file(path: &Path) -> Option<Arc<RenderImage>> {
-    let bytes = fs::read(path).ok()?;
-    decode_icon(&bytes)
-}
-
-fn clear_icon_cache() {
-    ICON_EPOCH.with(|e|e.set(e.get().wrapping_add(1)));
-    ICON_PENDING.with(|p|p.borrow_mut().clear());
-    ICON_REQUESTS.with(|q|q.borrow_mut().clear());
-    ICON_CACHE.with(|c| c.borrow_mut().clear());
 }
 
 // ----- keybindings -----------------------------------------------------------
@@ -1752,15 +1532,6 @@ impl Schnauz {
             })
             .detach();
         }
-        // Rebuild icons when the icon pack changes.
-        cx.observe_global::<IconPackGlobal>(|this, cx| {
-            set_active_icon_pack(cx.global::<IconPackGlobal>().0.clone());
-            clear_icon_cache();
-            ensure_base_icons();
-            cx.notify();
-            this.prewarm_icons(cx);
-        })
-        .detach();
         let project_result = config_dir()
             .ok_or_else(|| "Cannot find the settings folder.".to_string())
             .and_then(|dir| projects::Library::load_migrating(
@@ -8166,23 +7937,19 @@ impl Schnauz {
         }
     }
 
-    /// Drain requests from rows that were actually laid out this frame.
+    /// Load native icons only for rows laid out this frame; decode off-thread.
     fn prewarm_icons(&self, cx: &mut Context<Self>) {
-        let jobs=ICON_REQUESTS.with(|q|std::mem::take(&mut *q.borrow_mut()));
-        if jobs.is_empty(){return;}
-        cx.spawn(async move |this,cx| {
-            for (key,(path,epoch)) in jobs {
-                if ICON_EPOCH.with(|e|e.get())!=epoch {continue;}
-                let built=if let Some(pack)=pack_icon_path(&key){
-                    cx.background_spawn(async move {decode_image_file(&pack)}).await
-                }else{
-                    match icon_tiff(&path){Some(bytes)=>cx.background_spawn(async move {decode_icon(&bytes)}).await,None=>None}
+        let jobs = ICON_REQUESTS.with(|queue| std::mem::take(&mut *queue.borrow_mut()));
+        if jobs.is_empty() { return; }
+        cx.spawn(async move |this, cx| {
+            for (key, path) in jobs {
+                let built = match icon_tiff(&path) {
+                    Some(bytes) => cx.background_spawn(async move { decode_icon(&bytes) }).await,
+                    None => None,
                 };
-                if ICON_EPOCH.with(|e|e.get())==epoch {
-                    ICON_CACHE.with(|c|c.borrow_mut().insert(key.clone(),built));
-                    ICON_PENDING.with(|p|{p.borrow_mut().remove(&key);});
-                }
-                if this.update(cx,|_,cx|cx.notify()).is_err(){break;}
+                ICON_CACHE.with(|cache| cache.borrow_mut().insert(key.clone(), built));
+                ICON_PENDING.with(|pending| { pending.borrow_mut().remove(&key); });
+                if this.update(cx, |_, cx| cx.notify()).is_err() { break; }
             }
         }).detach();
     }
@@ -11541,14 +11308,13 @@ fn cloud_badged_icon(icon: AnyElement, cloud: CloudSync, badge: f32) -> AnyEleme
         .into_any_element()
 }
 
-/// Like [`icon_element`] but at an explicit pixel size (for the icon/gallery views).
+/// Like [`icon_element`] but at an explicit pixel size (for the Icons view).
 fn icon_element_sized(path: &Path, is_dir: bool, size: f32) -> AnyElement {
     if !is_browsable_folder(path,is_dir) {
         if let Some(key)=icon_key(path) {
-            if !ICON_CACHE.with(|c|c.borrow().contains_key(&key)) && !ICON_PENDING.with(|p|p.borrow().contains_key(&key)) {
-                let epoch=ICON_EPOCH.with(|e|e.get());
-                ICON_PENDING.with(|p|{p.borrow_mut().insert(key.clone(),epoch);});
-                ICON_REQUESTS.with(|q|{q.borrow_mut().insert(key,(path.to_path_buf(),epoch));});
+            if !ICON_CACHE.with(|c|c.borrow().contains_key(&key)) && !ICON_PENDING.with(|p|p.borrow().contains(&key)) {
+                ICON_PENDING.with(|p|{p.borrow_mut().insert(key.clone());});
+                ICON_REQUESTS.with(|q|{q.borrow_mut().insert(key,path.to_path_buf());});
             }
         }
     }
@@ -11579,9 +11345,8 @@ thread_local! {
     // `None` records "couldn't build one" to avoid retrying.
     static ICON_CACHE: RefCell<Cache<String, Option<Arc<RenderImage>>>> =
         RefCell::new(Cache::new(512, 32*1024*1024, image_bytes, |k| k==FOLDER_KEY || k==FILE_KEY || k.starts_with("fav:")));
-    static ICON_REQUESTS: RefCell<HashMap<String, (PathBuf,u64)>> = RefCell::new(HashMap::new());
-    static ICON_PENDING: RefCell<HashMap<String,u64>> = RefCell::new(HashMap::new());
-    static ICON_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static ICON_REQUESTS: RefCell<HashMap<String, PathBuf>> = RefCell::new(HashMap::new());
+    static ICON_PENDING: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
 fn icon_key(path: &Path) -> Option<String> {
@@ -11637,17 +11402,13 @@ fn file_probe_path() -> PathBuf {
 /// very first render shows real Finder icons — no emoji placeholder / swap.
 fn ensure_base_icons() {
     if ICON_CACHE.with(|c| !c.borrow().contains_key(FOLDER_KEY)) {
-        let icon = pack_icon_path(FOLDER_KEY)
-            .and_then(|p| decode_image_file(&p))
-            .or_else(|| build_macos_icon(&folder_dir_path()));
+        let icon = build_macos_icon(&folder_dir_path());
         ICON_CACHE.with(|c| {
             c.borrow_mut().insert(FOLDER_KEY.to_string(), icon);
         });
     }
     if ICON_CACHE.with(|c| !c.borrow().contains_key(FILE_KEY)) {
-        let icon = pack_icon_path(FILE_KEY)
-            .and_then(|p| decode_image_file(&p))
-            .or_else(|| build_macos_icon(&file_probe_path()));
+        let icon = build_macos_icon(&file_probe_path());
         ICON_CACHE.with(|c| {
             c.borrow_mut().insert(FILE_KEY.to_string(), icon);
         });
@@ -13439,78 +13200,6 @@ fn save_keymap(k: &Keymap) {
     }
 }
 
-/// Persist the active icon-pack folder (empty = none).
-fn save_icon_pack(p: &Option<PathBuf>) {
-    if let Some(file) = config_file("icon_pack.txt") {
-        if let Some(parent) = file.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let body = p.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-        let _ = fs::write(&file, body);
-    }
-}
-
-/// Persist the app-icon background choice.
-fn save_icon_bg(bg: &IconBg) {
-    if let Some(file) = config_file("app_icon.txt") {
-        if let Some(parent) = file.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let body = match bg {
-            IconBg::Default => String::new(),
-            IconBg::Color(c) => format!("color={c:06x}"),
-            IconBg::Image(p) => format!("image={}", p.to_string_lossy()),
-        };
-        let _ = fs::write(&file, body);
-    }
-}
-
-/// Load the saved app-icon background choice.
-fn load_icon_bg() -> IconBg {
-    let Some(file) = config_file("app_icon.txt") else {
-        return IconBg::Default;
-    };
-    let Ok(s) = fs::read_to_string(&file) else {
-        return IconBg::Default;
-    };
-    let s = s.trim();
-    if let Some(hex) = s.strip_prefix("color=") {
-        if let Ok(c) = u32::from_str_radix(hex.trim(), 16) {
-            return IconBg::Color(c);
-        }
-    } else if let Some(path) = s.strip_prefix("image=") {
-        let p = PathBuf::from(path.trim());
-        if p.is_file() {
-            return IconBg::Image(p);
-        }
-    }
-    IconBg::Default
-}
-
-/// Copy an uploaded background image into the config dir so it persists, and
-/// return the stored path.
-fn store_icon_bg_image(src: &Path) -> Option<PathBuf> {
-    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png");
-    let dest = config_file(&format!("app_icon_bg.{ext}"))?;
-    if let Some(parent) = dest.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    fs::copy(src, &dest).ok()?;
-    Some(dest)
-}
-
-/// Load the saved icon-pack folder, if it still exists.
-fn load_icon_pack() -> Option<PathBuf> {
-    let file = config_file("icon_pack.txt")?;
-    let s = fs::read_to_string(&file).ok()?;
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-    let p = PathBuf::from(s);
-    p.is_dir().then_some(p)
-}
-
 /// Load the keymap, starting from defaults and applying saved overrides.
 fn load_keymap() -> Keymap {
     let mut k = Keymap::defaults();
@@ -13881,11 +13570,6 @@ fn main() {
         set_active_keymap(saved_keymap.clone());
         cx.set_global(KeymapGlobal(saved_keymap));
 
-        // Load the icon pack (if any).
-        let saved_pack = load_icon_pack();
-        set_active_icon_pack(saved_pack.clone());
-        cx.set_global(IconPackGlobal(saved_pack));
-
         // Load the menu style; unless the user chose menu colors, derive them
         // from the active theme so menus match (incl. light themes).
         let mut saved_menu = load_menu_style();
@@ -13897,11 +13581,6 @@ fn main() {
         let saved_servers = load_sftp_servers();
         set_active_sftp_servers(saved_servers.clone());
         cx.set_global(SftpServersGlobal(saved_servers));
-
-        // Load the app-icon background and apply it to the Dock icon.
-        let saved_icon_bg = load_icon_bg();
-        set_active_icon_bg(saved_icon_bg.clone());
-        refresh_dock_icon(&saved_icon_bg);
 
         // Menu bar: app menu with Settings + Quit, plus their shortcuts.
         cx.bind_keys([
@@ -14047,7 +13726,6 @@ mod tests {
         assert_ne!(alpha_key, icon_key(&beta).unwrap());
         assert_ne!(alpha_key, icon_key(&dir.join("Other/Alpha.app")).unwrap());
         assert_eq!(icon_key(&dir.join("a.txt")), icon_key(&dir.join("b.TXT")));
-        assert!(pack_icon_path(&alpha_key).is_none());
         fs::remove_dir_all(dir).unwrap();
     }
 

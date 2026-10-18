@@ -23,6 +23,7 @@ with a suggested USD 2.50 amount; the user completes any payment on PayPal.
 ## First version
 
 - Schnauz Light and Schnauz Dark appearances, an indigo accent, and compact 12 pt lists.
+- A fixed Schnauzer app icon and native macOS file/application icons.
 - Folder totals are not calculated automatically; the size column shows file sizes only.
 - One click selects a file or folder; double-click opens it. Click the sole selected
   item's name again to rename it inline in List, Icons or search results. The

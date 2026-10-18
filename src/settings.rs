@@ -38,7 +38,7 @@ pub(super) fn tab_sections(tab: usize) -> &'static [&'static str] {
             "Version",
             "Developer",
         ],
-        2 => &["Theme", "Colors", "App Icon", "Icon Pack"],
+        2 => &["Theme", "Colors"],
         _ => &[],
     }
 }
@@ -853,151 +853,10 @@ impl Settings {
                 .into_any_element()
         };
 
-        // App-icon preview + upload/reset controls.
-        let app_icon_row = div()
-            .flex()
-            .items_center()
-            .gap_4()
-            .child(self.app_icon_preview())
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_size(px(UI_SMALL_FONT_SIZE))
-                            .text_color(rgb(t.text_muted))
-                            .child("Pick a color below or upload an image (PNG or JPG; square looks best)."),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .id("icon-bg-upload")
-                                    .px_3()
-                                    .py_1()
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .bg(rgb(t.surface))
-                                    .border_1()
-                                    .border_color(rgb(t.border))
-                                    .hover(|s| s.border_color(rgb(t.accent)))
-                                    .child("Upload Background\u{2026}")
-                                    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
-                                        let rx = cx.prompt_for_paths(PathPromptOptions {
-                                            files: true,
-                                            directories: false,
-                                            multiple: false,
-                                            prompt: Some("Choose Background Image".into()),
-                                        });
-                                        cx.spawn(async move |_, cx| {
-                                            if let Ok(Ok(Some(paths))) = rx.await {
-                                                if let Some(p) = paths.into_iter().next() {
-                                                    if let Some(dest) = store_icon_bg_image(&p) {
-                                                        let _ = cx.update(|cx| {
-                                                            apply_icon_bg(IconBg::Image(dest), cx)
-                                                        });
-                                                    }
-                                                }
-                                            }
-                                        })
-                                        .detach();
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id("icon-bg-reset")
-                                    .px_3()
-                                    .py_1()
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .bg(rgb(t.hover))
-                                    .hover(|s| s.bg(rgb(t.selected)))
-                                    .child("Reset")
-                                    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
-                                        apply_icon_bg(IconBg::Default, cx);
-                                    })),
-                            ),
-                    ),
-            )
-            .into_any_element();
-
-        // Icon-pack status + choose/reset + note.
-        let icon_pack_row = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(div().text_color(rgb(t.text)).child(match icon_pack() {
-                Some(p) => format!("Current pack: {}", path_label(&p)),
-                None => "Using macOS icons".to_string(),
-            }))
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("pack-choose")
-                            .px_3()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .bg(rgb(t.surface))
-                            .border_1()
-                            .border_color(rgb(t.border))
-                            .hover(|s| s.border_color(rgb(t.accent)))
-                            .child("Choose Folder\u{2026}")
-                            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
-                                let rx = cx.prompt_for_paths(PathPromptOptions {
-                                    files: false,
-                                    directories: true,
-                                    multiple: false,
-                                    prompt: Some("Choose Icon Pack".into()),
-                                });
-                                cx.spawn(async move |this, cx| {
-                                    if let Ok(Ok(Some(paths))) = rx.await {
-                                        if let Some(p) = paths.into_iter().next() {
-                                            let _ = this
-                                                .update(cx, |_, cx| apply_icon_pack(Some(p), cx));
-                                        }
-                                    }
-                                })
-                                .detach();
-                            })),
-                    )
-                    .child(
-                        div()
-                            .id("pack-reset")
-                            .px_3()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .bg(rgb(t.hover))
-                            .hover(|s| s.bg(rgb(t.selected)))
-                            .child("Use macOS icons")
-                            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
-                                apply_icon_pack(None, cx);
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .text_size(px(UI_SMALL_FONT_SIZE))
-                    .text_color(rgb(t.text_dim))
-                    .child(
-                        "A folder of images named folder.png, file.png, and per-extension \
-                         (e.g. pdf.png, png.png). PNG with transparency works best.",
-                    ),
-            )
-            .into_any_element();
-
         vec![
             settings_header(
                 "Customization",
-                "Make Schnauz yours \u{2014} palette, menus, and app icon.",
+                "Choose a theme and fine-tune the interface colors.",
             )
             .into_any_element(),
             settings_section(
@@ -1040,16 +899,6 @@ impl Settings {
                     ),
                 ],
             ),
-            settings_section(
-                "App Icon",
-                Some("The Dock and Finder icon."),
-                vec![app_icon_row, self.icon_color_row(cx).into_any_element()],
-            ),
-            settings_section(
-                "Icon Pack",
-                Some("Replace macOS file icons with your own image set."),
-                vec![icon_pack_row],
-            ),
             div()
                 .pt_1()
                 .child(reset_button(
@@ -1058,8 +907,6 @@ impl Settings {
                     cx.listener(|_, _: &ClickEvent, _, cx| {
                         apply_theme(Theme::default(), cx);
                         apply_menu_style(MenuStyle::default(), cx);
-                        apply_icon_bg(IconBg::Default, cx);
-                        apply_icon_pack(None, cx);
                         cx.notify();
                     }),
                 ))
@@ -1107,58 +954,6 @@ impl Settings {
         div().flex().flex_wrap().gap_1().children(swatches)
     }
 
-
-
-
-
-    /// A live preview of the app icon (the recolored base — matches the Dock).
-    fn app_icon_preview(&self) -> impl IntoElement {
-        let mut base = div()
-            .flex_none()
-            .w(px(80.0))
-            .h(px(80.0))
-            .flex()
-            .items_center()
-            .justify_center();
-        if let Some(r) = preview_icon_render() {
-            base = base.child(img(ImageSource::Render(r)).w(px(80.0)).h(px(80.0)));
-        }
-        base
-    }
-
-    /// Color swatches that set the app-icon background color.
-    fn icon_color_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = theme();
-        let cur = match icon_bg() {
-            IconBg::Color(c) => Some(c),
-            _ => None,
-        };
-        let mut swatches: Vec<AnyElement> = Vec::new();
-        for c in palette_colors() {
-            let selected = cur == Some(c);
-            swatches.push(
-                div()
-                    .id(("iconbg", c as usize))
-                    .w(px(22.0))
-                    .h(px(22.0))
-                    .rounded_md()
-                    .cursor_pointer()
-                    .bg(rgb(c))
-                    .border_2()
-                    .border_color(if selected {
-                        rgb(t.accent)
-                    } else {
-                        rgb(t.border)
-                    })
-                    .hover(|s| s.border_color(rgb(t.accent)))
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                        apply_icon_bg(IconBg::Color(c), cx);
-                    }))
-                    .into_any_element(),
-            );
-        }
-        div().flex().flex_wrap().gap_1().children(swatches)
-    }
 
     /// A small "current value + editable hex" control for a theme color.
     fn hex_field(

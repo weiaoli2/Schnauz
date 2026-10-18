@@ -176,6 +176,11 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Like the preview, its panel starts below the path and filter bars. Selecting
   outside it closes the map; navigation from within its graphic keeps it open.
 
+- The Schnauz app icon is fixed. Icon packs and app-icon customization are
+  removed, including their loading, persistence, background recoloring and
+  Dock overrides. Settings → Customization contains Theme and Colors only.
+  Use native macOS file/application icons and keep their bounded cache;
+  do not restore the legacy icon generator or customization controls.
 - Use Apple's actual square.and.arrow.up SF Symbol for Share. Cache rasterized
   symbols per color and preserve their aspect ratio.
 - Photos and videos fill the preview width. Native AVKit clips start paused and
