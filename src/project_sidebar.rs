@@ -2,7 +2,7 @@
 use super::*;
 use projects::Section;
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn activate_project_sidebar(&mut self, cx: &mut Context<Self>) {
         let servers = self.projects.sidebar().servers.clone();
         set_active_sftp_servers(servers.clone());

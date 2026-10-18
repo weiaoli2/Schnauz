@@ -61,15 +61,15 @@ pub(super) fn settings_rows<T: 'static>(cx: &Context<T>) -> Vec<AnyElement> {
     }
     rows
 }
-impl Shuffle {
+impl Schnauz {
     pub(super) fn show_file_preview(&mut self, cx: &mut Context<Self>) {
         if self.todoist.open {
             self.todoist.open = false;
             if !prefs().preview {
-                studio::toggle_inspector(cx);
+                schnauz::toggle_inspector(cx);
             }
         } else {
-            studio::toggle_inspector(cx);
+            schnauz::toggle_inspector(cx);
         }
         cx.notify();
     }

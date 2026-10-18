@@ -3,7 +3,7 @@ use super::*;
 
 pub(super) type EditText = (String, usize, Option<usize>, bool);
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn rename_text(&self, pane: usize, path: &Path) -> Option<EditText> {
         self.rename
             .as_ref()

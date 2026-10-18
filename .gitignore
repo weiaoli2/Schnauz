@@ -1,4 +1,5 @@
 /target
+/.build-cache/
 **/*.rs.bk
 .DS_Store
 
@@ -8,9 +9,7 @@
 
 # The built app bundle is a generated artifact (make_app.sh rebuilds it);
 # it ships as a Release asset, never committed.
-/Shuffle.app/
 /Schnauz.app/
-/Getter.app/
 /.build-notes.log
 /assets/*.iconset/
 

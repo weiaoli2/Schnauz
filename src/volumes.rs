@@ -31,7 +31,7 @@ fn usage(total: Option<u64>, free: Option<u64>, warning: u8, critical: u8) -> Us
     }
 }
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn watch_volumes_start(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| loop {
             let result = cx

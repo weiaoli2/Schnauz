@@ -39,7 +39,7 @@ pub(super) fn identify(home: &Path, path: &Path) -> Option<Location> {
     })
 }
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn cloud_breadcrumbs(
         &self,
         pane: usize,

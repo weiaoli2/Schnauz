@@ -250,7 +250,7 @@ fn frames(
     (outer, inner)
 }
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn sync_video_preview(&mut self, cx: &mut Context<Self>) {
         let tab = self.active_tab();
         let wanted = (prefs().preview

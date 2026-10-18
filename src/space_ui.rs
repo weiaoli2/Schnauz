@@ -31,7 +31,7 @@ enum Update {
     Done(Option<Tree>),
 }
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn inspect_folder(
         &mut self,
         pane: usize,

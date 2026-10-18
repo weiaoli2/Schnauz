@@ -2,8 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 source ./dev-env.sh
-export STUDIO_BUILD_PROFILE="${STUDIO_BUILD_PROFILE:-release}"
-if [ "$STUDIO_BUILD_PROFILE" = debug ]; then
+export SCHNAUZ_BUILD_PROFILE="${SCHNAUZ_BUILD_PROFILE:-release}"
+if [ "$SCHNAUZ_BUILD_PROFILE" = debug ]; then
     cargo build
 else
     cargo build --release

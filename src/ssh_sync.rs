@@ -262,7 +262,7 @@ fn receive(tab: &mut Tab, event: Event) -> (bool, bool) {
     }
 }
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn ssh_shell_event(&mut self, id: u64, payload: &str, cx: &mut Context<Self>) {
         let Some(event) = parse(payload) else {
             return;

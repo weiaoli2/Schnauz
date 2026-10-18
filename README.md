@@ -22,7 +22,7 @@ with a suggested USD 2.50 amount; the user completes any payment on PayPal.
 
 ## First version
 
-- Studio Light and Studio Dark appearances, an indigo accent, and compact 12 pt lists.
+- Schnauz Light and Schnauz Dark appearances, an indigo accent, and compact 12 pt lists.
 - Folder totals are not calculated automatically; the size column shows file sizes only.
 - One click selects a file or folder; double-click opens it. Click the sole selected
   item's name again to rename it inline in List, Icons or search results. The
@@ -258,7 +258,7 @@ macOS 14 or later and is built for the current Mac's processor.
 open "Schnauz.app"
 ```
 
-For development: `STUDIO_BUILD_PROFILE=debug ./build.sh`. The app is locally
+For development: `SCHNAUZ_BUILD_PROFILE=debug ./build.sh`. The app is locally
 ad-hoc signed; public distribution and Apple notarization are not configured.
 `./make_dmg.sh` packages an existing build without publishing it.
 
@@ -267,7 +267,7 @@ ad-hoc signed; public distribution and Apple notarization are not configured.
 ```
 
 Normal settings live in `~/Library/Application Support/Schnauz/`. Existing
-Getter or Shuffle Studio settings are reused automatically if present.
+settings from earlier builds are reused automatically if present.
 This prepared workspace reuses its local compiler cache in offline mode.
 If adding a new dependency, use `CARGO_NET_OFFLINE=false ./build.sh` to fetch it.
 For native UI checks, `SCHNAUZ_CONFIG_DIR` and `SCHNAUZ_START_DIR` can point at
@@ -276,7 +276,7 @@ disposable test folders.
 ## Source
 
 - `src/theme.rs`: palette and live theming
-- `src/studio.rs`: custom toolbar, footer and project controls
+- `src/schnauz.rs`: custom toolbar, footer and project controls
 - `src/projects.rs`: project layouts, locations, migration and validation
 - `src/volumes.rs`, `volumectl.swift`: global drive capacity and colour badges
 - `src/cloud_locations.rs`, `src/cloud_actions.rs`: cloud identity, paths and provider menus
@@ -297,17 +297,16 @@ disposable test folders.
 - `src/mascot.rs`: native sitting/running Schnauz animation and stop control
 - `src/file_search.rs`, `src/search_ui.rs`: scoped name/content search and its toolbar
 - `src/space_map.rs`, `src/space_ui.rs`: explicit folder scans and interactive size map
-- `src/studio_terminal.rs`, `src/terminal-shell/`: PTY sessions and shell integration
+- `src/schnauz_terminal.rs`, `src/terminal-shell/`: PTY sessions and shell integration
 - `src/ssh_sync.rs`: connection-bound SSH folder following and return to local browsing
 - `src/main.rs`: the existing GPUI file browser and file operations
 - `scripts/package_icon.sh`: package the Schnauzer artwork as a Mac app icon
 
-The original snapshot is tagged `studio-starting-point`; the working branch is
-`studio`. The `upstream` remote is retained for provenance. This app does not
+The original snapshot is tagged `schnauz-starting-point`; the working branch is
+`schnauz`. The `upstream` remote is retained for provenance. This app does not
 check for or install original Shuffle updates.
 
 Based on Shuffle by Jaime Guzman, under the [MIT license](LICENSE).
-The original README is preserved in [README.upstream.md](README.upstream.md).
 
 Commercial distribution, including a possible €5 edition, was discussed. The
 base [MIT license](https://opensource.org/license/mit) permits commercial sale

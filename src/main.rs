@@ -42,10 +42,10 @@ const UI_FONT_SIZE: f32 = 12.0;
 const UI_SMALL_FONT_SIZE: f32 = 11.0;
 
 // Menu-bar actions. OpenSettings/Quit are app-level; the rest are dispatched to
-// the focused explorer window and handled in `Shuffle::render`'s root.
-actions!(shuffle, [OpenAbout, OpenSettings, Quit]);
+// the focused explorer window and handled in `Schnauz::render`'s root.
+actions!(schnauz, [OpenAbout, OpenSettings, Quit]);
 actions!(
-    shuffle,
+    schnauz,
     [
         NewTab,
         NewFolder,
@@ -61,7 +61,7 @@ actions!(
         GoComputer,
         FocusSearch,
         NewProject,
-        ToggleStudioSplit,
+        ToggleSplit,
         ToggleInspector,
     ]
 );
@@ -71,14 +71,15 @@ actions!(
 mod theme;
 use theme::*;
 mod projects;
+mod legacy;
 mod project_sidebar;
 mod text_preview;
 mod new_text_file;
 mod entry_filter;
 use entry_filter::EntryFilter;
-mod studio;
+mod schnauz;
 mod clipboard_path;
-mod studio_terminal;
+mod schnauz_terminal;
 mod ssh_sync;
 mod remote_listing;
 use remote_listing::parse as parse_sftp_ls;
@@ -907,7 +908,7 @@ enum PaletteAction {
     /// Open the item (navigate into a dir / launch a file's default app).
     Open,
     /// Navigate to the file's enclosing folder and select it.
-    RevealShuffle,
+    RevealSchnauz,
     /// Open the folder (or the file's folder) in a new tab.
     OpenNewTab,
     /// Reveal in Finder.
@@ -926,7 +927,7 @@ enum Action {
 /// (None when invoked on empty space).
 /// A right-click menu action, invoked with full app access so any existing
 /// method (rename needs the window, most need `cx`) can back a menu row.
-type MenuOp = Rc<dyn Fn(&mut Shuffle, &mut Window, &mut Context<Shuffle>)>;
+type MenuOp = Rc<dyn Fn(&mut Schnauz, &mut Window, &mut Context<Schnauz>)>;
 
 /// One entry in the (data-driven) right-click menu. The whole tree is built
 /// once when the menu opens and stored on [`ContextMenu`]; rendering, hover
@@ -955,7 +956,7 @@ enum MenuNode {
 
 fn mi(
     label: impl Into<String>,
-    on: impl Fn(&mut Shuffle, &mut Window, &mut Context<Shuffle>) + 'static,
+    on: impl Fn(&mut Schnauz, &mut Window, &mut Context<Schnauz>) + 'static,
 ) -> MenuNode {
     MenuNode::Item {
         label: label.into(),
@@ -970,7 +971,7 @@ fn mi(
 fn mi_hint(
     label: impl Into<String>,
     hint: &'static str,
-    on: impl Fn(&mut Shuffle, &mut Window, &mut Context<Shuffle>) + 'static,
+    on: impl Fn(&mut Schnauz, &mut Window, &mut Context<Schnauz>) + 'static,
 ) -> MenuNode {
     match mi(label, on) {
         MenuNode::Item { label, dot, checked, danger, on, .. } => {
@@ -983,7 +984,7 @@ fn mi_hint(
 fn mi_danger(
     label: impl Into<String>,
     hint: Option<&'static str>,
-    on: impl Fn(&mut Shuffle, &mut Window, &mut Context<Shuffle>) + 'static,
+    on: impl Fn(&mut Schnauz, &mut Window, &mut Context<Schnauz>) + 'static,
 ) -> MenuNode {
     match mi(label, on) {
         MenuNode::Item { label, dot, checked, on, .. } => {
@@ -996,7 +997,7 @@ fn mi_danger(
 fn mi_dot(
     label: impl Into<String>,
     dot: u32,
-    on: impl Fn(&mut Shuffle, &mut Window, &mut Context<Shuffle>) + 'static,
+    on: impl Fn(&mut Schnauz, &mut Window, &mut Context<Schnauz>) + 'static,
 ) -> MenuNode {
     match mi(label, on) {
         MenuNode::Item { label, hint, checked, danger, on, .. } => {
@@ -1009,7 +1010,7 @@ fn mi_dot(
 fn mi_check(
     label: impl Into<String>,
     checked: bool,
-    on: impl Fn(&mut Shuffle, &mut Window, &mut Context<Shuffle>) + 'static,
+    on: impl Fn(&mut Schnauz, &mut Window, &mut Context<Schnauz>) + 'static,
 ) -> MenuNode {
     match mi(label, on) {
         MenuNode::Item { label, hint, dot, danger, on, .. } => {
@@ -1162,7 +1163,7 @@ impl SortKey {
 /// find, and path-edit state.
 struct Tab {
     current_dir: PathBuf,
-    terminal: Option<studio_terminal::Session>,
+    terminal: Option<schnauz_terminal::Session>,
     terminal_open: bool,
     terminal_height: f32,
     entries: Vec<Entry>,
@@ -1448,7 +1449,7 @@ impl Render for TabDragPreview {
 }
 
 /// The root view: a workspace of one or two side-by-side panes.
-struct Shuffle {
+struct Schnauz {
     volumes: Vec<volumes::Volume>,
     panes: Vec<Pane>,
     active_pane: usize,
@@ -1537,9 +1538,6 @@ struct Shuffle {
     server_history: Vec<String>,
     /// Dragging the terminal divider: pane, starting Y, starting height.
     terminal_resize: Option<(usize, f32, f32)>,
-    /// State of the self-updater's banner. `None` = up to date / not checked /
-    /// dismissed.
-    update: Option<UpdateStatus>,
     /// Current page of the inspector's PDF preview (0-based; reset on focus).
     preview_page: usize,
     /// The row the mouse is currently over: (pane, path). Enter renames it
@@ -1578,7 +1576,7 @@ struct Shuffle {
     saved_session: String,
     projects: projects::Library,
     project_load_error: Option<String>,
-    project_sessions: HashMap<Option<u64>, studio::ProjectSession>,
+    project_sessions: HashMap<Option<u64>, schnauz::ProjectSession>,
     project_dialog: Option<String>,
     project_dialog_error: Option<String>,
     new_text_file: Option<new_text_file::Form>,
@@ -1598,39 +1596,7 @@ enum CloudKind {
     Provider,
 }
 
-/// Update-check state shared between the Settings window (which drives the
-/// "Check for Updates" button) and the main window (which shows the banner
-/// and performs the install).
-#[derive(Clone, PartialEq, Default)]
-enum UpdateCheck {
-    #[default]
-    Idle,
-    Checking,
-    UpToDate,
-    /// A newer tag (like "v0.2.7") is available to install.
-    Available(String),
-    /// The GitHub query failed (offline, rate limit, …).
-    Failed,
-    /// Settings asked the main window to download + install this tag now.
-    Install(String),
-}
-
-#[derive(Clone, Default)]
-struct UpdateCheckGlobal(UpdateCheck);
-impl gpui::Global for UpdateCheckGlobal {}
-
-/// Drives the update banner under the titlebar.
-#[derive(Clone)]
-enum UpdateStatus {
-    /// A newer release (tag like "v0.2.4") is available to install.
-    Available(String),
-    /// The user clicked Update; we're downloading + verifying it now.
-    Downloading(String),
-    /// The install couldn't complete; carries a short reason.
-    Failed(String),
-}
-
-impl Shuffle {
+impl Schnauz {
     fn new(dir: PathBuf, cx: &mut Context<Self>) -> Self {
         // A background snapshot, independent of project switching.
         Self::watch_volumes_start(cx);
@@ -1702,25 +1668,6 @@ impl Shuffle {
             cx.notify();
         })
         .detach();
-        // React to the Settings window's update checks: an explicit check that
-        // finds a new version shows the banner here (even a previously
-        // dismissed one), and "Install & Relaunch" starts the self-update.
-        cx.observe_global::<UpdateCheckGlobal>(|this, cx| {
-            match cx.global::<UpdateCheckGlobal>().0.clone() {
-                UpdateCheck::Available(tag) => {
-                    this.update = Some(UpdateStatus::Available(tag));
-                    cx.notify();
-                }
-                UpdateCheck::Install(tag) => {
-                    if !matches!(this.update, Some(UpdateStatus::Downloading(_))) {
-                        this.update = Some(UpdateStatus::Available(tag));
-                        this.start_self_update(cx);
-                    }
-                }
-                _ => {}
-            }
-        })
-        .detach();
         // Observe only visible local folders. Filesystem notifications replace
         // the old once-a-second cloud directory hashing.
         cx.spawn(async move |this, cx| {
@@ -1757,11 +1704,11 @@ impl Shuffle {
                 }).is_err() {break;}
             }
         }).detach();
-        // Hidden debug harness (SHUFFLE_MQ_SIM=1): drive a marquee + edge drag
+        // Hidden debug harness (SCHNAUZ_MQ_SIM=1): drive a marquee + edge drag
         // programmatically and log what the auto-scroll loop does. Synthetic OS
         // mouse events don't reach gpui, so this is how the mechanics are
         // verified end-to-end in-process.
-        if std::env::var_os("SHUFFLE_MQ_SIM").is_some() {
+        if std::env::var_os("SCHNAUZ_MQ_SIM").is_some() {
             cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(Duration::from_secs(3)).await;
                 let _ = this.update(cx, |this, cx| {
@@ -1884,7 +1831,6 @@ impl Shuffle {
             ssh_ask: false,
             server_history: read_string_list("servers.txt"),
             terminal_resize: None,
-            update: None,
             preview_page: 0,
             hovered: None,
             drop_hover: None,
@@ -2795,7 +2741,7 @@ impl Shuffle {
         // can't trip over each other.
         let mut staged: Vec<(PathBuf, PathBuf, PathBuf)> = Vec::new();
         for (i, (from, to)) in moves.iter().enumerate() {
-            let tmp = from.with_file_name(format!(".shuffle-rename-{}-{i}", std::process::id()));
+            let tmp = from.with_file_name(format!(".schnauz-rename-{}-{i}", std::process::id()));
             if fs::rename(from, &tmp).is_ok() {
                 staged.push((from.clone(), tmp, to.clone()));
             }
@@ -3067,7 +3013,7 @@ impl Shuffle {
                     if gone(to) || (!case_only && !gone(from) && !pairs.iter().any(|(_, t)| t == from)) {
                         continue;
                     }
-                    let tmp = to.with_file_name(format!(".shuffle-undo-{}-{i}", std::process::id()));
+                    let tmp = to.with_file_name(format!(".schnauz-undo-{}-{i}", std::process::id()));
                     if fs::rename(to, &tmp).is_ok() {
                         staged.push((tmp, from.clone(), to.clone()));
                     }
@@ -3570,7 +3516,7 @@ impl Shuffle {
     }
 
     /// Run a user script action on `targets`, off the UI thread. The paths are
-    /// passed as arguments and as `$SHUFFLE_PATHS`; `$SHUFFLE_DIR` is the pane's
+    /// passed as arguments and as `$SCHNAUZ_PATHS`; `$SCHNAUZ_DIR` is the pane's
     /// folder (also the working directory). Refreshes the pane when it finishes
     /// (the script may have created/renamed/deleted files).
     fn run_script_action(
@@ -3592,8 +3538,9 @@ impl Shuffle {
                 let _ = Command::new(&script)
                     .args(&targets)
                     .current_dir(&d)
-                    .env("SHUFFLE_DIR", &d)
-                    .env("SHUFFLE_PATHS", &paths_env)
+                    .env("SCHNAUZ_DIR", &d)
+                    .env("SCHNAUZ_PATHS", &paths_env)
+                    .envs(legacy::script_environment(&d, &paths_env))
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .status();
@@ -4959,7 +4906,7 @@ impl Shuffle {
             )
     }
 
-    /// First-run SSH prompt: choose how Shuffle authenticates over SSH.
+    /// First-run SSH prompt: choose how Schnauz authenticates over SSH.
     fn render_ssh_prompt(&self, cx: &Context<Self>) -> impl IntoElement {
         let t = theme();
         let choice =
@@ -5298,191 +5245,6 @@ impl Shuffle {
         items
     }
 
-    /// Quietly ask GitHub for the latest published release and, if it's newer
-    /// than this build (and the user hasn't dismissed that exact version),
-    /// surface the update banner. Best-effort: any failure (offline, timeout,
-    /// unparseable) just leaves the banner hidden. Never blocks the UI.
-    fn check_for_update(&self, cx: &mut Context<Self>) {
-        if !upstream_updates_enabled() { return; }
-        cx.spawn(async move |this, cx| {
-            let Some(tag) = cx.background_spawn(async move { fetch_latest_tag() }).await else {
-                return;
-            };
-            // Only surface real upgrades over the running build.
-            if parse_version(&tag) <= parse_version(env!("CARGO_PKG_VERSION")) {
-                return;
-            }
-            // Respect a prior "dismiss" of this exact version so we don't nag.
-            if config_string("update_skip.txt").as_deref() == Some(tag.as_str()) {
-                return;
-            }
-            this.update(cx, |this, cx| {
-                this.update = Some(UpdateStatus::Available(tag));
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Hide the update banner and remember the dismissed version so it doesn't
-    /// come back on the next launch (until a still-newer release appears).
-    fn dismiss_update(&mut self, cx: &mut Context<Self>) {
-        if let Some(UpdateStatus::Available(ver)) = self.update.take() {
-            write_config_string("update_skip.txt", &ver);
-        }
-        cx.notify();
-    }
-
-    /// Download the newest release, verify it's genuinely ours (notarized +
-    /// signed by our Team ID), then swap the running bundle and relaunch. Kicked
-    /// off by the banner's "Update" button. All network/disk work is off-thread;
-    /// the actual replace happens in a tiny helper that waits for us to quit.
-    fn start_self_update(&mut self, cx: &mut Context<Self>) {
-        if !upstream_updates_enabled() { return; }
-        let ver = match &self.update {
-            Some(UpdateStatus::Available(v)) => v.clone(),
-            _ => return,
-        };
-        let bundle = current_app_bundle();
-        self.update = Some(UpdateStatus::Downloading(ver));
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let prepared = cx
-                .background_spawn(async move {
-                    let bundle = bundle.ok_or_else(|| "couldn't locate the app bundle".to_string())?;
-                    let ready = download_and_verify_update()?;
-                    Ok::<_, String>((bundle, ready))
-                })
-                .await;
-            match prepared {
-                Ok((bundle, ready)) => {
-                    if let Err(e) = launch_swap_and_relaunch(&bundle, &ready) {
-                        ready.detach(); // unmount the dmg we couldn't hand off
-                        this.update(cx, |this, cx| {
-                            this.update = Some(UpdateStatus::Failed(e));
-                            cx.notify();
-                        })
-                        .ok();
-                        return;
-                    }
-                    // Helper is armed and waiting for us to exit; quit so it can
-                    // replace the bundle and relaunch the new version.
-                    let _ = cx.update(|cx| cx.quit());
-                }
-                Err(e) => {
-                    this.update(cx, |this, cx| {
-                        this.update = Some(UpdateStatus::Failed(e));
-                        cx.notify();
-                    })
-                    .ok();
-                }
-            }
-        })
-        .detach();
-    }
-
-    /// The slim update bar shown under the titlebar (available / downloading /
-    /// failed). Returns `None` when there's nothing to show.
-    fn render_update_banner(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let status = self.update.clone()?;
-        let t = theme();
-        let bar = div()
-            .flex_none()
-            .w_full()
-            .flex()
-            .items_center()
-            .gap_3()
-            .px_4()
-            .py_1p5()
-            .bg(rgb(t.accent))
-            .text_color(rgb(0xffffff))
-            .text_size(px(UI_SMALL_FONT_SIZE));
-
-        let bar = match status {
-            UpdateStatus::Available(ver) => bar
-                .child(div().child("↑").text_size(px(UI_FONT_SIZE)))
-                .child(div().flex_1().child(format!(
-                    "Shuffle {ver} is available (you have v{}).",
-                    env!("CARGO_PKG_VERSION")
-                )))
-                .child(
-                    div()
-                        .id("update-install")
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .bg(rgba(0xffffff33))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgba(0xffffff55)))
-                        .child("Update")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _, cx| this.start_self_update(cx)),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("update-dismiss")
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgba(0xffffff33)))
-                        .child("✕")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _, cx| this.dismiss_update(cx)),
-                        ),
-                ),
-            UpdateStatus::Downloading(ver) => bar.child(div().child("↓").text_size(px(UI_FONT_SIZE))).child(
-                div()
-                    .flex_1()
-                    .child(format!("Downloading Shuffle {ver}… the app will relaunch itself.")),
-            ),
-            UpdateStatus::Failed(reason) => bar
-                .child(div().child("⚠").text_size(px(UI_FONT_SIZE)))
-                .child(div().flex_1().child(format!("Update failed: {reason}.")))
-                .child(
-                    div()
-                        .id("update-manual")
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .bg(rgba(0xffffff33))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgba(0xffffff55)))
-                        .child("Download manually")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _, cx| {
-                                let _ = Command::new("open").arg(DMG_URL).spawn();
-                                this.update = None;
-                                cx.notify();
-                            }),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("update-dismiss-failed")
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(rgba(0xffffff33)))
-                        .child("✕")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _, cx| {
-                                this.update = None;
-                                cx.notify();
-                            }),
-                        ),
-                ),
-        };
-        Some(bar.into_any_element())
-    }
-
     /// Current scrolled distance from the top, in pixels.
     fn current_scrolled(&self, pane: usize) -> f32 {
         let state = self.tab(pane).scroll_handle.0.borrow();
@@ -5664,7 +5426,7 @@ impl Shuffle {
             ],
             Some(Action::Open(_, false)) => vec![
                 (PaletteAction::Open, "Open file"),
-                (PaletteAction::RevealShuffle, "Show in enclosing folder"),
+                (PaletteAction::RevealSchnauz, "Show in enclosing folder"),
                 (PaletteAction::OpenNewTab, "Open folder in new tab"),
                 (PaletteAction::RevealFinder, "Reveal in Finder"),
                 (PaletteAction::CopyPath, "Copy path"),
@@ -5690,7 +5452,7 @@ impl Shuffle {
                     let _ = Command::new("open").arg(&path).spawn();
                 }
             }
-            PaletteAction::RevealShuffle => {
+            PaletteAction::RevealSchnauz => {
                 self.close_palette(cx);
                 self.navigate_to(parent(), cx);
                 let pane = self.active_pane;
@@ -7901,7 +7663,7 @@ impl Shuffle {
     /// If a left-press on a row has moved past the drag threshold, hand the
     /// current selection to a native macOS drag session so the files can be
     /// dropped into Finder, Claude, Mail, or any other app (and back into
-    /// Shuffle's own folders/panes, which arrive as an external-file drop).
+    /// Schnauz's own folders/panes, which arrive as an external-file drop).
     fn maybe_start_os_drag(&mut self, x: f32, y: f32, window: &Window, cx: &mut Context<Self>) {
         let Some((pane, path, (sx, sy))) = self.drag_candidate.clone() else {
             return;
@@ -10188,7 +9950,7 @@ impl Shuffle {
 #[allow(clippy::too_many_arguments)]
 
 
-impl Render for Shuffle {
+impl Render for Schnauz {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if std::mem::take(&mut self.dismiss_space_map) { self.close_space_map(window, cx); }
         if self.todoist.open && window.is_window_active() {
@@ -10236,7 +9998,7 @@ impl Render for Shuffle {
             }))
             // Native menu-bar actions (File / View / Go menus).
             .on_action(cx.listener(|this, _: &NewProject, window, cx| this.open_project_dialog(window, cx)))
-            .on_action(cx.listener(|this, _: &ToggleStudioSplit, _, cx| this.toggle_studio_split(cx)))
+            .on_action(cx.listener(|this, _: &ToggleSplit, _, cx| this.toggle_schnauz_split(cx)))
             .on_action(cx.listener(|this, _: &ToggleInspector, _, cx| this.show_file_preview(cx)))
             .on_action(cx.listener(|this, _: &NewTab, _, cx| {
                 let p = this.active_pane;
@@ -10331,12 +10093,8 @@ impl Render for Shuffle {
             // A slim titlebar strip in the app's own background color. With the
             // OS titlebar transparent, this is what shows behind the traffic
             // lights, and it keeps the content clear of them.
-            .child(self.render_studio_toolbar(cx));
+            .child(self.render_schnauz_toolbar(cx));
 
-        // The update bar (available / downloading / failed), just under the titlebar.
-        if let Some(banner) = self.render_update_banner(cx) {
-            root = root.child(banner);
-        }
         // SFTP error bar (connection / transfer failure).
         if let Some(err) = self.remote_error.clone() {
             root = root.child(
@@ -10387,7 +10145,7 @@ impl Render for Shuffle {
             );
         }
 
-        root = root.child(main_row).child(self.render_studio_status(cx));
+        root = root.child(main_row).child(self.render_schnauz_status(cx));
 
         if let Some(panel) = self.render_jobs_panel() {
             root = root.child(panel);
@@ -10429,7 +10187,7 @@ impl Render for Shuffle {
 /// Group". `gidx` is the owning group's index.
 fn push_group_member(
     items: &mut Vec<AnyElement>,
-    cx: &Context<Shuffle>,
+    cx: &Context<Schnauz>,
     key: &mut usize,
     gidx: usize,
     target: PathBuf,
@@ -10527,7 +10285,7 @@ fn breadcrumb_seg(
     // re-navigate to where you already are, so it opens the command palette
     // targeted at that folder instead (Copy path / Reveal / new tab / …).
     is_current: bool,
-    cx: &Context<Shuffle>,
+    cx: &Context<Schnauz>,
 ) -> AnyElement {
     let t = theme();
     div()
@@ -10722,7 +10480,7 @@ fn archive_extract_command(path: &Path) -> Option<Command> {
 // ----- user shell-script actions (the "Scripts" extension point) -----
 
 /// A user-provided shell-script action discovered in the Scripts folder. The
-/// user drops an executable script there; Shuffle offers it in the right-click
+/// user drops an executable script there; Schnauz offers it in the right-click
 /// menu for matching items and runs it with the selected paths as arguments.
 struct ScriptAction {
     name: String,
@@ -10746,12 +10504,13 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-/// Match a `@shuffle.KEY: value` metadata line (case-insensitive key).
+/// Match a `@schnauz.KEY: value` metadata line (case-insensitive key).
 fn script_header_value(line: &str, key: &str) -> Option<String> {
-    let prefix = format!("@shuffle.{key}:");
+    let prefix = format!("@schnauz.{key}:");
     line.to_lowercase()
         .starts_with(&prefix)
         .then(|| line[prefix.len()..].trim().to_string())
+        .or_else(|| legacy::script_header_value(line, key))
 }
 
 /// Read a script's leading metadata: display name (defaults to the file stem)
@@ -10838,17 +10597,17 @@ fn ensure_scripts_dir() -> Option<PathBuf> {
     let fresh = !dir.exists();
     fs::create_dir_all(&dir).ok()?;
     if fresh {
-        let readme = r#"# Shuffle — Script Actions
+        let readme = r#"# Schnauz — Script Actions
 
-Drop an **executable** script in this folder and Shuffle shows it in the
+Drop an **executable** script in this folder and Schnauz shows it in the
 right-click menu for matching items. The selected paths are passed as arguments
-(`"$@"`), and also as `$SHUFFLE_PATHS` (newline-separated) with `$SHUFFLE_DIR`
+(`"$@"`), and also as `$SCHNAUZ_PATHS` (newline-separated) with `$SCHNAUZ_DIR`
 set to the current folder.
 
 Add an optional metadata header (any comment style) to control how it appears:
 
-    # @shuffle.name: Optimize Image
-    # @shuffle.types: png,jpg,jpeg      # extensions, or: image video audio pdf
+    # @schnauz.name: Optimize Image
+    # @schnauz.types: png,jpg,jpeg      # extensions, or: image video audio pdf
     #                                   # doc archive code app folder file any
 
 - No `name` → the file's name is used.
@@ -10859,8 +10618,8 @@ Turn the feature on in Settings → Script Actions.
 "#;
         let _ = fs::write(dir.join("README.md"), readme);
 
-        let copy_path = "#!/bin/bash\n# @shuffle.name: Copy Path\n# @shuffle.types: any\nprintf '%s' \"$1\" | pbcopy\n";
-        let open_term = "#!/bin/bash\n# @shuffle.name: Open in Terminal\n# @shuffle.types: folder\nopen -a Terminal \"$1\"\n";
+        let copy_path = "#!/bin/bash\n# @schnauz.name: Copy Path\n# @schnauz.types: any\nprintf '%s' \"$1\" | pbcopy\n";
+        let open_term = "#!/bin/bash\n# @schnauz.name: Open in Terminal\n# @schnauz.types: folder\nopen -a Terminal \"$1\"\n";
         for (fname, body) in [("Copy Path.sh", copy_path), ("Open in Terminal.sh", open_term)] {
             let p = dir.join(fname);
             if fs::write(&p, body).is_ok() {
@@ -10954,10 +10713,10 @@ fn cloud_kind(path: &Path) -> Option<CloudKind> {
 }
 
 /// Whether `path` is an online-only cloud placeholder (kernel `SF_DATALESS`).
-/// Whether marquee debug logging is on (`SHUFFLE_MARQUEE_LOG=1`).
+/// Whether marquee debug logging is on (`SCHNAUZ_MARQUEE_LOG=1`).
 fn mq_log() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("SHUFFLE_MARQUEE_LOG").is_some())
+    *ON.get_or_init(|| std::env::var_os("SCHNAUZ_MARQUEE_LOG").is_some())
 }
 
 fn is_dataless(path: &Path) -> bool {
@@ -11533,7 +11292,7 @@ fn file_row(
     // ".." row) that runs `on_drop_file` when files are dropped on it.
     accept_drop: bool,
     // True while the tracked drag target is this row's folder: highlights the
-    // name cell (driven by Shuffle::drop_hover, not gpui's drag hover).
+    // name cell (driven by Schnauz::drop_hover, not gpui's drag hover).
     drop_hilite: bool,
     // When Some, this row is being renamed: the name shows as an editable field
     // with (text, cursor char-index, selection-anchor char-index, invalid).
@@ -11589,7 +11348,7 @@ fn icon_cell(
     ctx_active: bool,
     cell_w: f32,
     edit: Option<rename_ui::EditText>,
-    cx: &Context<Shuffle>,
+    cx: &Context<Schnauz>,
 ) -> AnyElement {
     let t = theme();
     let is_folder = is_browsable_folder(&target, is_dir);
@@ -11629,7 +11388,7 @@ fn icon_cell(
             }
         }))
         // Press records a drag candidate; moving past the threshold starts a
-        // native OS drag (drop into Finder / other apps or back into Shuffle).
+        // native OS drag (drop into Finder / other apps or back into Schnauz).
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
@@ -12203,23 +11962,26 @@ fn keychain_account(s: &SftpServer) -> String {
 /// Store a server's password in the login Keychain (updating any existing one).
 fn keychain_set_password(s: &SftpServer, pw: &str) {
     let _ = Command::new("security")
-        .args(["add-generic-password", "-U", "-s", "shuffle-studio-sftp", "-a"])
+        .args(["add-generic-password", "-U", "-s", "local.schnauz.sftp", "-a"])
         .arg(keychain_account(s))
         .arg("-w")
         .arg(pw)
         .output();
 }
 
-/// Remove a server's stored password.
+/// Read the current credential, falling back to an existing pre-rename item.
 fn keychain_get_password(s: &SftpServer) -> Option<String> {
+    keychain_read_password(s, "local.schnauz.sftp")
+        .or_else(|| keychain_read_password(s, legacy::SFTP_KEYCHAIN_SERVICE))
+}
+
+fn keychain_read_password(s: &SftpServer, service: &str) -> Option<String> {
     let out = Command::new("security")
-        .args(["find-generic-password", "-w", "-s", "shuffle-studio-sftp", "-a"])
+        .args(["find-generic-password", "-w", "-s", service, "-a"])
         .arg(keychain_account(s))
         .output()
         .ok()?;
-    if !out.status.success() {
-        return None;
-    }
+    if !out.status.success() { return None; }
     let pw = String::from_utf8_lossy(&out.stdout);
     let pw = pw.trim_end_matches(['\n', '\r']);
     (!pw.is_empty()).then(|| pw.to_string())
@@ -12229,7 +11991,7 @@ fn keychain_get_password(s: &SftpServer) -> Option<String> {
 /// `sftp`, types the password at the prompt (password AND keyboard-interactive
 /// servers both use this prompt), and leaves a persistent ControlMaster socket
 /// that later operations reuse without re-authenticating. Created once.
-/// Args: <control-socket> <user@host> <port>. Env: SHUFFLE_SFTP_PW.
+/// Args: <control-socket> <user@host> <port>. Env: SCHNAUZ_SFTP_PW.
 fn ensure_connect_expect() -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     let path = config_dir()?.join("sftp-connect.exp");
@@ -12238,7 +12000,7 @@ set timeout 25
 set sock [lindex $argv 0]
 set target [lindex $argv 1]
 set port [lindex $argv 2]
-set pw $env(SHUFFLE_SFTP_PW)
+set pw $env(SCHNAUZ_SFTP_PW)
 spawn sftp -o ControlMaster=yes -o ControlPath=$sock -o ControlPersist=180 \
   -o ConnectTimeout=12 -o StrictHostKeyChecking=accept-new \
   -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -P $port $target
@@ -12295,7 +12057,7 @@ fn ensure_master(server: &SftpServer) -> Result<(), String> {
         .arg(ssh_control_path(server))
         .arg(server.target())
         .arg(port.to_string())
-        .env("SHUFFLE_SFTP_PW", pw)
+        .env("SCHNAUZ_SFTP_PW", pw)
         .output()
         .map_err(|e| format!("couldn't launch expect: {e}"))?;
     match out.status.code() {
@@ -12374,7 +12136,10 @@ fn ssh_control_path(s: &SftpServer) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.display().hash(&mut h);
-    PathBuf::from(format!("/tmp/shuffle-studio-ssh-{:016x}.sock", h.finish()))
+    let hash = h.finish();
+    let current = PathBuf::from(format!("/tmp/schnauz-ssh-{hash:016x}.sock"));
+    let previous = legacy::sftp_control_path(hash);
+    if !current.exists() && previous.exists() { previous } else { current }
 }
 
 /// Common `ssh`/`sftp` options for a server: multiplexing, non-interactive
@@ -12602,7 +12367,7 @@ define_class!(
     // A minimal NSDraggingSource: it only needs to say the drag is a "copy".
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[name = "ShuffleDragSource"]
+    #[name = "SchnauzDragSource"]
     struct DragSource;
 
     unsafe impl NSObjectProtocol for DragSource {}
@@ -12699,7 +12464,7 @@ fn show_share_picker(view_ptr: *mut std::ffi::c_void, at: (f32, f32), paths: &[P
 
 /// Start a native macOS drag session carrying `paths` as file URLs. macOS then
 /// drives the drag through the normal run loop; dropping on another app copies
-/// the files there, and dropping back on Shuffle arrives as an external-file
+/// the files there, and dropping back on Schnauz arrives as an external-file
 /// drop (handled by our `ExternalPaths` drop targets).
 fn start_os_file_drag(view_ptr: *mut std::ffi::c_void, paths: &[PathBuf]) {
     use objc2::rc::Retained;
@@ -13419,16 +13184,13 @@ fn home_dir() -> PathBuf {
 }
 
 fn config_dir() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("SCHNAUZ_CONFIG_DIR").or_else(|| std::env::var_os("GETTER_CONFIG_DIR"))
-        .or_else(|| std::env::var_os("SHUFFLE_STUDIO_CONFIG_DIR")) { return Some(PathBuf::from(path)); }
+    if let Some(path) = std::env::var_os("SCHNAUZ_CONFIG_DIR").or_else(legacy::config_override) {
+        return Some(PathBuf::from(path));
+    }
     let support = home_dir().join("Library/Application Support");
     let current = support.join("Schnauz");
     if current.is_dir() { return Some(current); }
-    for name in ["Getter", "Shuffle Studio"] {
-        let legacy = support.join(name);
-        if legacy.is_dir() { return Some(legacy); }
-    }
-    Some(current)
+    legacy::existing_config_dir(&support).or(Some(current))
 }
 
 fn config_file(name: &str) -> Option<PathBuf> {
@@ -13438,7 +13200,7 @@ fn config_file(name: &str) -> Option<PathBuf> {
 /// The directory to open on launch: the last-visited one if still valid,
 /// otherwise the home directory.
 fn load_last_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os("SCHNAUZ_START_DIR").or_else(|| std::env::var_os("GETTER_START_DIR")).or_else(|| std::env::var_os("SHUFFLE_STUDIO_START_DIR")) {
+    if let Some(path) = std::env::var_os("SCHNAUZ_START_DIR").or_else(legacy::start_override) {
         let path = PathBuf::from(path);
         if path.is_dir() { return path; }
     }
@@ -13506,279 +13268,6 @@ fn write_string_list(name: &str, items: &[String]) {
         }
         let _ = fs::write(&file, items.join("\n"));
     }
-}
-
-/// Read a single-line config value (trimmed), or `None` if absent/empty.
-fn config_string(name: &str) -> Option<String> {
-    let file = config_file(name)?;
-    let s = fs::read_to_string(&file).ok()?;
-    let s = s.trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
-}
-
-/// Write a single-line config value.
-fn write_config_string(name: &str, value: &str) {
-    if let Some(file) = config_file(name) {
-        if let Some(parent) = file.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let _ = fs::write(&file, value.as_bytes());
-    }
-}
-
-// --- Update check (GitHub "latest release" → dismissible banner) ---
-
-/// The GitHub repo whose latest release drives the update banner.
-fn upstream_updates_enabled() -> bool { false }
-
-const GITHUB_REPO: &str = "WizenPainter/shuffle";
-/// The stable "always the newest DMG" download link (same one the website uses).
-const DMG_URL: &str = "https://github.com/WizenPainter/shuffle/releases/latest/download/Shuffle.dmg";
-
-/// Parse a version like "v0.2.3" / "0.2.3" into numeric components for
-/// comparison. `Vec<u32>` compares lexicographically, so [0,2,4] > [0,2,3].
-/// Non-numeric junk in a component parses as 0 rather than failing.
-fn parse_version(s: &str) -> Vec<u32> {
-    s.trim()
-        .trim_start_matches(['v', 'V'])
-        .split('.')
-        .map(|p| {
-            p.chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect::<String>()
-                .parse()
-                .unwrap_or(0)
-        })
-        .collect()
-}
-
-/// Pull a top-level string field out of a JSON blob without a JSON dependency:
-/// find `"key"`, then the first `"..."` after the following `:`. Good enough for
-/// GitHub's `tag_name`; not a general JSON parser.
-fn json_string_field(body: &str, key: &str) -> Option<String> {
-    let pat = format!("\"{key}\"");
-    let after_key = &body[body.find(&pat)? + pat.len()..];
-    let after_colon = &after_key[after_key.find(':')? + 1..];
-    let open = after_colon.find('"')? + 1;
-    let rest = &after_colon[open..];
-    let close = rest.find('"')?;
-    Some(rest[..close].to_string())
-}
-
-/// Ask GitHub for the newest release tag (like "v0.2.6"). Blocking network
-/// call — run it off the render thread.
-fn fetch_latest_tag() -> Option<String> {
-    let out = Command::new("curl")
-        .args([
-            "-sL",
-            "--max-time",
-            "8",
-            "-H",
-            "Accept: application/vnd.github+json",
-            &format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest"),
-        ])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())?;
-    let body = String::from_utf8_lossy(&out.stdout).into_owned();
-    json_string_field(&body, "tag_name").map(|t| t.trim().to_string())
-}
-
-/// The Apple Developer Team that legitimately signs Shuffle. The self-updater
-/// refuses to install a download signed by anyone else, so a tampered or
-/// spoofed DMG can never replace the app.
-const EXPECTED_TEAM_ID: &str = "Z69U4AQSH3";
-
-/// A downloaded, mounted, and verified update, ready to be swapped in.
-struct PreparedUpdate {
-    dmg: PathBuf,
-    mount: PathBuf,
-    app: PathBuf,
-}
-
-impl PreparedUpdate {
-    /// Unmount the update DMG (used on the error path).
-    fn detach(&self) {
-        let _ = Command::new("hdiutil")
-            .args(["detach", "-quiet"])
-            .arg(&self.mount)
-            .status();
-    }
-}
-
-/// The `.app` bundle the running process lives in (…/Shuffle.app), if it can be
-/// located from the executable path.
-fn current_app_bundle() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    exe.ancestors()
-        .find(|a| a.extension().is_some_and(|e| e == "app"))
-        .map(Path::to_path_buf)
-}
-
-/// Download the latest DMG, mount it, and verify the app inside is notarized and
-/// signed by our Team ID. Returns the mounted, verified update or a short reason
-/// on failure. Runs entirely off the UI thread.
-fn download_and_verify_update() -> Result<PreparedUpdate, String> {
-    let dir = std::env::temp_dir().join("shuffle-update");
-    let _ = fs::create_dir_all(&dir);
-    let dmg = dir.join("Shuffle-latest.dmg");
-
-    // Download (follow redirects, fail on HTTP errors, cap the time).
-    let ok = Command::new("curl")
-        .args(["-sL", "--fail", "--max-time", "180", "-o"])
-        .arg(&dmg)
-        .arg(DMG_URL)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !ok {
-        return Err("couldn't download the update".to_string());
-    }
-
-    // Mount it read-only.
-    let out = Command::new("hdiutil")
-        .args(["attach", "-nobrowse", "-readonly", "-noverify"])
-        .arg(&dmg)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err("couldn't mount the update".to_string());
-    }
-    let mount = parse_hdiutil_mount(&String::from_utf8_lossy(&out.stdout))
-        .ok_or_else(|| "couldn't find the mounted volume".to_string())?;
-
-    let app = mount.join("Shuffle.app");
-    let prepared = PreparedUpdate { dmg, mount, app: app.clone() };
-    if !app.exists() {
-        prepared.detach();
-        return Err("the update didn't contain Shuffle.app".to_string());
-    }
-    // Only install a download that is genuinely, verifiably ours.
-    if let Err(e) = verify_app(&app) {
-        prepared.detach();
-        return Err(e);
-    }
-    Ok(prepared)
-}
-
-/// Confirm `app` has a valid signature, passes Gatekeeper (i.e. is notarized),
-/// and is signed by our Team ID. Any of these failing aborts the update.
-fn verify_app(app: &Path) -> Result<(), String> {
-    let sig_ok = Command::new("codesign")
-        .args(["--verify", "--deep", "--strict"])
-        .arg(app)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !sig_ok {
-        return Err("the update's signature was invalid".to_string());
-    }
-
-    let gatekeeper_ok = Command::new("spctl")
-        .args(["-a", "-t", "exec", "-vv"])
-        .arg(app)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !gatekeeper_ok {
-        return Err("the update wasn't notarized by Apple".to_string());
-    }
-
-    // codesign prints the signing info to stderr.
-    let info = Command::new("codesign")
-        .args(["-dv", "--verbose=4"])
-        .arg(app)
-        .output()
-        .map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&info.stderr);
-    let team_matches = text
-        .lines()
-        .any(|l| l.trim() == format!("TeamIdentifier={EXPECTED_TEAM_ID}"));
-    if !team_matches {
-        return Err("the update was signed by an unexpected developer".to_string());
-    }
-    Ok(())
-}
-
-/// Parse `hdiutil attach` output for the `/Volumes/…` mount point (the volume
-/// name may contain spaces, so take everything from `/Volumes/` to line end).
-fn parse_hdiutil_mount(output: &str) -> Option<PathBuf> {
-    output.lines().find_map(|line| {
-        line.find("/Volumes/")
-            .map(|i| PathBuf::from(line[i..].trim_end()))
-    })
-}
-
-/// Write and launch a detached helper that waits for this process to quit, then
-/// replaces the installed bundle with the verified update and relaunches it. If
-/// the replace fails (e.g. no write permission), it falls back to opening the
-/// DMG so the user can install by hand. We must do this from a separate process
-/// because a running app can't overwrite its own executable.
-fn launch_swap_and_relaunch(bundle: &Path, ready: &PreparedUpdate) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    let pid = std::process::id();
-    let script = std::env::temp_dir().join("shuffle-selfupdate.sh");
-    // $1 DEST bundle  $2 SRC app  $3 MOUNT  $4 DMG  $5 PID  $6 fallback URL
-    // The swap NEVER deletes the old bundle — it renames it into the Trash
-    // (Sparkle-style). Hard-deleting an app reads as an uninstall to macOS,
-    // which revokes its TCC privacy grants and makes the updated app re-ask
-    // for every folder permission. A rename keeps the identity alive, so
-    // grants carry over. Both renames are atomic on the same volume.
-    let body = r#"#!/bin/bash
-DEST="$1"; SRC="$2"; MOUNT="$3"; DMG="$4"; PID="$5"; URL="$6"
-# Wait (up to ~20s) for the old app to exit before touching its bundle.
-for _ in $(seq 1 200); do kill -0 "$PID" 2>/dev/null || break; sleep 0.1; done
-TRASH="$HOME/.Trash"
-OLD="$TRASH/Shuffle-old-$$.app"
-ok=""
-if ditto "$SRC" "$DEST.updnew" 2>/dev/null; then
-  # Defensive: a quarantined copy would launch translocated (and re-prompt).
-  xattr -dr com.apple.quarantine "$DEST.updnew" 2>/dev/null
-  # Move the old app aside (Trash first, sibling rename as fallback)…
-  if ! mv "$DEST" "$OLD" 2>/dev/null; then
-    OLD="${DEST%.app}.updold.app"
-    mv "$DEST" "$OLD" 2>/dev/null
-  fi
-  # …then the new one into place; roll the old back if that fails.
-  if [ ! -e "$DEST" ] && mv "$DEST.updnew" "$DEST" 2>/dev/null; then
-    ok=1
-  else
-    [ -d "$OLD" ] && [ ! -e "$DEST" ] && mv "$OLD" "$DEST" 2>/dev/null
-  fi
-fi
-if [ -n "$ok" ]; then
-  hdiutil detach "$MOUNT" -quiet 2>/dev/null
-  rm -f "$DMG" 2>/dev/null
-  # If the Trash move had failed, try once more now; never hard-delete it.
-  case "$OLD" in
-    "$TRASH"/*) : ;;
-    *) mv "$OLD" "$TRASH/Shuffle-old-$$.app" 2>/dev/null ;;
-  esac
-  open "$DEST"
-else
-  rm -rf "$DEST.updnew" 2>/dev/null
-  hdiutil detach "$MOUNT" -quiet 2>/dev/null
-  open "$DMG" 2>/dev/null || open "$URL" 2>/dev/null
-fi
-"#;
-    fs::write(&script, body).map_err(|e| e.to_string())?;
-    let _ = fs::set_permissions(&script, fs::Permissions::from_mode(0o755));
-
-    Command::new("/bin/bash")
-        .arg(&script)
-        .arg(bundle)
-        .arg(&ready.app)
-        .arg(&ready.mount)
-        .arg(&ready.dmg)
-        .arg(pid.to_string())
-        .arg(DMG_URL)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 /// Load sidebar groups from `groups.txt`. A `[name]` line starts a group; the
@@ -14092,7 +13581,7 @@ fn main() {
         }
         return;
     }
-    // Hidden check: `shuffle --pdf-bench <file> [page]` renders one PDF page
+    // Hidden check: `schnauz --pdf-bench <file> [page]` renders one PDF page
     // through the inspector-pager pipeline and prints the result, then exits.
     if args.len() >= 3 && args[1] == "--pdf-bench" {
         let path = PathBuf::from(&args[2]);
@@ -14262,7 +13751,7 @@ fn main() {
         // Execute "Copy Path" (if present) on a sample path to confirm it runs.
         if let Some(cp) = acts.iter().find(|a| a.name == "Copy Path") {
             let out = Command::new(&cp.path)
-                .arg("/tmp/shuffle-script-test.txt")
+                .arg("/tmp/schnauz-script-test.txt")
                 .output();
             eprintln!("ran Copy Path -> exit {:?}", out.map(|o| o.status.code()));
         }
@@ -14293,7 +13782,7 @@ fn main() {
         return;
     }
 
-    // Hidden timing bench: `shuffle --dir-bench <path>` reports how long each
+    // Hidden timing bench: `schnauz --dir-bench <path>` reports how long each
     // load phase takes for a real folder.
     if args.len() >= 3 && args[1] == "--dir-bench" {
         let p = PathBuf::from(&args[2]);
@@ -14392,10 +13881,6 @@ fn main() {
         set_active_keymap(saved_keymap.clone());
         cx.set_global(KeymapGlobal(saved_keymap));
 
-        // Shared update-check state (Settings drives it, the main window
-        // installs from it).
-        cx.set_global(UpdateCheckGlobal::default());
-
         // Load the icon pack (if any).
         let saved_pack = load_icon_pack();
         set_active_icon_pack(saved_pack.clone());
@@ -14423,7 +13908,7 @@ fn main() {
             KeyBinding::new("cmd-,", OpenSettings, None),
             KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("cmd-shift-s", NewProject, None),
-            KeyBinding::new("cmd-shift-d", ToggleStudioSplit, None),
+            KeyBinding::new("cmd-shift-d", ToggleSplit, None),
             KeyBinding::new("cmd-shift-i", ToggleInspector, None),
         ]);
         cx.set_menus(vec![
@@ -14456,7 +13941,7 @@ fn main() {
                     MenuItem::separator(),
                     MenuItem::action("Hide/Show Sidebar", ToggleSidebar),
                     MenuItem::action("Search…", FocusSearch),
-                    MenuItem::action("Split / Join Panes", ToggleStudioSplit),
+                    MenuItem::action("Split / Join Panes", ToggleSplit),
                     MenuItem::action("Show / Hide Preview", ToggleInspector),
                 ],
             },
@@ -14498,10 +13983,8 @@ fn open_main_window(cx: &mut App) {
         },
         |window, cx| {
             let view = cx.new(|cx| {
-                let mut finder = Shuffle::new(load_last_dir(), cx);
+                let mut finder = Schnauz::new(load_last_dir(), cx);
                 finder.prewarm_icons(cx);
-                // Quietly check GitHub for a newer release (shows a banner if so).
-                finder.check_for_update(cx);
                 // Reopen last run's tabs + split (else the last folder), then
                 // fill each pane's metadata in the background.
                 finder.restore_session();
@@ -14678,7 +14161,7 @@ mod tests {
     }
 
     pub(super) fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("shuffle-test-{name}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("schnauz-test-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d

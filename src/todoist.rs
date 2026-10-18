@@ -368,7 +368,7 @@ impl State {
         request
     }
 }
-impl Shuffle {
+impl Schnauz {
     pub(super) fn todoist_link(&self, cx: &App) -> Option<projects::TodoistLink> {
         let link = self.projects.sidebar().todoist.as_ref()?;
         let account = cx.global::<Global>().account.as_ref()?;

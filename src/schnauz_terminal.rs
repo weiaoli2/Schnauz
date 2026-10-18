@@ -137,15 +137,15 @@ fn spawn_process(
     command.env("COLORTERM", "truecolor");
     command.env("TERM_PROGRAM", "Schnauz");
     command.env("ZDOTDIR", &integration);
-    command.env("SHUFFLE_STUDIO_INTEGRATION_DIR", &integration);
+    command.env("SCHNAUZ_INTEGRATION_DIR", &integration);
     command.env(
-        "SHUFFLE_STUDIO_USER_ZDOTDIR",
+        "SCHNAUZ_USER_ZDOTDIR",
         std::env::var_os("ZDOTDIR").unwrap_or_else(|| home_dir().into_os_string()),
     );
-    command.env("SHUFFLE_STUDIO_CWD_REQUEST", &request_file);
-    command.env("SHUFFLE_STUDIO_SSH_REQUEST", &ssh_request);
+    command.env("SCHNAUZ_CWD_REQUEST", &request_file);
+    command.env("SCHNAUZ_SSH_REQUEST", &ssh_request);
     command.env(
-        "SHUFFLE_STUDIO_TEST_SHELL",
+        "SCHNAUZ_TEST_SHELL",
         if test_shell { "1" } else { "0" },
     );
     if std::env::var_os("LANG").is_none() {
@@ -251,7 +251,7 @@ impl Session {
     }
 }
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pane = self.active_pane;
         if self.tab(pane).remote.is_some() && self.tab(pane).terminal.is_none() {
@@ -834,12 +834,12 @@ SNZ_SSH_TEST_SHELL=1 SHELL="$SNZ_SSH_TEST_REMOTE_SHELL" /bin/sh -c "$remote"
                 .map(|path| fs::canonicalize(path).unwrap()),
             Some(fs::canonicalize(&start).unwrap())
         );
-        probe.command("typeset -g SHUFFLE_TEST_STATE=preserved");
+        probe.command("typeset -g SCHNAUZ_TEST_STATE=preserved");
         // Keep a partially typed command while the browser changes directories.
         probe.output.clear();
         probe
             .process
-            .input(b"printf '\\nSYNC_STATE:%s\\n' $SHUFFLE_TEST_STATE")
+            .input(b"printf '\\nSYNC_STATE:%s\\n' $SCHNAUZ_TEST_STATE")
             .unwrap();
         probe.process.change_directory(&destination).unwrap();
         probe.ready();
@@ -914,11 +914,11 @@ SNZ_SSH_TEST_SHELL=1 SHELL="$SNZ_SSH_TEST_REMOTE_SHELL" /bin/sh -c "$remote"
                 && events.contains(&ShellEvent::PromptReady)
         });
         // Background jobs can leave a ready prompt but must block recovery.
-        probe.command("sleep 30 & STUDIO_TEST_JOB=$!");
+        probe.command("sleep 30 & SCHNAUZ_TEST_JOB=$!");
         assert!(!probe.process.has_foreground_app());
         assert!(!probe.process.is_idle_shell());
         probe.command(
-            "kill $STUDIO_TEST_JOB; wait $STUDIO_TEST_JOB 2>/dev/null; unset STUDIO_TEST_JOB",
+            "kill $SCHNAUZ_TEST_JOB; wait $SCHNAUZ_TEST_JOB 2>/dev/null; unset SCHNAUZ_TEST_JOB",
         );
         assert!(probe.process.is_idle_shell());
         drop(probe);
@@ -929,7 +929,7 @@ SNZ_SSH_TEST_SHELL=1 SHELL="$SNZ_SSH_TEST_REMOTE_SHELL" /bin/sh -c "$remote"
             restarted.cwd.as_ref().map(|p| fs::canonicalize(p).unwrap()),
             Some(fs::canonicalize(&start).unwrap())
         );
-        restarted.command("printf '\\nRESTART_STATE:%s\\n' ${SHUFFLE_TEST_STATE-unset}");
+        restarted.command("printf '\\nRESTART_STATE:%s\\n' ${SCHNAUZ_TEST_STATE-unset}");
         assert!(String::from_utf8_lossy(&restarted.output).contains("RESTART_STATE:unset"));
         drop(restarted);
         fs::remove_dir_all(root).unwrap();

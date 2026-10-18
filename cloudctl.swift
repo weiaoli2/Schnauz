@@ -9,7 +9,7 @@
 //
 // Handles both iCloud Drive (Foundation ubiquitous APIs) and third-party File
 // Provider stores (Dropbox, Google Drive, OneDrive, … via NSFileProviderManager
-// / coordinated reads). Shuffle spawns this as a subprocess. Prints "ok" on
+// / coordinated reads). Schnauz spawns this as a subprocess. Prints "ok" on
 // success (`sync` prints "launched <App>" when it had to start the sync app);
 // a message to stderr and a non-zero exit on failure.
 import AppKit
@@ -129,7 +129,7 @@ case ("download", false):
 
 case ("evict", false):
     // Third-party File Provider stores don't expose a reliable public evict;
-    // that's driven from the provider's own app. Report it so Shuffle can tell
+    // that's driven from the provider's own app. Report it so Schnauz can tell
     // the user (it only offers "Free Up Space" for iCloud).
     fail("evict: freeing space is only supported for iCloud Drive here; use the provider's app for this store")
 
@@ -137,7 +137,7 @@ default:
     fail("unreachable")
 }
 
-// Bound the wait so a wedged provider can't hang Shuffle's helper forever.
+// Bound the wait so a wedged provider can't hang Schnauz's helper forever.
 if sem.wait(timeout: .now() + 30) == .timedOut {
     fail("timed out talking to the cloud provider")
 }

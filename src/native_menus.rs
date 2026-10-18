@@ -171,7 +171,7 @@ fn show(nodes: &[MenuNode], view: &NSView, x: f32, y: f32) -> Option<MenuOp> {
         .and_then(|i| actions.get(i).cloned())
 }
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn schedule_native_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.native_menu_pending {
             return;
@@ -204,7 +204,7 @@ impl Shuffle {
             None
         };
         let Some((x, y, nodes)) = pending else { return };
-        let Some(handle) = window.window_handle().downcast::<Shuffle>() else {
+        let Some(handle) = window.window_handle().downcast::<Schnauz>() else {
             return;
         };
         let Some(ptr) = ns_view_ptr(window) else {

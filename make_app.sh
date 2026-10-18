@@ -6,7 +6,7 @@ if [ -d /Applications/Xcode.app/Contents/Developer ]; then
     export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 fi
 APP="Schnauz.app"
-PROFILE="${STUDIO_BUILD_PROFILE:-release}"
+PROFILE="${SCHNAUZ_BUILD_PROFILE:-release}"
 TARGET="${CARGO_TARGET_DIR:-target}"
 BINARY="$TARGET/$PROFILE/schnauz"
 if [ ! -f "$BINARY" ]; then

@@ -379,7 +379,7 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let temporary = parent.join(format!(".studio-{}-{nonce}.tmp", std::process::id()));
+    let temporary = parent.join(format!(".schnauz-{}-{nonce}.tmp", std::process::id()));
     let result = (|| {
         let mut file = OpenOptions::new()
             .write(true)
@@ -407,7 +407,7 @@ mod tests {
                 .unwrap()
                 .as_nanos();
             let path =
-                std::env::temp_dir().join(format!("studio-project-{}-{nonce}", std::process::id()));
+                std::env::temp_dir().join(format!("schnauz-project-{}-{nonce}", std::process::id()));
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }

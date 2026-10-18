@@ -35,7 +35,7 @@ pub(super) fn tab_sections(tab: usize) -> &'static [&'static str] {
             "Sidebar",
             "Connections",
             "Script Actions",
-            "Software Update",
+            "Version",
             "Developer",
         ],
         2 => &["Theme", "Colors", "App Icon", "Icon Pack"],
@@ -72,10 +72,6 @@ impl Settings {
         cx.observe_global::<todoist::Global>(|_, cx| cx.notify()).detach();
         cx.observe_global::<nextcloud::State>(|_, cx| cx.notify())
             .detach();
-        // Repaint when the shared update-check state changes (the check runs
-        // async; the main window may also drive it).
-        cx.observe_global::<UpdateCheckGlobal>(|_, cx| cx.notify())
-            .detach();
         Settings {
             tab: 0,
             section: 0,
@@ -84,29 +80,6 @@ impl Settings {
             recording: None,
             color_edit: None,
         }
-    }
-
-    /// Kick off a GitHub check from the Settings "Updates" row.
-    fn start_update_check(&self, cx: &mut Context<Self>) {
-        if !upstream_updates_enabled() {
-            return;
-        }
-        cx.set_global(UpdateCheckGlobal(UpdateCheck::Checking));
-        cx.spawn(async move |_, cx| {
-            let tag = cx.background_spawn(async move { fetch_latest_tag() }).await;
-            let next = match tag {
-                None => UpdateCheck::Failed,
-                Some(tag) => {
-                    if parse_version(&tag) > parse_version(env!("CARGO_PKG_VERSION")) {
-                        UpdateCheck::Available(tag)
-                    } else {
-                        UpdateCheck::UpToDate
-                    }
-                }
-            };
-            let _ = cx.update(|cx| cx.set_global(UpdateCheckGlobal(next)));
-        })
-        .detach();
     }
 
     /// Route key events: color entry first, then keybind recording.
@@ -665,9 +638,9 @@ impl Settings {
                 ],
             ),
             settings_section(
-                "Software Update",
+                "Version",
                 None,
-                vec![self.render_update_row(cx)],
+                vec![self.render_version_row()],
             ),
             settings_section(
                 "Developer",
@@ -700,113 +673,13 @@ impl Settings {
         ]
     }
 
-    /// The Software-Update row: current version plus a Check / Install &
-    /// Relaunch button, driven by the shared UpdateCheck state.
-    fn render_update_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        if !upstream_updates_enabled() {
-            return div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(format!("Schnauz {}", env!("CARGO_PKG_VERSION")))
-                .child(
-                    div()
-                        .text_size(px(UI_SMALL_FONT_SIZE))
-                        .text_color(rgb(theme().text_muted))
-                        .child(
-                            "Personal build · updates are installed from this project's builds.",
-                        ),
-                )
-                .into_any_element();
-        }
-        let t = theme();
-        let state = cx.global::<UpdateCheckGlobal>().0.clone();
-        let status: Option<String> = match &state {
-            UpdateCheck::Idle => None,
-            UpdateCheck::Checking => Some("Checking\u{2026}".into()),
-            UpdateCheck::UpToDate => Some("You\u{2019}re up to date.".into()),
-            UpdateCheck::Available(v) => Some(format!("{v} is available.")),
-            UpdateCheck::Failed => Some("Couldn\u{2019}t reach GitHub \u{2014} try again.".into()),
-            UpdateCheck::Install(v) => {
-                Some(format!("Installing {v}\u{2026} the app will relaunch."))
-            }
-        };
-        let button: Option<&'static str> = match &state {
-            UpdateCheck::Idle => Some("Check for Updates"),
-            UpdateCheck::UpToDate => Some("Check Again"),
-            UpdateCheck::Failed => Some("Try Again"),
-            UpdateCheck::Available(_) => Some("Install & Relaunch"),
-            UpdateCheck::Checking | UpdateCheck::Install(_) => None,
-        };
-        let avail = matches!(state, UpdateCheck::Available(_));
-        let avail_tag = match &state {
-            UpdateCheck::Available(v) => Some(v.clone()),
-            _ => None,
-        };
-        let mut right = div().flex_none().flex().items_center().gap_2();
-        if let Some(s) = status {
-            right = right.child(
-                div()
-                    .text_size(px(UI_SMALL_FONT_SIZE))
-                    .text_color(rgb(if avail { t.accent } else { t.text_muted }))
-                    .child(s),
-            );
-        }
-        if let Some(label) = button {
-            right = right.child(
-                div()
-                    .id("update-check-btn")
-                    .flex_none()
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .bg(if avail { rgb(t.accent) } else { rgb(t.surface) })
-                    .text_color(if avail { rgb(0xffffff) } else { rgb(t.text) })
-                    .hover(|s| s.bg(rgb(t.hover)))
-                    .active(|s| s.bg(rgb(t.selected)))
-                    .child(label)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if let Some(v) = avail_tag.clone() {
-                            cx.set_global(UpdateCheckGlobal(UpdateCheck::Install(v)));
-                        } else {
-                            this.start_update_check(cx);
-                        }
-                        cx.notify();
-                    })),
-            );
-        }
-        div()
-            .w_full()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_color(rgb(t.text))
-                            .child(format!(
-                                "Version {} ({})",
-                                env!("CARGO_PKG_VERSION"),
-                                // Build stamp (git short SHA) baked in at compile
-                                // time so "which build am I actually running?"
-                                // is answerable from Settings. "dev" when built
-                                // without the stamp.
-                                option_env!("SHUFFLE_BUILD_SHA").unwrap_or("dev")
-                            )),
-                    )
-                    .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
-                        "Check GitHub for a newer release and install it in place \u{2014} the app swaps itself and relaunches.",
-                    )),
-            )
-            .child(right)
+    /// Current local build; release installation is managed separately.
+    fn render_version_row(&self) -> AnyElement {
+        div().flex().flex_col().gap_1()
+            .child(format!("Schnauz {}", env!("CARGO_PKG_VERSION")))
+            .child(div().text_size(px(UI_SMALL_FONT_SIZE))
+                .text_color(rgb(theme().text_muted))
+                .child("Personal build · updates are installed from this project's builds."))
             .into_any_element()
     }
 

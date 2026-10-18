@@ -1,7 +1,7 @@
 //! Preview work, cancellation and bounded caches; ordinary browsing stays cheap.
 use super::*;
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn cancel_unused_previews(&self) {
         let wanted: HashSet<PathBuf> = self
             .panes
@@ -345,7 +345,7 @@ pub(super) fn remote_preview_temp(remote: &Path) -> PathBuf {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "file".into());
     std::env::temp_dir()
-        .join("shuffle-remote-preview")
+        .join("schnauz-remote-preview")
         .join(format!("{:016x}-{name}", h.finish()))
 }
 
@@ -505,7 +505,7 @@ pub(super) fn code_signature(path: &Path, is_dir: bool) -> Option<String> {
     Some(authority.unwrap_or_else(|| "Signed".to_string()))
 }
 
-impl Drop for Shuffle {
+impl Drop for Schnauz {
     fn drop(&mut self) {
         for cancel in self.preview_pending.get_mut().values() {
             cancel.store(true, Ordering::Release);

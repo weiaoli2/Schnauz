@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn reads_unicode_and_utf16_but_rejects_binary_and_folders() {
-        let dir = std::env::temp_dir().join(format!("studio-text-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("schnauz-text-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("notes.txt");
         std::fs::write(&path, "Readable 素材\r\n\tIndented").unwrap();
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn bounds_large_previews_without_breaking_unicode() {
         let path =
-            std::env::temp_dir().join(format!("studio-text-limit-{}.txt", std::process::id()));
+            std::env::temp_dir().join(format!("schnauz-text-limit-{}.txt", std::process::id()));
         std::fs::write(&path, "素".repeat(MAX_BYTES)).unwrap();
         let preview = read(&path).unwrap();
         assert!(preview.truncated);

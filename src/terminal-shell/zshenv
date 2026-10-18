@@ -1,7 +1,7 @@
 # Schnauz: preserve the user's normal zsh startup files.
-export ZDOTDIR="$SHUFFLE_STUDIO_USER_ZDOTDIR"
-if [[ "$SHUFFLE_STUDIO_TEST_SHELL" != 1 && -r "$ZDOTDIR/.zshenv" ]]; then
+export ZDOTDIR="$SCHNAUZ_USER_ZDOTDIR"
+if [[ "$SCHNAUZ_TEST_SHELL" != 1 && -r "$ZDOTDIR/.zshenv" ]]; then
   source "$ZDOTDIR/.zshenv"
 fi
-export SHUFFLE_STUDIO_USER_ZDOTDIR="${ZDOTDIR:-$HOME}"
-export ZDOTDIR="$SHUFFLE_STUDIO_INTEGRATION_DIR"
+export SCHNAUZ_USER_ZDOTDIR="${ZDOTDIR:-$HOME}"
+export ZDOTDIR="$SCHNAUZ_INTEGRATION_DIR"

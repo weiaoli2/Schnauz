@@ -172,7 +172,7 @@ pub(super) fn launch<T: 'static>(
     .detach();
 }
 
-pub(super) fn menu_items(path: &Path, is_dir: bool, cx: &Context<Shuffle>) -> Vec<MenuNode> {
+pub(super) fn menu_items(path: &Path, is_dir: bool, cx: &Context<Schnauz>) -> Vec<MenuNode> {
     let state = cx.global::<State>();
     let account = matching(&state.accounts, path);
     let detected = cloud_locations::identify(&home_dir(), path).filter(|c| c.name == "Nextcloud");

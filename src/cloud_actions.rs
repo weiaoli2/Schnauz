@@ -1,7 +1,7 @@
 //! Provider-aware menus. Only expose operations Schnauz can actually perform.
 use super::*;
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn cloud_menu(
         &self,
         pane: usize,

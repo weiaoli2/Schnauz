@@ -4,11 +4,11 @@ Read [PROJECT.md](PROJECT.md) first for the working location, build commands,
 current stage and the Todoist integration. This file records detailed working rules.
 
 Independent personal macOS app based on WizenPainter/shuffle, starting at
-50a94466dadef2c483913bc2cd5c76999cda4dda. The local branch is `studio`;
-`studio-starting-point` preserves the unmodified source. `upstream` is reference only.
+50a94466dadef2c483913bc2cd5c76999cda4dda. The local branch is `schnauz`;
+`schnauz-starting-point` preserves the unmodified source. `upstream` is reference only.
 
 - Rust + GPUI. Keep the native renderer and Mac integrations.
-- `src/theme.rs`: themes; `src/studio.rs`: custom chrome and project UI;
+- `src/theme.rs`: themes; `src/schnauz.rs`: custom chrome and project UI;
   `src/projects.rs`: typed persistence; `src/main.rs`: existing file manager.
 - Retain the original MIT LICENSE and attribution.
 - Schnauz credits: developer, design and product direction Oliver Weber;
@@ -27,22 +27,24 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   bugs. Wait for his reports; do not start unsolicited checks or change his live
   browsing session. Run relevant verification when implementing a reported fix.
 - For a normal build run `./build.sh`; for a faster development build use
-  `STUDIO_BUILD_PROFILE=debug ./build.sh`. Rust stable and Xcode are required.
+  `SCHNAUZ_BUILD_PROFILE=debug ./build.sh`. Rust stable and Xcode are required.
 - Run `./test.sh` after project or file-operation changes. Use disposable
   folders for copy, move, rename and delete verification.
 - Native UI QA can set `SCHNAUZ_CONFIG_DIR` and `SCHNAUZ_START_DIR`
   to disposable paths. Do not change HOME.
-- `dev-env.sh` reuses the prepared cache under `../../work` and builds offline.
+- `dev-env.sh` reuses the prepared cache under `.build-cache/` and builds offline.
   Use `CARGO_NET_OFFLINE=false` when a new dependency must be downloaded.
 - Show a working first version, gather feedback, then iterate. Default visual
   direction: quiet Mac-style light/dark palettes, indigo accent, clear spacing.
-- The first preview was launched with `../../work/qa-profile`. The user began
+- The first preview was launched with
+  `/Users/oliw/Documents/Codex/2026-10-17/what/work/qa-profile`. The user began
   browsing in that window. Preserve its settings/workspaces if switching the
   running app to its normal profile; it may now contain user-created state.
 - The live app now uses `~/Library/Application Support/Schnauz/`. Its projects
   and tabs were preserved from both preview profiles, including the user's two
   Desktop tabs and earlier Applications/Home tabs. Backups are in
-  `../../work/profile-backups/`. Treat preview profiles as user data too; never
+  `/Users/oliw/Documents/Codex/2026-10-17/what/work/profile-backups/`.
+  Treat preview profiles as user data too; never
   replace live state with QA fixtures or leave a testing view active for the user.
 - User feedback: no automatic recursive folder-size calculations while browsing.
   Main text is 12 logical px/pt, small labels 11, file rows 26 px. Keep it compact.
@@ -238,3 +240,9 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Store immediate child basenames only; drop dot/parent entries even when a client
   prints full paths, and preserve whitespace inside filenames. Path breadcrumbs
   follow terminal cwd reports; listing prefixes must never become child paths.
+
+- All current branding, implementation types, modules, shell hooks and build flags
+  use Schnauz. Original attribution/licenses stay unchanged. `src/legacy.rs`
+  isolates read compatibility for earlier settings, script headers/environment,
+  SFTP Keychain items and active control sockets. Do not drop saved access when
+  changing internal names. The former upstream updater is removed.

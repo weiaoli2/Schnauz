@@ -50,10 +50,10 @@ function _schnauz_ssh() {
   # output. The stream carries just an identifier that must match this file.
   (
     umask 077
-    printf '%s\0' "$token" "$socket" "$host" "$user" "$port" "$PWD" > "${SHUFFLE_STUDIO_SSH_REQUEST}.new"
-    command mv -f -- "${SHUFFLE_STUDIO_SSH_REQUEST}.new" "$SHUFFLE_STUDIO_SSH_REQUEST"
+    printf '%s\0' "$token" "$socket" "$host" "$user" "$port" "$PWD" > "${SCHNAUZ_SSH_REQUEST}.new"
+    command mv -f -- "${SCHNAUZ_SSH_REQUEST}.new" "$SCHNAUZ_SSH_REQUEST"
   ) || { command rmdir -- "$socket_dir"; command ssh "$@"; return $?; }
-  bootstrap=$(<"$SHUFFLE_STUDIO_INTEGRATION_DIR/ssh-bootstrap.sh")
+  bootstrap=$(<"$SCHNAUZ_INTEGRATION_DIR/ssh-bootstrap.sh")
   # Quote the fixed bootstrap and generated token as shell arguments. User paths
   # and SSH arguments are not interpolated into remote executable text.
   # OpenSSH expands percent tokens in RemoteCommand before sending it.
@@ -66,7 +66,7 @@ function _schnauz_ssh() {
     rc=$?
   } always {
     printf '\e]777;schnauz-ssh;end;%s\a' "$token"
-    command rm -f -- "$SHUFFLE_STUDIO_SSH_REQUEST"
+    command rm -f -- "$SCHNAUZ_SSH_REQUEST"
     # OpenSSH owns its socket. Never recursively remove a path returned by ssh.
     command rm -f -- "$socket"
     command rmdir -- "$socket_dir" 2>/dev/null

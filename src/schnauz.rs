@@ -8,7 +8,7 @@ pub(super) struct ProjectSession {
     pub split_ratio: f32,
 }
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn render_hidden_button(&self, pane: usize, cx: &Context<Self>) -> AnyElement {
         let t = theme();
         let shown = self.tab(pane).show_hidden;
@@ -546,7 +546,7 @@ impl Shuffle {
         }
     }
 
-    pub(super) fn toggle_studio_split(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn toggle_schnauz_split(&mut self, cx: &mut Context<Self>) {
         self.context_menu = None;
         self.sidebar_menu = None;
         self.sort_menu = None;
@@ -586,7 +586,7 @@ impl Shuffle {
         cx.notify();
     }
 
-    pub(super) fn render_studio_toolbar(&self, cx: &Context<Self>) -> AnyElement {
+    pub(super) fn render_schnauz_toolbar(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
         let filter = self.active_tab().entry_filter;
         let filtered = filter != EntryFilter::All;
@@ -634,8 +634,8 @@ impl Shuffle {
             )
             .child(self.render_file_search(cx))
             .child(
-                studio_button(
-                    "studio-split",
+                schnauz_button(
+                    "schnauz-split",
                     if self.panes.len() > 1 {
                         "Join panes"
                     } else {
@@ -644,11 +644,11 @@ impl Shuffle {
                     false,
                 )
                 .tooltip(tip("Split or join panes · ⌘⇧D"))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_studio_split(cx))),
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_schnauz_split(cx))),
             )
             .child(
-                studio_button(
-                    "studio-terminal",
+                schnauz_button(
+                    "schnauz-terminal",
                     "Terminal",
                     self.active_tab().terminal_open,
                 )
@@ -660,18 +660,18 @@ impl Shuffle {
                 ),
             )
             .child(
-                studio_button("studio-preview", "Preview", prefs().preview && !self.todoist.open)
+                schnauz_button("schnauz-preview", "Preview", prefs().preview && !self.todoist.open)
                     .tooltip(tip("Show or hide the preview panel · ⌘⇧I"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.show_file_preview(cx))),
             )
-            .child(studio_button("studio-todoist", "Tasks", self.todoist.open)
+            .child(schnauz_button("schnauz-todoist", "Tasks", self.todoist.open)
                 .tooltip(tip("Todoist tasks for the current project"))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     if this.todoist.open { this.todoist.open = false; cx.notify(); }
                     else { this.open_todoist(cx); }
                 })))
             .child(
-                studio_button("studio-save", "New project", true)
+                schnauz_button("schnauz-save", "New project", true)
                     .tooltip(tip("Create a project from these tabs · ⌘⇧S"))
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.open_project_dialog(window, cx)
@@ -897,7 +897,7 @@ impl Shuffle {
                                     .flex()
                                     .gap_2()
                                     .child(
-                                        studio_button("project-cancel", "Cancel", false)
+                                        schnauz_button("project-cancel", "Cancel", false)
                                             .on_click(cx.listener(
                                                 |this, _: &ClickEvent, _, cx| {
                                                     this.project_dialog = None;
@@ -906,7 +906,7 @@ impl Shuffle {
                                             )),
                                     )
                                     .child(
-                                        studio_button("project-confirm", "Create project", true)
+                                        schnauz_button("project-confirm", "Create project", true)
                                             .on_click(cx.listener(
                                                 |this, _: &ClickEvent, _, cx| {
                                                     this.save_project(cx)
@@ -919,7 +919,7 @@ impl Shuffle {
             .into_any_element()
     }
 
-    pub(super) fn render_studio_status(&self, cx: &Context<Self>) -> AnyElement {
+    pub(super) fn render_schnauz_status(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
         let tab = self.active_tab();
         let searching = self.search_in_pane(self.active_pane);
@@ -971,7 +971,7 @@ impl Shuffle {
             )
             .child(
                 div()
-                    .id("studio-theme")
+                    .id("schnauz-theme")
                     .cursor_pointer()
                     .hover(|s| s.text_color(rgb(t.accent)))
                     .child(if t.bg == PRESETS[0].1.bg {
@@ -990,7 +990,7 @@ impl Shuffle {
             )
             .child(
                 div()
-                    .id("studio-settings")
+                    .id("schnauz-settings")
                     .cursor_pointer()
                     .hover(|s| s.text_color(rgb(t.accent)))
                     .child(ui_icon(Icon::Settings, 14., rgb(t.text_muted)))
@@ -1009,7 +1009,7 @@ fn filter_tint(t: Theme) -> u32 {
     blend(16) | blend(8) | blend(0)
 }
 
-pub(super) fn studio_button(
+pub(super) fn schnauz_button(
     id: &'static str,
     label: &'static str,
     accented: bool,
@@ -1037,8 +1037,8 @@ pub(super) fn studio_button(
             })
         })
         .children(match id {
-            "studio-split" => Some(Icon::Split), "studio-terminal" => Some(Icon::Terminal),
-            "studio-preview" => Some(Icon::Preview), "studio-save" => Some(Icon::Project), _ => None,
+            "schnauz-split" => Some(Icon::Split), "schnauz-terminal" => Some(Icon::Terminal),
+            "schnauz-preview" => Some(Icon::Preview), "schnauz-save" => Some(Icon::Project), _ => None,
         }.map(|icon| ui_icon(icon, 15., rgb(if accented { 0xffffff } else { t.text_muted }))))
         .child(label)
 }

@@ -16,7 +16,7 @@ fn bounded_width(requested: f32, pane_width: f32) -> f32 {
     requested.clamp(220_f32.min(max), max)
 }
 
-pub(super) fn preview_width(this: &Shuffle, pane: usize) -> f32 {
+pub(super) fn preview_width(this: &Schnauz, pane: usize) -> f32 {
     bounded_width(
         this.preview_resize
             .as_ref()
@@ -25,7 +25,7 @@ pub(super) fn preview_width(this: &Shuffle, pane: usize) -> f32 {
     )
 }
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn resize_preview(&mut self, x: f32, cx: &mut Context<Self>) {
         if let Some(drag) = &mut self.preview_resize {
             drag.width = bounded_width(drag.start_width + drag.start_x - x, pane_width(drag.pane));

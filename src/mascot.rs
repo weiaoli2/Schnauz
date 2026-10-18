@@ -1,7 +1,7 @@
 //! The Schnauz mascot opens About while idle and stops an active search.
 //! Animation requests frames only during a search.
 use super::*;
-impl Shuffle {
+impl Schnauz {
     pub(super) fn render_search_mascot(&self, cx: &Context<Self>) -> AnyElement {
         let running = self.file_search.busy && self.palette_open && self.file_search.inline;
         let dog = div()

@@ -1,6 +1,6 @@
 # Schnauz
 
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -8,9 +8,9 @@ implementation. Preserve upstream attribution and bundled third-party notices.
 
 ## Find and continue this project
 
-- Working repository: `/Users/oliw/Documents/Codex/2026-10-17/what/outputs/shuffle-studio`
+- Working repository: `/Users/oliw/CurrentProjects/Schnauz`
 - Built app: `Schnauz.app` inside that repository; bundle ID `local.schnauz.app`.
-- Local branch: `studio`. Check Git for current changes before editing.
+- Local branch: `schnauz`. Check Git for current changes before editing.
 - Project navigation: `/Users/oliw/CodexProjects/INDEX.md`, entry **Schnauz**.
 - Read [AGENTS.md](AGENTS.md) for the product decisions and working constraints,
   and [README.md](README.md) for the feature guide and source map.
@@ -18,12 +18,13 @@ implementation. Preserve upstream attribution and bundled third-party notices.
 Start Codex CLI directly in the existing repository:
 
 ```sh
-codex --cd /Users/oliw/Documents/Codex/2026-10-17/what/outputs/shuffle-studio
+codex --cd /Users/oliw/CurrentProjects/Schnauz
 ```
 
-The folder's legacy name is retained; the app is called Schnauz. Work in this
-checkout rather than creating a fresh Shuffle clone. Keep this document current
-when the architecture, working location or release stage changes.
+Work in this checkout rather than creating a fresh Shuffle clone. The original
+chat output path is a compatibility symlink for existing sessions; the source,
+Git history, app bundle and build cache now live in CurrentProjects. Keep this
+document current when the architecture, working location or release stage changes.
 
 Codex reads repository `AGENTS.md`; that file points here for the handoff.
 See the [official instruction-discovery guide](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
@@ -35,15 +36,21 @@ Rust stable and Xcode; the current development Mac is Apple Silicon (M4 Pro).
 
 ```sh
 ./build.sh                              # Optimized app bundle, locally signed
-STUDIO_BUILD_PROFILE=debug ./build.sh    # Faster development build
+SCHNAUZ_BUILD_PROFILE=debug ./build.sh    # Faster development build
 ./test.sh                               # Existing regression suite
 ```
 
-The scripts source `dev-env.sh` and reuse `../../work` for the local build cache.
+The scripts source `dev-env.sh` and reuse the ignored `.build-cache/` directory
+inside the checkout for the local Cargo registry and build cache.
 That prepared cache defaults to offline mode. Use `CARGO_NET_OFFLINE=false` only
 when dependencies need fetching. Read `Cargo.toml` for the current package version.
 Use the normal build or tests for verification; avoid a separate expensive
 `cargo check` rebuild of the GPUI/Metal dependency stack. Format touched code only.
+
+All current implementation names use Schnauz. `src/legacy.rs` retains only
+compatibility identifiers for earlier settings, user scripts and saved SFTP
+access. Original credits and license notices remain intact; the old updater
+has been removed.
 
 ## Current stage and user data
 
@@ -53,7 +60,8 @@ session. Do not quit/restart his app, terminals, Codex sessions or SSH connectio
 
 Normal settings are in `/Users/oliw/Library/Application Support/Schnauz/`.
 Projects and folder views are stored centrally, including `projects.json` and
-`folder-views.json`. Earlier profiles under `../../work` also contain user data;
+`folder-views.json`. Earlier profiles under
+`/Users/oliw/Documents/Codex/2026-10-17/what/work/` also contain user data;
 never replace them with test fixtures. For necessary isolated UI verification,
 use fresh `SCHNAUZ_CONFIG_DIR` and `SCHNAUZ_START_DIR` paths without changing HOME.
 
@@ -67,7 +75,7 @@ the server account/repository and current review status before proceeding.
 | Area | Source |
 |---|---|
 | Browser, navigation and file operations | `src/main.rs` |
-| Project persistence and switching | `src/projects.rs`, `src/studio.rs` |
+| Project persistence and switching | `src/projects.rs`, `src/schnauz.rs` |
 | Project folders, tags and connections | `src/project_sidebar.rs` |
 | Global drive capacity and cloud paths/menus | `src/volumes.rs`, `volumectl.swift`, `src/cloud_locations.rs`, `src/cloud_actions.rs` |
 | Direct Nextcloud accounts, links, sharing and locks | `src/nextcloud.rs`, `native/nextcloud/Core.swift`, `native/nextcloud/main.swift` |
@@ -75,7 +83,7 @@ the server account/repository and current review status before proceeding.
 | Todoist API bridge, cache and Tasks pane | `src/todoist.rs`, `src/todoist_ui.rs`, `native/todoist/` |
 | Inline name editor and click-to-rename timing | `src/rename_ui.rs`, click dispatch in `src/main.rs` and `src/search_ui.rs` |
 | Preview layout and media | `src/preview_panel.rs`, `src/previews.rs`, `src/video_preview.rs` |
-| Terminal and SSH following | `src/studio_terminal.rs`, `src/ssh_sync.rs`, `src/terminal-shell/` |
+| Terminal and SSH following | `src/schnauz_terminal.rs`, `src/ssh_sync.rs`, `src/terminal-shell/` |
 | Remote directory names and listings | `src/remote_listing.rs` |
 | Search and storage map | `src/file_search.rs`, `src/search_ui.rs`, `src/space_map.rs`, `src/space_ui.rs` |
 

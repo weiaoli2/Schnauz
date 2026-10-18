@@ -89,7 +89,7 @@ pub(super) const fn light_theme(bg: u32, text: u32, accent: u32) -> Theme {
 /// light. (name, theme)
 pub(super) const PRESETS: &[(&str, Theme)] = &[
     (
-        "Studio Light",
+        "Schnauz Light",
         Theme {
             bg: 0xfafbfd,
             sidebar: 0xf1f2f7,
@@ -105,7 +105,7 @@ pub(super) const PRESETS: &[(&str, Theme)] = &[
         },
     ),
     (
-        "Studio Dark",
+        "Schnauz Dark",
         Theme {
             bg: 0x171923,
             sidebar: 0x1d202d,
@@ -120,9 +120,9 @@ pub(super) const PRESETS: &[(&str, Theme)] = &[
             accent: 0x9296ff,
         },
     ),
-    // --- Original Shuffle themes ---
+    // --- Additional palettes ---
     (
-        "Shuffle Dark",
+        "Schnauz Classic Dark",
         Theme {
             bg: 0x1e1e22,
             sidebar: 0x17171a,

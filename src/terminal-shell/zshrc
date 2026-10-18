@@ -1,53 +1,53 @@
-export ZDOTDIR="$SHUFFLE_STUDIO_USER_ZDOTDIR"
-if [[ "$SHUFFLE_STUDIO_TEST_SHELL" != 1 && -r "$ZDOTDIR/.zshrc" ]]; then
+export ZDOTDIR="$SCHNAUZ_USER_ZDOTDIR"
+if [[ "$SCHNAUZ_TEST_SHELL" != 1 && -r "$ZDOTDIR/.zshrc" ]]; then
   source "$ZDOTDIR/.zshrc"
 fi
-if [[ "$SHUFFLE_STUDIO_TEST_SHELL" == 1 ]]; then
+if [[ "$SCHNAUZ_TEST_SHELL" == 1 ]]; then
   HISTFILE=/dev/null
-  PROMPT='studio-test%# '
+  PROMPT='schnauz-test%# '
 fi
 # OSC 7 identifies the local working folder; OSC 133 identifies a ready prompt.
-function _shuffle_studio_cwd() {
-  local studio_directory="$PWD"
-  studio_directory="${studio_directory//\%/%25}"
-  studio_directory="${studio_directory// /%20}"
-  studio_directory="${studio_directory//\#/%23}"
-  studio_directory="${studio_directory//\?/%3F}"
-  studio_directory="${studio_directory//$'\n'/%0A}"
-  studio_directory="${studio_directory//$'\r'/%0D}"
-  studio_directory="${studio_directory//$'\e'/%1B}"
-  studio_directory="${studio_directory//$'\a'/%07}"
-  printf '\e]7;file://localhost%s\a' "$studio_directory"
+function _schnauz_cwd() {
+  local schnauz_directory="$PWD"
+  schnauz_directory="${schnauz_directory//\%/%25}"
+  schnauz_directory="${schnauz_directory// /%20}"
+  schnauz_directory="${schnauz_directory//\#/%23}"
+  schnauz_directory="${schnauz_directory//\?/%3F}"
+  schnauz_directory="${schnauz_directory//$'\n'/%0A}"
+  schnauz_directory="${schnauz_directory//$'\r'/%0D}"
+  schnauz_directory="${schnauz_directory//$'\e'/%1B}"
+  schnauz_directory="${schnauz_directory//$'\a'/%07}"
+  printf '\e]7;file://localhost%s\a' "$schnauz_directory"
 }
-function _shuffle_studio_ready() {
-  _shuffle_studio_cwd
+function _schnauz_ready() {
+  _schnauz_cwd
   printf '\e]133;A\a'
 }
-function _shuffle_studio_busy() {
+function _schnauz_busy() {
   printf '\e]133;C\a'
 }
 # A ZLE widget changes directory without replacing an unfinished command line.
 # Directory bytes arrive through a private file, never as executable shell text.
-function _shuffle_studio_cd() {
+function _schnauz_cd() {
   local target
-  IFS= builtin read -r -d '' target < "$SHUFFLE_STUDIO_CWD_REQUEST"
+  IFS= builtin read -r -d '' target < "$SCHNAUZ_CWD_REQUEST"
   if ! builtin cd -- "$target"; then
     printf '\e]133;D;1\a'
   fi
-  _shuffle_studio_ready
+  _schnauz_ready
   zle reset-prompt
 }
 autoload -Uz add-zsh-hook
-add-zsh-hook chpwd _shuffle_studio_cwd
-add-zsh-hook precmd _shuffle_studio_ready
-add-zsh-hook preexec _shuffle_studio_busy
-zle -N _shuffle_studio_cd
+add-zsh-hook chpwd _schnauz_cwd
+add-zsh-hook precmd _schnauz_ready
+add-zsh-hook preexec _schnauz_busy
+zle -N _schnauz_cd
 for map in emacs viins vicmd; do
-  bindkey -M "$map" $'\e[99;1~' _shuffle_studio_cd
+  bindkey -M "$map" $'\e[99;1~' _schnauz_cd
 done
 
-if [[ "$SHUFFLE_STUDIO_TEST_SHELL" == 1 ]]; then
-  export ZDOTDIR="$SHUFFLE_STUDIO_INTEGRATION_DIR"
+if [[ "$SCHNAUZ_TEST_SHELL" == 1 ]]; then
+  export ZDOTDIR="$SCHNAUZ_INTEGRATION_DIR"
 fi
 
-source "$SHUFFLE_STUDIO_INTEGRATION_DIR/ssh.zsh"
+source "$SCHNAUZ_INTEGRATION_DIR/ssh.zsh"

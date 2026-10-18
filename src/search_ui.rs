@@ -50,7 +50,7 @@ impl Drop for State {
     }
 }
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn search_in_pane(&self, pane: usize) -> bool {
         self.palette_open
             && self.file_search.inline
@@ -342,7 +342,7 @@ impl Shuffle {
             .child(scopes)
             .child(
                 div()
-                    .id("studio-search")
+                    .id("schnauz-search")
                     .flex_1()
                     .min_w_0()
                     .h(px(30.0))

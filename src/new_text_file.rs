@@ -44,7 +44,7 @@ fn create(folder: &Path, input: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-impl Shuffle {
+impl Schnauz {
     pub(super) fn open_text_file_dialog(
         &mut self,
         pane: usize,
@@ -266,7 +266,7 @@ impl Shuffle {
                             .justify_end()
                             .gap_2()
                             .child(
-                                studio::studio_button("text-cancel", "Cancel", false).on_click(
+                                schnauz::schnauz_button("text-cancel", "Cancel", false).on_click(
                                     cx.listener(|this, _: &ClickEvent, _, cx| {
                                         this.new_text_file = None;
                                         cx.notify();
@@ -274,7 +274,7 @@ impl Shuffle {
                                 ),
                             )
                             .child(
-                                studio::studio_button("text-create", "Create file", true).on_click(
+                                schnauz::schnauz_button("text-create", "Create file", true).on_click(
                                     cx.listener(|this, _: &ClickEvent, _, cx| {
                                         this.create_text_file(cx)
                                     }),

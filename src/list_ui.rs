@@ -29,7 +29,7 @@ pub(super) fn apply_style(tab: &mut Tab, style: &folder_views::FolderView) {
         tab.recompute_results();
     }
 }
-impl Shuffle {
+impl Schnauz {
     pub(super) fn apply_folder_view(&mut self, pane: usize, only_saved: bool) {
         let tab = self.tab(pane);
         if tab.remote.is_some() {
@@ -356,7 +356,7 @@ fn header_cell(
     width: f32,
     sort: SortKey,
     ascending: bool,
-    cx: &Context<Shuffle>,
+    cx: &Context<Schnauz>,
 ) -> AnyElement {
     let key = column_sort(column);
     let active = key == Some(sort);
