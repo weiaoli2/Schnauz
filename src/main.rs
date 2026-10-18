@@ -25,7 +25,7 @@ use gpui::{
     uniform_list, Animation, AnimationExt, AnyElement, App,
     Application, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle, ElementId, ExternalPaths, FocusHandle, FontWeight, ImageSource,
     KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit,
-    PathPromptOptions, Rgba,
+    Rgba,
     RenderImage, ScrollHandle, ScrollStrategy, ScrollWheelEvent, SharedString, TitlebarOptions,
     UniformListScrollHandle, Window, WindowBounds, WindowOptions,
 };

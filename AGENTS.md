@@ -99,7 +99,10 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Todoist routing and autosaved local tabs/layout. Personal has its own profile;
   new projects start with empty Favourites. Recents remains removed.
   The expanded sidebar is Devices → Projects → Favourites, with compact 24 pt
-  rows and Folders / Files subsections. Projects has no leading disclosure marker
+  rows and Folders / Files subsections shown only when they contain favourites.
+  Remove empty-section drop messages and the Favourites + button/picker code.
+  Keep the transient drag-hover hint and whole-sidebar drop target.
+  Projects has no leading disclosure marker
   or tab-count badge. Cloud, Servers, Locations and Tagged Items sections and
   their controls are removed. Preserve spacing between the main groups.
   Fit sidebar width to measured visible labels (170–320 pt, capped at 30% of the

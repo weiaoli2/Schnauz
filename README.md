@@ -111,17 +111,18 @@ Each project keeps its own **Favourites**, connection settings, Todoist link and
 last tabs/layout. **Personal** has its own profile. New projects start empty.
 
 The compact sidebar shows **Devices**, **Projects**, then **Favourites → Folders /
-Files**. Its width follows the visible names, with a cap for very long names and
-full paths in tooltips. Project rows no longer show tab counts. Cloud, Servers,
+Files**. Empty Folders / Files subsections are hidden, with no placeholder
+messages or + button beside Favourites. Its width follows the visible names,
+with a cap for very long names and full paths in tooltips. Project rows no longer show tab counts. Cloud, Servers,
 Locations and Tagged Items are replaced by this single favourites list.
 
 Drop local or SSH folders/files anywhere in the expanded sidebar: Schnauz sorts
 them into **Folders** or **Files**, without moving, copying or downloading them.
 **Drop to add to Favourites** identifies the target. Duplicates are kept once,
 and identical paths on different servers stay separate. Escape or dropping
-outside cancels an SSH reference drag. Use **+** to choose local files/folders,
-or **Add to Favourites** in their context menu. Existing shortcuts migrate without
-dropping unavailable paths.
+outside cancels an SSH reference drag. Use the **Tag** button or
+**Add to Favourites** in the context menu as alternatives to dragging. Existing
+shortcuts migrate without dropping unavailable paths.
 
 The **Tag** button toggles project favourites for local and remote selections.
 Click a file favourite to reveal it; a folder opens in the browser. A small cloud

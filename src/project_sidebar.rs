@@ -182,24 +182,6 @@ impl Schnauz {
         }
     }
 
-    pub(super) fn choose_project_items(&mut self, cx: &mut Context<Self>) {
-        let project = self.projects.active;
-        let rx = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: true,
-            multiple: true,
-            prompt: Some("Add to Favourites".into()),
-        });
-        cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = rx.await {
-                let _ = this.update(cx, |this, cx| {
-                    this.add_dropped_favourites(project, paths, cx)
-                });
-            }
-        })
-        .detach();
-    }
-
     pub(super) fn add_dropped_favourites(
         &mut self,
         project: Option<u64>,
@@ -328,22 +310,23 @@ impl Schnauz {
         key: &mut usize,
         cx: &Context<Self>,
     ) {
-        let add = div()
-            .id("favourites-add")
-            .px_1()
-            .cursor_pointer()
-            .tooltip(tip("Add files or folders to Favourites"))
-            .child(ui_icon(Icon::Plus, 13., rgb(theme().text)))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.choose_project_items(cx)))
-            .into_any_element();
-        items.push(self.section_header_el("FAVOURITES", Some(add), cx));
+        items.push(self.section_header_el("FAVOURITES", None, cx));
         if self.collapsed_sections.contains("FAVOURITES") {
             return;
         }
-        for (kind, key_name, label, hint) in [
-            (Section::Folders, "FOLDERS", "Folders", "Drop folders here"),
-            (Section::Files, "FILES", "Files", "Drop files here"),
+        for (kind, key_name, label) in [
+            (Section::Folders, "FOLDERS", "Folders"),
+            (Section::Files, "FILES", "Files"),
         ] {
+            if !self
+                .projects
+                .sidebar()
+                .shortcuts
+                .iter()
+                .any(|s| s.kind == kind)
+            {
+                continue;
+            }
             items.push(
                 div()
                     .id(key_name)
@@ -363,7 +346,6 @@ impl Schnauz {
             if self.collapsed_sections.contains(key_name) {
                 continue;
             }
-            let mut empty = true;
             for shortcut in self
                 .projects
                 .sidebar()
@@ -371,20 +353,7 @@ impl Schnauz {
                 .iter()
                 .filter(|s| s.kind == kind)
             {
-                empty = false;
                 self.project_shortcut_row(items, key, shortcut, cx);
-            }
-            if empty {
-                items.push(
-                    div()
-                        .pl_5()
-                        .pr_2()
-                        .py_0p5()
-                        .text_size(px(UI_SMALL_FONT_SIZE))
-                        .text_color(rgb(theme().text_dim))
-                        .child(hint)
-                        .into_any_element(),
-                );
             }
         }
     }

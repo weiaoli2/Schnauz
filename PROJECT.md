@@ -101,7 +101,9 @@ Keep browsing fast: no automatic recursive size scans or home indexing. The
 collapsed sidebar contains only its reopen button; obsolete compact-rail controls
 are removed from the source. Devices stays above Projects with background capacity
 updates and adjustable 80/90%-used colour thresholds. The compact sidebar has
-Projects without count badges, then Favourites → Folders / Files. Its width fits
+Projects without count badges, then Favourites → Folders / Files. Empty
+subsections and their placeholder messages are hidden; Favourites has no +
+button or dedicated picker. Its width fits
 visible labels, capped for long names. Dropped local/SSH items and the Tag button
 use the same typed shortcuts. Legacy Locations, Cloud, network folders and Tagged
 Items merge without loss; their old sections are removed. Cloud/network badges
