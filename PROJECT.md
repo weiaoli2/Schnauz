@@ -159,7 +159,7 @@ separate visible fixture confirmed horizontal titles/dates, the Add task row,
 Common defaults, independent preview, left divider drag and native right-border
 resize. Its data is synthetic; live Todoist remains Oliver's verification.
 
-Only the compiled version (currently 0.5.2) appears beside the Schnauz title
+Only the compiled version (currently 0.5.3) appears beside the Schnauz title
 and in --version. Oliver removed date/build/source IDs; the app stays Schnauz.app. At inspection the user's process had
 started at 13:04, before the prior 13:06 build finished, so old observations did
 not verify the new binary. Do not restart his live sessions automatically.
@@ -289,8 +289,43 @@ The footer's duplicate path is removed. Local paths beneath Home display ~/ plus
 relative crumbs; clicking ~ opens native choices for Home, Users and the disk
 root. Full-path editing remains available. Cloud badges and SSH roots are unchanged.
 
-The complete final local testing version is 0.5.2. Earlier 0.5.1 QA windows do
+The earlier complete local testing version was 0.5.2. Earlier 0.5.1 QA windows do
 not contain the last pointer/drag/breadcrumb refinements. The separate normal-app
 QA copy at /private/tmp/schnauz-window-qa-gstoq1oa/Schnauz Window QA.app has its
 own profile and was seen browsing Downloads with its sidebar collapsed. Preserve
 that profile if it has become user state; do not terminate user sessions blindly.
+
+## Current test stand — 0.5.3
+
+Normal drag moves; holding Command copies with AppKit's green + and a fixed-footer
+Copy N items / Move N items label. The payload count survives tab switching. A
+blue hovered tab activates after 650 ms, then folders (List/Icons, including the
+parent row) spring-open after the same dwell. Browser and sidebar stay untinted.
+Copy/move use the existing background jobs, undo and no-clobber behavior. Uploads
+remain copies; sidebar drops remain references. Drag-out stays copy-only.
+
+SSH favourites retain the original OpenSSH alias, preserving keys, custom ports
+and jump-host settings on reconnect. Older resolved-address favourites recover
+only a unique matching Host profile in the background; ambiguous matches are
+never guessed. Offline configuration discovery supports literal aliases/includes
+and caches nonsecret routing for 30s. Live terminal mux connections never reconnect
+silently, and orphaned browser mux references are no longer reused.
+
+Opening local/remote favourites while a terminal is present reuses that tab and
+keeps the same PTY/view visible. Returning to its exact reported SSH folder resumes
+following; browsing another folder or server stays Unsynced. No shell commands,
+PTY replacement or live-session restart are involved. The hidden UI regression
+checks this roundtrip plus native drag forwarding, real dwell, modifier feedback
+and actual file copy/move with disposable data. Oliver's real server reconnect
+and hand-drag appearance remain manual checks. Release publication stays on hold.
+
+Validation for 0.5.3 passed: 76 Rust tests; six Nextcloud fixture groups; six
+Todoist fixture groups; compact native composer checks; hidden native layout and
+interaction checks, including modifier changes, tab/folder dwell, real copy/move
+through the drop handlers and a same-session SSH/local/remote favourite roundtrip.
+All use disposable data. No live app restart, real-server login or release upload.
+
+The optimized normal Schnauz.app 0.5.3 is built and stable-certificate signed.
+Deep/strict verification and --version passed. It was not launched or substituted
+for Oliver's running app. Logs: /private/tmp/schnauz-053-tests.log and
+/private/tmp/schnauz-053-build.log. No push, release, installer or website-kit update.

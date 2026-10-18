@@ -186,9 +186,10 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   nonsecret SFTP server identity). Deduplicate by path plus server host/user/port,
   keeping identical local and remote paths separate. Never keep a live SSH mux in
   favourites; reuse an active terminal's authenticated transport only on explicit
-  favourite navigation. Keep that terminal tab intact, using/reusing a separate
-  browser-only tab. A saved remote favourite can explicitly reconnect through the
-  normal SFTP flow after restart; never inject commands into an SSH terminal.
+  favourite navigation. Keep its terminal and PTY visible in the current tab;
+  never create an implicit replacement tab that hides the session. A saved remote
+  favourite can explicitly reconnect through normal SFTP after restart; never
+  inject commands into an SSH terminal.
   Local/cloud folders retain native blue icons with an overlaid cloud badge;
   SSH/network shortcuts have a globe badge. Mounted-network identity is cached
   by the volume helper; never probe mounts or connect while rendering.
@@ -414,7 +415,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The current local testing version is 0.5.2.
+  no per-build app copies or releases. The current local testing version is 0.5.3.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -432,3 +433,29 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Clicking ~ opens a native Home/parent-folders menu; cloud badges and remote
   roots retain their existing identity. Cmd+L/current crumb still edits the full
   physical path. The footer shows counts/status/mode/settings, never the path.
+
+- File dragging: normal drag moves; Command (not Option) copies, per Oliver.
+  Native AppKit Copy shows its green + badge and the footer says Copy N items;
+  Move has no + and says Move N items. Count the frozen payload, not the current
+  tab selection. Respect source operation masks; local-to-SFTP remains upload/copy
+  and sidebar drops remain references only. Keep drag-out to other apps copy-only.
+- A hovered destination tab alone turns blue and activates after 650 ms; hovering
+  a normal folder or parent row then opens it after the same dwell. List and Icons
+  share this, with one cancellable timer, stable tab IDs and drag identity guards.
+  Never restore whole-browser/sidebar/folder-name drag tint.
+- native_file_drag.rs adapts only owned browser NSWindow instances because GPUI
+  0.2 advertises every native drop as Copy. Forward original callbacks unchanged;
+  never alter dependency caches, global classes, native resizing or terminal views.
+- Saved terminal favourites preserve a nonsecret ssh_alias in addition to resolved
+  identity. Legacy favourites may recover a unique matching OpenSSH Host profile
+  off-thread; never guess ambiguous profiles or read private key contents. Live
+  mux transports stay ephemeral and fail closed, without reconnect fallback.
+  Reuse only active terminal links, never orphaned browser-only mux references.
+- SSH -> local favourite -> remote favourite keeps the same terminal, tab and PTY
+  visible. Resume following only at that session's reported remote folder; other
+  folders/servers stay Unsynced. Never send cd or restart to achieve this. Explicit
+  New Tab/New Window and project switching retain their existing semantics.
+- test-ui.sh now also checks native drag forwarding, dwell, modifier feedback,
+  real copy/move through drop handlers and terminal favourite roundtrips in a
+  hidden disposable window with a private pasteboard and an owned test shell.
+  No real servers/accounts/user sessions are accessed; ui-checks stays opt-in.

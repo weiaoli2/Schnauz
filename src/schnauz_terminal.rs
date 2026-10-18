@@ -291,9 +291,16 @@ impl Schnauz {
     }
 
     fn start_terminal(&mut self, pane: usize, cx: &mut Context<Self>) -> bool {
+        self.start_terminal_shell(pane, false, cx)
+    }
+    #[cfg(feature = "ui-checks")]
+    pub(super) fn start_fixture_terminal(&mut self, pane: usize, cx: &mut Context<Self>) -> bool {
+        self.start_terminal_shell(pane, true, cx)
+    }
+    fn start_terminal_shell(&mut self, pane: usize, test_shell: bool, cx: &mut Context<Self>) -> bool {
         let cwd = self.tab(pane).current_dir.clone();
         let settings = config_dir().unwrap_or_else(std::env::temp_dir);
-        let (process, reader) = match spawn_process(&cwd, &settings, false) {
+        let (process, reader) = match spawn_process(&cwd, &settings, test_shell) {
             Ok(pair) => pair,
             Err(error) => {
                 self.set_notice(format!("Couldn't start terminal: {error}"), cx);

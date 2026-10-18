@@ -114,7 +114,10 @@ impl Link {
             return None;
         }
         let fields: Vec<_> = bytes.split(|&b| b == 0).collect();
-        if fields.len() != 7 || !fields[6].is_empty() || fields[0] != token.as_bytes() {
+        if !matches!(fields.len(), 7 | 8)
+            || !fields.last()?.is_empty()
+            || fields[0] != token.as_bytes()
+        {
             return None;
         }
         let string = |i: usize| std::str::from_utf8(fields[i]).ok().map(str::to_owned);
@@ -153,6 +156,13 @@ impl Link {
                 host,
                 user,
                 port,
+                ssh_alias: fields
+                    .get(6)
+                    .filter(|f| !f.is_empty())
+                    .and_then(|f| std::str::from_utf8(f).ok())
+                    .and_then(ssh_connection::valid_alias)
+                    .unwrap_or_default()
+                    .into(),
                 control_path: Some(socket),
                 ..Default::default()
             },
@@ -172,6 +182,29 @@ impl Link {
         }
     }
 }
+/// An explicit favourite changes the browser, never the live shell. Resume
+/// following only when it is exactly the directory reported by that session.
+pub(super) fn browse_remote(tab: &mut Tab, server: SftpServer, folder: &Path) {
+    if let Some(session) = tab.terminal.as_mut() {
+        if let Some(link) = session.ssh.as_mut() {
+            link.following = !link.unsupported
+                && projects::same_server(&link.server, &server)
+                && link.folder.as_deref() == Some(folder);
+            session.pending = None;
+            session.browser_moved_during_ssh();
+        }
+    }
+    if tab
+        .remote
+        .as_ref()
+        .is_none_or(|s| !projects::same_server(s, &server))
+    {
+        tab.history = vec![folder.to_path_buf()];
+        tab.hist_pos = 0;
+    }
+    tab.remote = Some(server);
+}
+
 fn clear_contents(tab: &mut Tab) {
     tab.entries.clear();
     tab.selection.clear();
@@ -337,7 +370,7 @@ impl Schnauz {
         else {
             return;
         };
-        if link.following || self.tab(pane).remote.is_some() {
+        if link.following {
             self.unsync_ssh_browser(pane, cx);
         } else if !link.unsupported {
             self.tab_mut(pane)
@@ -421,6 +454,18 @@ mod tests {
         ] {
             assert!(parse(invalid).is_none(), "{invalid}");
         }
+        // New launch records preserve the alias in addition to the resolved
+        // identity; old seven-field records remain readable.
+        bytes.truncate(bytes.len() - 1);
+        bytes.push(0);
+        bytes.extend(b"oliver@my-ssh-alias\0");
+        fs::write(&record, &bytes).unwrap();
+        let aliased = Link::from_record(token.into(), &record, &tab).unwrap();
+        assert_eq!(aliased.server.ssh_alias, "my-ssh-alias");
+        let restored: SftpServer =
+            serde_json::from_str(&serde_json::to_string(&aliased.server).unwrap()).unwrap();
+        assert!(restored.control_path.is_none());
+        assert_eq!(restored.connection_target(), "oliver@my-ssh-alias");
         tab.remote = Some(link.server.clone());
         tab.current_dir = PathBuf::from("/remote/path");
         tab.view = ViewMode::List;

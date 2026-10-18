@@ -253,6 +253,7 @@ impl Schnauz {
         paths: Vec<PathBuf>,
         cx: &mut Context<Self>,
     ) {
+        self.clear_file_drag(cx);
         cx.spawn(async move |this, cx| {
             let shortcuts = cx
                 .background_spawn(async move {
@@ -588,20 +589,11 @@ impl Schnauz {
     }
 
     pub(super) fn favourite_server(&self, server: SftpServer) -> SftpServer {
-        self.panes
-            .iter()
-            .flat_map(|p| p.tabs.iter())
+        std::iter::once(self.active_tab())
+            .chain(self.panes.iter().flat_map(|p| p.tabs.iter()))
             .filter_map(|t| t.terminal.as_ref()?.ssh.as_ref().map(|link| &link.server))
             .find(|s| projects::same_server(s, &server))
             .cloned()
-            .or_else(|| {
-                self.panes
-                    .iter()
-                    .flat_map(|p| p.tabs.iter())
-                    .filter_map(|t| t.remote.as_ref())
-                    .find(|s| s.control_path.is_some() && projects::same_server(s, &server))
-                    .cloned()
-            })
             .or_else(|| server.control_path.is_some().then(|| server.clone()))
             .or_else(|| {
                 self.projects
@@ -627,16 +619,16 @@ impl Schnauz {
         };
         if let Some(server) = shortcut.server {
             let live = self.favourite_server(server);
-            // Keep a live terminal tab intact. Browser-only remote tabs can be
-            // reused, with no commands or directory changes sent to any terminal.
-            let reuse = self.tab(pane).terminal.is_none()
-                && self
+            // Navigation changes only the browser. Keep the current terminal
+            // visible and its PTY untouched, including foreground SSH/CLI work.
+            let reuse = self.tab(pane).terminal.is_some()
+                || self
                     .tab(pane)
                     .remote
                     .as_ref()
                     .is_some_and(|s| projects::same_server(s, &live));
             if reuse {
-                self.tab_mut(pane).remote = Some(live);
+                ssh_sync::browse_remote(self.tab_mut(pane), live, &folder);
                 if self.tab(pane).current_dir == folder {
                     self.load_dir_in(pane, folder, cx);
                 } else {
@@ -672,8 +664,10 @@ impl Schnauz {
         }
         self.unsync_ssh_browser(pane, cx);
         if self.tab(pane).remote.is_some() {
-            self.panes[pane].tabs.push(Tab::new(folder.clone()));
-            self.panes[pane].active = self.panes[pane].tabs.len() - 1;
+            let tab = self.tab_mut(pane);
+            tab.remote = None;
+            tab.history = vec![folder.clone()];
+            tab.hist_pos = 0;
         }
         if shortcut.kind == Section::Files {
             self.tab_mut(pane).set_entry_filter(EntryFilter::All);

@@ -50,7 +50,7 @@ function _schnauz_ssh() {
   # output. The stream carries just an identifier that must match this file.
   (
     umask 077
-    printf '%s\0' "$token" "$socket" "$host" "$user" "$port" "$PWD" > "${SCHNAUZ_SSH_REQUEST}.new"
+    printf '%s\0' "$token" "$socket" "$host" "$user" "$port" "$PWD" "$dest" > "${SCHNAUZ_SSH_REQUEST}.new"
     command mv -f -- "${SCHNAUZ_SSH_REQUEST}.new" "$SCHNAUZ_SSH_REQUEST"
   ) || { command rmdir -- "$socket_dir"; command ssh "$@"; return $?; }
   bootstrap=$(<"$SCHNAUZ_INTEGRATION_DIR/ssh-bootstrap.sh")

@@ -26,7 +26,8 @@ you need close at hand and expensive work started only when you ask for it.
 | --- | --- |
 | **Project workspaces** | Project-specific favourites, saved tabs and split layouts. One active project shared across windows. |
 | **A real terminal** | An interactive PTY with scrollback, selection and copying. Local folders sync at an idle prompt; running CLI apps keep control of their session. |
-| **SSH that stays connected** | Follow remote Bash/Zsh directories through your terminal's authenticated SSH connection. Detach the browser without ending SSH. |
+| **SSH that stays connected** | Follow remote Bash/Zsh directories through your terminal's authenticated SSH connection. Browse local or remote favourites while your terminal stays visible. Saved SSH profiles survive reconnects. |
+| **Smooth file dragging** | Hover a tab or folder to open it during a drag. Move normally, or hold Command to copy with a green + and a clear item count. |
 | **Focused search** | Start in the current folder. Search filenames or text-file contents, combine words, and stop a scan whenever you want. Results stay in the file pane. |
 | **Useful previews** | Select and copy text, inspect photos, and play videos with sound muted by default. Resize the preview and remember it with the folder view. |
 | **Your own folder views** | List or Icons. Choose, resize and reorder list columns. Save per-folder layouts or apply one to a folder tree. |

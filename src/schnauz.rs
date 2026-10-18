@@ -444,6 +444,7 @@ impl Schnauz {
 
     pub(super) fn apply_project_switch(&mut self, old: Option<u64>, available: &Layout, cx: &mut Context<Self>) {
         let id = self.projects.active;
+        self.clear_file_drag(cx);
         self.close_palette(cx);
         self.space_map = None;
         self.activate_project_sidebar(cx);
@@ -901,7 +902,8 @@ impl Schnauz {
         } else {
             format!("{} selected · {count_label}", tab.selection.len())
         };
-        let status = self.notice.as_deref().map(|text| (text, false))
+        let drag_status = self.file_drag.label();
+        let status = drag_status.as_deref().map(|text| (text, false)).or_else(|| self.notice.as_deref().map(|text| (text, false)))
             .or_else(|| self.remote_error.as_deref().map(|text| (text, true)))
             .or_else(|| self.file_search.stopped.then_some(("Search stopped · Results may be incomplete", false)));
         let left = div().flex_1().min_w_0().flex().items_center().gap_3().overflow_hidden()

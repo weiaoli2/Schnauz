@@ -90,6 +90,7 @@ mod schnauz;
 mod clipboard_path;
 mod schnauz_terminal;
 mod ssh_sync;
+mod ssh_connection;
 mod remote_listing;
 use remote_listing::parse as parse_sftp_ls;
 mod file_search;
@@ -107,6 +108,8 @@ use toolbar_icons::{ui_icon, Icon};
 mod previews;
 mod preview_panel;
 mod window_chrome;
+mod native_file_drag;
+mod spring_drag;
 mod mascot;
 mod settings;
 mod about;
@@ -961,7 +964,10 @@ impl SortKey {
 
 /// One open tab: an independent directory view with its own history, scroll,
 /// find, and path-edit state.
+static NEXT_TAB_ID: AtomicU64 = AtomicU64::new(1);
+
 struct Tab {
+    id: u64,
     current_dir: PathBuf,
     terminal: Option<schnauz_terminal::Session>,
     terminal_open: bool,
@@ -1165,6 +1171,7 @@ impl Tab {
         let listing = if remote.is_none() { read_entries_fast(&dir) } else { Ok(Vec::new()) };
         let (entries, listing_error) = directory_listing::unpack(listing);
         let mut tab = Tab {
+            id: NEXT_TAB_ID.fetch_add(1, Ordering::Relaxed),
             current_dir: dir.clone(),
             terminal: None,
             terminal_open: false,
@@ -1358,6 +1365,7 @@ struct Schnauz {
     suppress_entry_click: bool,
     favourites_drop_hover: bool,
     favourite_drag: Option<project_sidebar::RemoteDrag>,
+    file_drag: spring_drag::State,
     sidebar_bounds: Rc<RefCell<Option<Bounds<gpui::Pixels>>>>,
     common_bounds: Rc<RefCell<Option<Bounds<gpui::Pixels>>>>,
     common_drop_hover: bool,
@@ -1652,6 +1660,7 @@ impl Schnauz {
             suppress_entry_click: false,
             favourites_drop_hover: false,
             favourite_drag: None,
+            file_drag: spring_drag::State::default(),
             sidebar_bounds: Rc::new(RefCell::new(None)),
             common_bounds: Rc::new(RefCell::new(None)),
             common_drop_hover: false,
@@ -2968,9 +2977,12 @@ impl Schnauz {
             if !locals.is_empty() {
                 self.upload_to_remote(pane, dest_dir, locals, cx);
             }
+        } else if native_file_drag::operation() == native_file_drag::Operation::Copy {
+            self.copy_items(dest_dir, srcs, cx);
         } else {
             self.move_items(dest_dir, srcs, cx);
         }
+        self.clear_file_drag(cx);
     }
 
     // ----- inline rename -----
@@ -4384,6 +4396,7 @@ impl Schnauz {
         };
         let server = SftpServer {
             control_path: None,
+            ssh_alias: String::new(),
             name,
             host,
             user: form.user.trim().to_string(),
@@ -8637,9 +8650,12 @@ impl Schnauz {
             };
             let drag_label = label.clone();
             let drag = TabDrag { pane, tab: i };
+            let tab_id = tab.id;
             chips.push(
                 div()
                     .id(("tab", pane * 4096 + i))
+                    .relative()
+                    .when(pane == 0 && i == 1, |s| s.children(ui_checks::probe("drag-target-tab")))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -8663,6 +8679,10 @@ impl Schnauz {
                             label: drag_label.clone(),
                         })
                     })
+                    // File hover highlights ONLY the tab, then spring-opens it.
+                    .drag_over::<ExternalPaths>(|s, _, _, _| s.bg(rgb(0x3478c5)).text_color(rgb(0xffffff)).border_color(rgb(0x3478c5)))
+                    .on_drag_move::<ExternalPaths>(cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| { this.spring_tab(pane, tab_id, ev, cx); }))
+                    .on_drop(cx.listener(move |this, drag: &ExternalPaths, _, cx| { this.drop_on_tab(pane, tab_id, drag.paths().to_vec(), cx); }))
                     // Drop another tab here → insert at this position.
                     .drag_over::<TabDrag>(|s, _, _, _| s.bg(Theme::alpha(theme().accent, 0x33)))
                     .on_drop(cx.listener(move |this, from: &TabDrag, _, cx| {
@@ -8767,6 +8787,7 @@ impl Schnauz {
         let browser_sizes = self.browser_sizes.clone();
         let pane_sizes = self.pane_sizes.clone();
         let browser = div()
+            .on_drag_move::<ExternalPaths>(cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| { this.drag_over_browser(pane, ev, cx); }))
             .relative()
             .flex()
             .flex_col()
@@ -8910,6 +8931,7 @@ impl Schnauz {
                     .relative()
                     .flex_1()
                     .min_h_0()
+                    .children(ui_checks::probe("drag-file-body"))
                     // Drop actions remain available without recolouring the file pane.
                     .on_drop(cx.listener(move |this, drag: &ExternalPaths, _, cx| {
                         this.drop_files(pane, pane_dir.clone(), drag.paths().to_vec(), cx);
@@ -9053,9 +9075,10 @@ impl Schnauz {
                                             this.open_context_menu(pane, x, y, None, cx);
                                             cx.stop_propagation();
                                         }),
-                                        cx.listener(move |this, drag: &ExternalPaths, _, cx| {
+                                        cx.listener({ let parent = parent.clone(); move |this, drag: &ExternalPaths, _, cx| {
                                             this.drop_files(pane, parent.clone(), drag.paths().to_vec(), cx);
-                                        }),
+                                        }}),
+                                        cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| { this.spring_folder(pane, parent.clone(), ev, cx); }),
                                         // ".." isn't draggable — no drag candidate. Let the
                                         // press bubble so the row's click (navigate up)
                                         // registers; swallowing it here dead-ends clicks
@@ -9086,6 +9109,7 @@ impl Schnauz {
                             let cloud = this.cloud_state(&target, is_dir);
                             let ctx_target = target.clone();
                             let drop_target = target.clone();
+                            let spring_target = target.clone();
                             let hover_target = target.clone();
                             let is_selected = tab.selection.contains(&target);
                             let ctx_active = this.is_ctx_target(&target);
@@ -9132,9 +9156,9 @@ impl Schnauz {
                                         cx.stop_propagation();
                                     }),
                                     cx.listener(move |this, drag: &ExternalPaths, _, cx| {
-                                        // Drop onto a folder → move (or upload) the file(s) into it.
                                         this.drop_files(pane, drop_target.clone(), drag.paths().to_vec(), cx);
                                     }),
+                                    cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| { this.spring_folder(pane, spring_target.clone(), ev, cx); }),
                                     cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                                         // Arm a file drag, but DON'T stop propagation:
                                         // the row's own click handler is an ANCESTOR of
@@ -9365,6 +9389,7 @@ impl Schnauz {
 
 impl Render for Schnauz {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        native_file_drag::install(window);
         if std::mem::take(&mut self.dismiss_space_map) { self.close_space_map(cx); }
         self.sync_tools_window(window, cx);
         if self.todoist.open && window.is_window_active() {
@@ -9479,6 +9504,7 @@ impl Render for Schnauz {
             // Track column drags anywhere in the window so the cursor can leave
             // the thin handle without dropping the resize.
             .on_drag_move::<ExternalPaths>(cx.listener(|this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| {
+                this.track_file_drag(ev, cx);
                 let hovered = !prefs().sidebar_collapsed && this.sidebar_bounds.borrow().is_some_and(|bounds| {
                     project_sidebar::drop_hover(bounds, ev.event.position, this.favourites_drop_hover)
                 });
@@ -10716,6 +10742,7 @@ fn file_row(
     on_name_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_right: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     on_drop_file: impl Fn(&ExternalPaths, &mut Window, &mut App) + 'static,
+    on_drag_move: impl Fn(&gpui::DragMoveEvent<ExternalPaths>, &mut Window, &mut App) + 'static,
     // Left-press handler: records a drag candidate + stops marquee propagation.
     on_press: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     // Hover tracking, so Enter can rename the row under the mouse.
@@ -10730,7 +10757,8 @@ fn file_row(
     let name_cell = div()
         .flex_none().w(px(widths.width(Column::Name))).flex().items_center().gap_2().pr_2()
         .on_mouse_down(MouseButton::Left, on_press)
-        .when(accept_drop, |c| c.rounded_sm().on_drop(on_drop_file))
+        .when(accept_drop && entry.name != "..", |d| d.relative().children(ui_checks::probe("drag-folder")))
+        .when(accept_drop, |c| c.rounded_sm().on_drop(on_drop_file).on_drag_move::<ExternalPaths>(on_drag_move))
         .child(div().flex_none().w(px(ICON_W)).flex().justify_center().child(icon))
         .child(name_el).into_any_element();
     let mut name_cell = Some(name_cell);
@@ -10769,6 +10797,7 @@ fn icon_cell(
     let name_t = target.clone();
     let press_t = target.clone();
     let drop_t = target.clone();
+    let spring_t = target.clone();
     let ctx_t = target.clone();
     let click_t = target.clone();
     let hover_t = target.clone();
@@ -10851,6 +10880,7 @@ fn icon_cell(
         );
     if is_folder {
         cell = cell
+            .on_drag_move::<ExternalPaths>(cx.listener(move |this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| { this.spring_folder(pane, spring_t.clone(), ev, cx); }))
             .on_drop(cx.listener(move |this, d: &ExternalPaths, _, cx| {
                 this.drop_files(pane, drop_t.clone(), d.paths().to_vec(), cx);
             }));
@@ -11205,6 +11235,9 @@ struct SftpServer {
     /// Live terminal transport; never persisted as a saved project connection.
     #[serde(skip)]
     control_path: Option<PathBuf>,
+    /// Original OpenSSH Host alias; retain its key, jump host and other settings.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    ssh_alias: String,
     /// Display label in the sidebar.
     name: String,
     /// Hostname or a `~/.ssh/config` alias.
@@ -11231,6 +11264,16 @@ impl SftpServer {
         } else {
             format!("{}@{}", self.user.trim(), self.host.trim())
         }
+    }
+
+    /// A reconnect uses the original SSH profile while identity/deduplication
+    /// continue to use the resolved host, user and port.
+    fn connection_target(&self) -> String {
+        let host = if self.control_path.is_none() && !self.ssh_alias.is_empty() {
+            &self.ssh_alias
+        } else { &self.host };
+        if self.user.trim().is_empty() { host.trim().to_string() }
+        else { format!("{}@{}", self.user.trim(), host.trim()) }
     }
 
     /// A short display of the connection ("user@host:port").
@@ -11448,7 +11491,7 @@ fn password_master_alive(s: &SftpServer) -> bool {
 /// establishing it via `expect` (typing the Keychain password) if needed.
 /// No-op for key/agent servers.
 fn ensure_master(server: &SftpServer) -> Result<(), String> {
-    if !server.use_password {
+    if server.control_path.is_some() || !server.use_password {
         return Ok(());
     }
     if password_master_alive(server) {
@@ -11498,6 +11541,7 @@ fn parse_sftp_url(s: &str) -> Option<SftpServer> {
     }
     Some(SftpServer {
         control_path: None,
+        ssh_alias: String::new(),
         name: host.clone(),
         host,
         user,
@@ -11602,6 +11646,8 @@ fn shell_quote(s: &str) -> String {
 /// Run a shell command over ssh on `server` (reusing the multiplexed
 /// connection). Used for operations sftp lacks (recursive delete, touch).
 fn ssh_exec(server: &SftpServer, remote_cmd: &str, use_system: bool) -> Result<String, String> {
+    let resolved = ssh_connection::for_reconnect(server, use_system);
+    let server = &resolved;
     ensure_master(server)?;
     let mut cmd = Command::new("ssh");
     for opt in ssh_options(server, use_system) {
@@ -11610,7 +11656,7 @@ fn ssh_exec(server: &SftpServer, remote_cmd: &str, use_system: bool) -> Result<S
     if server.port != 0 {
         cmd.arg("-p").arg(server.port.to_string());
     }
-    cmd.arg(server.target()).arg(remote_cmd);
+    cmd.arg(server.connection_target()).arg(remote_cmd);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let out = cmd.output().map_err(|e| format!("couldn't launch ssh: {e}"))?;
     if out.status.success() {
@@ -11630,7 +11676,9 @@ fn ssh_exec(server: &SftpServer, remote_cmd: &str, use_system: bool) -> Result<S
 /// `use_system` selects auth mode (delegate to ~/.ssh vs. explicit key).
 fn sftp_batch(server: &SftpServer, script: &str, use_system: bool) -> Result<String, String> {
     use std::io::Write;
-    // Password servers: make sure the authenticated master is up first.
+    // Resolve saved terminal favourites off the UI thread, before opening SFTP.
+    let resolved = ssh_connection::for_reconnect(server, use_system);
+    let server = &resolved;
     ensure_master(server)?;
     let mut cmd = Command::new("sftp");
     cmd.arg("-b").arg("-"); // read commands from stdin
@@ -11640,7 +11688,7 @@ fn sftp_batch(server: &SftpServer, script: &str, use_system: bool) -> Result<Str
     if server.port != 0 {
         cmd.arg("-P").arg(server.port.to_string());
     }
-    cmd.arg(server.target());
+    cmd.arg(server.connection_target());
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("couldn't launch sftp: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
@@ -11653,12 +11701,7 @@ fn sftp_batch(server: &SftpServer, script: &str, use_system: bool) -> Result<Str
     } else {
         let err = String::from_utf8_lossy(&out.stderr);
         // Surface the most useful line (auth/host/connection failure).
-        let msg = err
-            .lines()
-            .rev()
-            .find(|l| !l.trim().is_empty())
-            .unwrap_or("connection failed")
-            .to_string();
+        let msg = ssh_connection::error_message(&err);
         Err(msg)
     }
 }
@@ -11754,6 +11797,7 @@ fn load_sftp_servers() -> Vec<SftpServer> {
                 }
                 out.push(SftpServer {
                     control_path: None,
+                    ssh_alias: String::new(),
                     name: f[0].to_string(),
                     host: f.get(1).unwrap_or(&"").to_string(),
                     user: f.get(2).unwrap_or(&"").to_string(),
@@ -11771,7 +11815,7 @@ fn load_sftp_servers() -> Vec<SftpServer> {
 // ----- native OS file drag-out (drag files into Finder / other apps) ---------
 
 define_class!(
-    // A minimal NSDraggingSource: it only needs to say the drag is a "copy".
+    // Native file source; Cmd-copy is resolved by Schnauz destinations.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "SchnauzDragSource"]
@@ -11784,11 +11828,17 @@ define_class!(
         fn source_operation_mask(
             &self,
             _session: &NSDraggingSession,
-            _context: NSDraggingContext,
+            context: NSDraggingContext,
         ) -> NSDragOperation {
-            // Copy only: dragging out to another app never moves/deletes the
-            // original file.
-            NSDragOperation::Copy
+            if context == NSDraggingContext::WithinApplication {
+                NSDragOperation::Copy | NSDragOperation::Move
+            } else { NSDragOperation::Copy }
+        }
+        #[unsafe(method(ignoreModifierKeysForDraggingSession:))]
+        fn ignore_modifiers(&self, _session: &NSDraggingSession) -> bool { true }
+        #[unsafe(method(draggingSession:endedAtPoint:operation:))]
+        fn ended(&self, _session: &NSDraggingSession, _point: objc2_foundation::NSPoint, _operation: NSDragOperation) {
+            native_file_drag::ended();
         }
     }
 );
@@ -12901,6 +12951,7 @@ fn main() {
         let password = args.get(4).cloned();
         let srv = SftpServer {
             control_path: None,
+            ssh_alias: String::new(),
             name: host.clone(),
             host,
             user: user.to_string(),
@@ -12943,6 +12994,7 @@ fn main() {
         let password = args.get(4).cloned();
         let srv = SftpServer {
             control_path: None,
+            ssh_alias: String::new(),
             name: host.clone(),
             host,
             user: user.to_string(),

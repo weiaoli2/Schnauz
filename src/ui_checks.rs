@@ -27,6 +27,10 @@ pub(super) fn probe(name: &'static str) -> Option<AnyElement> {
 }
 
 #[cfg(feature = "ui-checks")]
+#[path = "drag_checks.rs"]
+mod drag_checks;
+
+#[cfg(feature = "ui-checks")]
 struct Fixture {
     browser: gpui::Entity<Schnauz>,
 }
@@ -172,8 +176,7 @@ pub(super) fn run() {
         }
         println!("PASS real Todoist empty/populated/error layouts, horizontal task/status text, always-visible Add task, left-only tools divider and fixed footer; no windows shown or accounts accessed");
         if !visible {
-            let _ = fs::remove_dir_all(&cleanup);
-            std::process::exit(0);
+            drag_checks::run(window, cleanup, cx);
         }
     });
 }
