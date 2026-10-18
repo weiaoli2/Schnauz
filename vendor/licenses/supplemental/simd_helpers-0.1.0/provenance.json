@@ -1,0 +1,23 @@
+{
+  "packages": [
+    {
+      "name": "simd_helpers",
+      "version": "0.1.0",
+      "license": "MIT",
+      "repository": "https://github.com/lu-zero/simd_helpers"
+    }
+  ],
+  "upstream_commit": "ca1a2f84aa386d758e98f8a609d990263932fb85",
+  "files": [
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-simd_helpers.txt",
+      "url": "https://crates.io/crates/simd_helpers/0.1.0",
+      "sha256": "c100b846ed1fb06af21b313e4e5f0c37f33a15ad1ae670cf0871d005f4edca41"
+    }
+  ]
+}

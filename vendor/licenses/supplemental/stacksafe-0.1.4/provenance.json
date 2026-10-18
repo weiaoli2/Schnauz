@@ -1,0 +1,39 @@
+{
+  "packages": [
+    {
+      "name": "stacksafe",
+      "version": "0.1.4",
+      "license": "Apache-2.0",
+      "repository": "https://github.com/fast/stacksafe"
+    },
+    {
+      "name": "stacksafe-macro",
+      "version": "0.1.4",
+      "license": "Apache-2.0",
+      "repository": "https://github.com/fast/stacksafe"
+    }
+  ],
+  "upstream_commit": "a5c029b7d3a5fe6771ecd79266b6e21313cfa174",
+  "files": [
+    {
+      "file": "LICENSE",
+      "url": "https://raw.githubusercontent.com/fast/stacksafe/a5c029b7d3a5fe6771ecd79266b6e21313cfa174/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "file": "Declared-Apache-2.0.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/Apache-2.0.txt",
+      "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff"
+    },
+    {
+      "file": "Cargo-attribution-stacksafe.txt",
+      "url": "https://crates.io/crates/stacksafe/0.1.4",
+      "sha256": "7c0a1483259d865f62910b47ca42d840cb21a622885e254ea639463cbbcd05f5"
+    },
+    {
+      "file": "Cargo-attribution-stacksafe-macro.txt",
+      "url": "https://crates.io/crates/stacksafe-macro/0.1.4",
+      "sha256": "79c311b87a21d9e6a10504e2b44d7f1774125b339a024d9b187d8ea5629b85d1"
+    }
+  ]
+}

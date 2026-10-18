@@ -1,0 +1,212 @@
+Package attribution and SPDX license declaration, as supplied in Cargo.toml
+Full declared terms are included separately; SPDX template fields are not
+a replacement for the authors and any copyright notices supplied upstream.
+
+[package]
+name = "blade-graphics"
+version = "0.7.1"
+edition = "2021"
+description = "Graphics abstraction for Blade"
+keywords = ["graphics"]
+license = "MIT"
+repository = "https://github.com/kvark/blade"
+
+[lib]
+
+[dependencies]
+bitflags = { workspace = true }
+bytemuck = { workspace = true }
+codespan-reporting = "0.12"
+hidden-trait = "0.1"
+log = { workspace = true }
+mint = { workspace = true }
+naga = { workspace = true }
+raw-window-handle = "0.6"
+once_cell = "1"
+
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSArray",
+] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+    "CFCGTypes",
+] }
+objc2-metal = { version = "0.3", default-features = false, features = [
+    "std",
+    "MTLTypes",
+    "MTLPixelFormat",
+    "MTLResource",
+    "MTLBuffer",
+    "MTLTexture",
+    "MTLSampler",
+    "MTLDrawable",
+    "MTLAccelerationStructure",
+    "MTLAccelerationStructureTypes",
+    "MTLCounters",
+    "MTLLibrary",
+    "MTLStageInputOutputDescriptor",
+    "MTLComputePipeline",
+    "MTLVertexDescriptor",
+    "MTLDepthStencil",
+    "MTLComputePipeline",
+    "MTLRenderPipeline",
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLAccelerationStructureCommandEncoder",
+    "MTLBlitCommandEncoder",
+    "MTLComputeCommandEncoder",
+    "MTLRenderCommandEncoder",
+    "MTLBlitPass",
+    "MTLComputePass",
+    "MTLRenderPass",
+    "MTLCommandQueue",
+    "MTLDevice",
+    "MTLCaptureManager",
+    "MTLCaptureScope",
+    "block2",
+] }
+objc2-quartz-core = { version = "0.3", default-features = false, features = [
+    "std",
+    "objc2-metal",
+    "objc2-core-foundation",
+    "CALayer",
+    "CAMetalLayer",
+] }
+naga = { workspace = true, features = ["msl-out"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "objc2-quartz-core",
+    "objc2-core-foundation",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-ui-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "objc2-quartz-core",
+    "objc2-core-foundation",
+    "UIResponder",
+    "UIView",
+    "UIWindow",
+    "UIScene",
+    "UIWindowScene",
+    "UIScreen",
+] }
+
+[target.'cfg(any(vulkan, windows, target_os = "linux", target_os = "android", target_os = "freebsd"))'.dependencies]
+ash = "0.38"
+ash-window = "0.13"
+gpu-alloc = "0.6"
+gpu-alloc-ash = "0.7"
+naga = { workspace = true, features = ["spv-out"] }
+slab = { workspace = true }
+
+[target.'cfg(any(gles, target_arch = "wasm32"))'.dependencies]
+glow = "0.16"
+naga = { workspace = true, features = ["glsl-out"] }
+
+[target.'cfg(all(gles, not(target_arch = "wasm32")))'.dependencies]
+egl = { package = "khronos-egl", version = "6.0", features = ["dynamic"] }
+libloading = { version = "0.8" }
+
+[target.'cfg(all(target_arch = "wasm32"))'.dependencies]
+wasm-bindgen = "0.2.83"
+web-sys = { workspace = true, features = [
+    "HtmlCanvasElement",
+    "WebGl2RenderingContext",
+] }
+js-sys = "0.3.60"
+
+[package.metadata.cargo_check_external_types]
+allowed_external_types = [
+    "bitflags::*",
+    "mint::*",
+    "naga::*",
+    "raw_window_handle::*",
+]
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(gles)'] }
+
+
+Upstream README supplied with the crate:
+
+# Blade Graphics
+
+[![Docs](https://docs.rs/blade-graphics/badge.svg)](https://docs.rs/blade-graphics)
+[![Crates.io](https://img.shields.io/crates/v/blade-graphics.svg?maxAge=2592000)](https://crates.io/crates/blade-graphics)
+
+Blade-graphics is a lean and mean [GPU abstraction](https://youtu.be/63dnzjw4azI?t=623) aimed at ergonomics and fun. See [motivation](etc/motivation.md), [FAQ](etc/FAQ.md), and [performance](etc/performance.md) for details.
+
+## Examples
+
+![ray-query example](etc/ray-query.gif)
+![particles example](etc/particles.png)
+
+## Platforms
+
+The backend is selected automatically based on the host platform:
+- *Vulkan* on desktop Linux, Windows, and Android
+- *Metal* on desktop macOS, and iOS
+- *OpenGL ES3* on the Web
+
+| Feature | Vulkan | Metal | GLES |
+| ------- | ------ | ----- | ---- |
+| compute | :white_check_mark: | :white_check_mark: | |
+| ray tracing | :white_check_mark: | | |
+
+### Vulkan
+
+Required instance extensions:
+- VK_EXT_debug_utils
+- VK_KHR_get_physical_device_properties2
+- VK_KHR_get_surface_capabilities2
+
+Required device extensions:
+- VK_EXT_inline_uniform_block
+- VK_KHR_descriptor_update_template
+- VK_KHR_timeline_semaphore
+- VK_KHR_dynamic_rendering
+
+Conceptually, Blade requires the baseline Vulkan hardware with a relatively fresh driver.
+All of these required extensions are supported in software by the driver on any underlying architecture.
+
+### OpenGL ES
+
+GLES is also supported at a basic level. It's enabled for `wasm32-unknown-unknown` target, and can also be force-enabled on native:
+```bash
+RUSTFLAGS="--cfg gles" CARGO_TARGET_DIR=./target-gl cargo run --example bunnymark
+```
+
+This path can be activated on all platforms via Angle library.
+For example, on macOS it's sufficient to place `libEGL.dylib` and `libGLESv2.dylib` in the working directory.
+
+On Windows, the quotes aren't expected:
+```bash
+set RUSTFLAGS=--cfg gles
+```
+
+### WebGL2
+
+Following command will start a web server offering the `bunnymark` example:
+```bash
+cargo run-wasm --example bunnymark
+```
+
+### Vulkan Portability
+
+First, ensure to load the environment from the Vulkan SDK:
+```bash
+cd /opt/VulkanSDK && source setup-env.sh
+```
+
+Vulkan backend can be forced on using "vulkan" config flag. Example invocation that produces a vulkan (portability) build into another target folder:
+```bash
+RUSTFLAGS="--cfg vulkan" CARGO_TARGET_DIR=./target-vk cargo test
+```

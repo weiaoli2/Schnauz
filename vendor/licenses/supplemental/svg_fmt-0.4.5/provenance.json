@@ -1,0 +1,28 @@
+{
+  "packages": [
+    {
+      "name": "svg_fmt",
+      "version": "0.4.5",
+      "license": "MIT/Apache-2.0",
+      "repository": "https://github.com/nical/rust_debug"
+    }
+  ],
+  "upstream_commit": "93f414cd572b5c2781df93dbdc068ed13443d05a",
+  "files": [
+    {
+      "file": "LICENSE",
+      "url": "https://raw.githubusercontent.com/nical/rust_debug/93f414cd572b5c2781df93dbdc068ed13443d05a/LICENSE",
+      "sha256": "7e98bed7f100747aaae7d82ab94fbe6b76fd6b84b09a3aaa413bff8196d0fbb1"
+    },
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-svg_fmt.txt",
+      "url": "https://crates.io/crates/svg_fmt/0.4.5",
+      "sha256": "3df04dcec32c2560441b74cbf230c7ab552fc723ed197fd03101337acdbc1659"
+    }
+  ]
+}

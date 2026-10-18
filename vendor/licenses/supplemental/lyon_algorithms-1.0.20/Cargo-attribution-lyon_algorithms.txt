@@ -1,0 +1,58 @@
+Package attribution and SPDX license declaration, as supplied in Cargo.toml
+Full declared terms are included separately; SPDX template fields are not
+a replacement for the authors and any copyright notices supplied upstream.
+
+[package]
+name = "lyon_algorithms"
+version = "1.0.20"
+description = "2D Path manipulation/transformation algorithms."
+authors = ["Nicolas Silva <nical@fastmail.com>"]
+repository = "https://github.com/nical/lyon"
+documentation = "https://docs.rs/lyon_algorithms/"
+keywords = ["2d", "graphics", "svg"]
+license = "MIT OR Apache-2.0"
+workspace = "../.."
+edition = "2018"
+exclude = [".backup*"]
+
+[lib]
+name = "lyon_algorithms"
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = ["lyon_path/std", "num-traits/std"]
+serialization = ["serde", "lyon_path/serialization"]
+
+[dependencies]
+lyon_path = { version = "1.0.19", path = "../path", default-features = false }
+num-traits = { version = "0.2.15", default-features = false, features = ["libm"] }
+serde = { version = "1.0", optional = true, features = ["serde_derive"], default-features = false }
+
+
+Upstream README supplied with the crate:
+
+# lyon::algorithms
+
+
+A collection of various vector path manipulation algorithms.
+
+<p align="center">
+  <a href="https://crates.io/crates/lyon_algorithms">
+      <img src="https://img.shields.io/crates/v/lyon_algorithms.svg" alt="crates.io">
+  </a>
+  <a href="https://docs.rs/lyon_algorithms">
+      <img src="https://docs.rs/lyon_algorithms/badge.svg" alt="documentation">
+  </a>
+</p>
+
+ - Path bounding box
+ - Path area
+ - Path length
+ - Winding numbers of a path at any position
+ - Hatching a Path
+ - Path hit testing
+ - Path ray casting
+ - walking along a path
+
+`lyon_algorithms` can be used as a standalone crate or as part of [lyon](https://docs.rs/lyon/) via the `lyon::algorithms` module.

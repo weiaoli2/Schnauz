@@ -1,0 +1,30 @@
+Package attribution and SPDX license declaration, as supplied in Cargo.toml
+Full declared terms are included separately; SPDX template fields are not
+a replacement for the authors and any copyright notices supplied upstream.
+
+[package]
+name = "leaky-cow"
+version = "0.1.1"
+authors = ["Michael Howell <michael@notriddle.com>"]
+documentation = "https://www.notriddle.com/rustdoc/leaky_cow/"
+readme = "README.md"
+repository = "https://github.com/notriddle/rust-leaky-cow"
+description = "Leak the contents of a Clone-On-Write pointer"
+license = "MIT / Apache-2.0"
+
+[dependencies]
+leak = "0.1.1"
+
+
+
+Upstream README supplied with the crate:
+
+Leaky cows
+==========
+
+[![Build Status](https://travis-ci.org/notriddle/rust-leaky-cow.svg)](https://travis-ci.org/notriddle/rust-leaky-cow)
+
+[Documentation](https://www.notriddle.com/rustdoc/leaky-cow/)
+
+Adds a `leak()` method to Rust's Clone-On-Write pointer.
+

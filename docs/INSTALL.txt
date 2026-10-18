@@ -1,0 +1,26 @@
+Schnauz 0.5.0-rc.1 — release candidate
+
+Drag Schnauz.app to Applications, then open it from there.
+Requires macOS 14 Sonoma or later. Download the correct Apple Silicon or Intel build.
+
+This preview is signed with Oliver's Apple Development certificate, but is not
+Apple-notarized. macOS may block the first launch. After trying to open the app,
+use System Settings > Privacy & Security > Open Anyway if you trust the download.
+Do not disable Gatekeeper. Apple Developer ID signing and notarization are planned.
+
+The first-launch file-access guide explains optional Full Disk Access for protected
+folders. macOS controls these permissions. If upgrading from an earlier ad-hoc
+build, you may need to re-add the current app in Full Disk Access once.
+
+Source, release notes, checksums and feedback:
+https://github.com/weiaoli2/Schnauz
+https://github.com/weiaoli2/Schnauz/releases
+
+Original Shuffle MIT license and third-party notices are included inside the app
+under Contents/Resources/Licenses. Exact unmodified MPL-2.0 component sources are
+available as Schnauz-0.5.0-rc.1-MPL-sources.zip on the same release page, and from
+the repository's vendor/mpl-sources directory.
+
+Developer, design and product direction: Oliver Weber
+Implementation assistance: Codex
+Original Shuffle code: Jaime Guzman (MIT)

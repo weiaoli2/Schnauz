@@ -13,7 +13,7 @@ implementation. Preserve upstream attribution and bundled third-party notices.
 - Local branch: `schnauz`. Check Git for current changes before editing.
 - Project navigation: `/Users/oliw/CodexProjects/INDEX.md`, entry **Schnauz**.
 - Read [AGENTS.md](AGENTS.md) for the product decisions and working constraints,
-  and [README.md](README.md) for the feature guide and source map.
+  and [README.md](README.md) for the product overview and [docs/FEATURES.md](docs/FEATURES.md) for the detailed feature guide and source map.
 
 Start Codex CLI directly in the existing repository:
 
@@ -87,10 +87,12 @@ Projects and folder views are stored centrally, including `projects.json` and
 never replace them with test fixtures. For necessary isolated UI verification,
 use fresh `SCHNAUZ_CONFIG_DIR` and `SCHNAUZ_START_DIR` paths without changing HOME.
 
-The next release intention is a **0.5 candidate**, publishing to Oliver's Gitea
-at **192.168.1.8**, then installing the release app in Applications after his
-manual review. This has not been published or installed as that release. Verify
-the server account/repository and current review status before proceeding.
+On 2026-10-18 Oliver explicitly requested public source and public downloads on
+GitHub, superseding the earlier Gitea/private-repository idea. The release target
+is **weiaoli2/Schnauz**, version **0.5.0-rc.1**, for both Apple Silicon and Intel.
+Release packaging uses separate output paths and must preserve the running app.
+See docs/RELEASING.md for signing, source notices and publication checks.
+Apple Development signing is available; Developer ID/notarization is not yet set up.
 
 ## Where changes belong
 

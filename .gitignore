@@ -18,3 +18,19 @@
 .claude/
 skills-lock.json
 release-notes-*.md
+
+# Architecture-specific release staging
+/dist/
+
+# Personal account settings and credentials never belong in source control
+.env
+.env.*
+*.p12
+*.pfx
+*.key
+/id_rsa
+/id_ed25519
+/todoist.json
+/nextcloud.json
+/projects.json
+/prefs.txt

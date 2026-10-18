@@ -1,0 +1,33 @@
+{
+  "packages": [
+    {
+      "name": "dtor-proc-macro",
+      "version": "0.0.5",
+      "license": "Apache-2.0 OR MIT",
+      "repository": "https://github.com/mmastrac/rust-ctor"
+    }
+  ],
+  "upstream_commit": "b05136ac964049a1ee29de763d0b119c42258567",
+  "files": [
+    {
+      "file": "LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/mmastrac/linktime/b05136ac964049a1ee29de763d0b119c42258567/LICENSE-APACHE",
+      "sha256": "a8ad31b1c3f40dca5a84119351b8fa8ddc868edd77fad8a8ebf6d8f2d16fa4ae"
+    },
+    {
+      "file": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/mmastrac/linktime/b05136ac964049a1ee29de763d0b119c42258567/LICENSE-MIT",
+      "sha256": "bccaa8b6c09f94e81f06696e179dbe058464bbdfbc823b6d49cada1d71e84ac3"
+    },
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-dtor-proc-macro.txt",
+      "url": "https://crates.io/crates/dtor-proc-macro/0.0.5",
+      "sha256": "61a8df8655d7dcd6d9ef69a7c918f8fe449fba3cfebf29a289c9c3f182a9e9d2"
+    }
+  ]
+}

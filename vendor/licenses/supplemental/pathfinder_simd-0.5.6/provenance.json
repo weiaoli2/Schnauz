@@ -1,0 +1,33 @@
+{
+  "packages": [
+    {
+      "name": "pathfinder_simd",
+      "version": "0.5.6",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/servo/pathfinder"
+    }
+  ],
+  "upstream_commit": "6c3c0466f451c5bd2007087728cd168798cd64e8",
+  "files": [
+    {
+      "file": "LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/servo/pathfinder/6c3c0466f451c5bd2007087728cd168798cd64e8/LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    {
+      "file": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/servo/pathfinder/6c3c0466f451c5bd2007087728cd168798cd64e8/LICENSE-MIT",
+      "sha256": "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720"
+    },
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-pathfinder_simd.txt",
+      "url": "https://crates.io/crates/pathfinder_simd/0.5.6",
+      "sha256": "46fbab4b1422d044855c9f750bd7f428a347c8108db6c88f994e69d7f8438f5b"
+    }
+  ]
+}

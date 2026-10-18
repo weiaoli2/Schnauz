@@ -1,0 +1,23 @@
+{
+  "packages": [
+    {
+      "name": "seahash",
+      "version": "4.1.0",
+      "license": "MIT",
+      "repository": "https://gitlab.redox-os.org/redox-os/seahash"
+    }
+  ],
+  "upstream_commit": "94b632aeac099031c373599313d5b5f0acbbaec0",
+  "files": [
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-seahash.txt",
+      "url": "https://crates.io/crates/seahash/4.1.0",
+      "sha256": "29b97422bb57f91dffde5acf56b0e698585b8fea892977a715fc28a502855404"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+Package attribution and SPDX license declaration, as supplied in Cargo.toml
+Full declared terms are included separately; SPDX template fields are not
+a replacement for the authors and any copyright notices supplied upstream.
+
+[package]
+name = "pathfinder_geometry"
+version = "0.5.1"
+edition = "2018"
+authors = ["Patrick Walton <pcwalton@mimiga.net>"]
+description = "Basic SIMD-accelerated geometry/linear algebra"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/servo/pathfinder"
+homepage = "https://github.com/servo/pathfinder"
+
+[dependencies]
+
+[dependencies.log]
+version = "0.4"
+
+[dependencies.pathfinder_simd]
+path = "../simd"
+version = "0.5"

@@ -1,0 +1,33 @@
+{
+  "packages": [
+    {
+      "name": "dtor",
+      "version": "0.0.6",
+      "license": "Apache-2.0 OR MIT",
+      "repository": "https://github.com/mmastrac/rust-ctor"
+    }
+  ],
+  "upstream_commit": "e8c8b4a82de72311a5257db0502ced728081e745",
+  "files": [
+    {
+      "file": "LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/mmastrac/linktime/e8c8b4a82de72311a5257db0502ced728081e745/LICENSE-APACHE",
+      "sha256": "a8ad31b1c3f40dca5a84119351b8fa8ddc868edd77fad8a8ebf6d8f2d16fa4ae"
+    },
+    {
+      "file": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/mmastrac/linktime/e8c8b4a82de72311a5257db0502ced728081e745/LICENSE-MIT",
+      "sha256": "bccaa8b6c09f94e81f06696e179dbe058464bbdfbc823b6d49cada1d71e84ac3"
+    },
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-dtor.txt",
+      "url": "https://crates.io/crates/dtor/0.0.6",
+      "sha256": "ea7ce758e752de087cd600e3cb6141f13d5146ac7f52031e369698827ba4baf4"
+    }
+  ]
+}

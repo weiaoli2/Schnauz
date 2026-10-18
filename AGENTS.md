@@ -262,10 +262,14 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   saved projects while the browser temporarily follows SSH.
 - About is 520×600 pt, with content following naturally and no flexible blank
   spacer above Close. Preserve scrolling for small windows.
-- Next release workflow requested: Oliver checks the current SSH/About build
-  first. After that review, publish this project to his Gitea at 192.168.1.8,
-  prepare a 0.5 release candidate, and install the release app in Applications.
-  Do not publish before his review or restart live terminals to install a build.
+- On 2026-10-18 Oliver authorized publication to his GitHub account, and explicitly
+  chose PUBLIC source and PUBLIC downloads. Use weiaoli2/Schnauz and v0.5.0-rc.1
+  for the first Apple Silicon + Intel release candidate. This supersedes the
+  earlier Gitea plan and private-repository answer. Preserve upstream attribution,
+  complete dependency notices and publish source and both verified architectures.
+  Use separate release output paths; never restart live terminals or replace the
+  running app to publish. The current certificate is Apple Development; clearly
+  label the candidate as not notarized. Never upload signing keys or live settings.
 
 - Todoist was approved for implementation, including automatic project creation.
   A Tasks pane below the shared path/filter bars follows the selected Schnauz

@@ -1,0 +1,46 @@
+Package attribution and SPDX license declaration, as supplied in Cargo.toml
+Full declared terms are included separately; SPDX template fields are not
+a replacement for the authors and any copyright notices supplied upstream.
+
+[package]
+name = "lyon_path"
+version = "1.0.19"
+description = "Types and utilities to store, build and iterate over 2D paths."
+authors = ["Nicolas Silva <nical@fastmail.com>"]
+repository = "https://github.com/nical/lyon"
+documentation = "https://docs.rs/lyon_path/"
+license = "MIT OR Apache-2.0"
+workspace = "../.."
+edition = "2018"
+
+[lib]
+name = "lyon_path"
+
+[features]
+default = ["std"]
+std = ["lyon_geom/std", "num-traits/std"]
+serialization = ["serde/std", "lyon_geom/serialization"]
+
+[dependencies]
+lyon_geom = { version = "1.0.19", path = "../geom", default-features = false }
+num-traits = { version = "0.2.15", default-features = false, features = ["libm"] }
+serde = { version = "1.0", optional = true, features = ["serde_derive"], default-features = false }
+
+
+Upstream README supplied with the crate:
+
+# lyon::path
+
+Path data structures and tools for vector graphics.
+
+<p align="center">
+  <a href="https://crates.io/crates/lyon_path">
+      <img src="https://img.shields.io/crates/v/lyon_path.svg" alt="crates.io">
+  </a>
+  <a href="https://docs.rs/lyon_path">
+      <img src="https://docs.rs/lyon_path/badge.svg" alt="documentation">
+  </a>
+</p>
+
+`lyon_path` can be used as a standalone crate or as part of [lyon](https://docs.rs/lyon/) via the `lyon::path` module.
+

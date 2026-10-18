@@ -1,0 +1,33 @@
+{
+  "packages": [
+    {
+      "name": "lyon_algorithms",
+      "version": "1.0.20",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/nical/lyon"
+    }
+  ],
+  "upstream_commit": "66b9ea7f4ab935763970e828781d8fd5e9305542",
+  "files": [
+    {
+      "file": "LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/nical/lyon/66b9ea7f4ab935763970e828781d8fd5e9305542/LICENSE-APACHE",
+      "sha256": "216486f29671a4262efe32af6d84a75bef398127f8c5f369b5c8305983887a06"
+    },
+    {
+      "file": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/nical/lyon/66b9ea7f4ab935763970e828781d8fd5e9305542/LICENSE-MIT",
+      "sha256": "80f275e90d799911ed3830a7f242a2ef5a4ade2092fe0aa07bfb2d2cf2f2b95e"
+    },
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-lyon_algorithms.txt",
+      "url": "https://crates.io/crates/lyon_algorithms/1.0.20",
+      "sha256": "8f10ca670f6afc3fe9b266e1c4f6ec86109ceb79d5b7fb0a1e8fc74493cd3980"
+    }
+  ]
+}

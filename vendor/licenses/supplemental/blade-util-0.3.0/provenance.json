@@ -1,0 +1,28 @@
+{
+  "packages": [
+    {
+      "name": "blade-util",
+      "version": "0.3.0",
+      "license": "MIT",
+      "repository": "https://github.com/kvark/blade"
+    }
+  ],
+  "upstream_commit": "23e378613440513e1045f4e0f7c5979e67645d3b",
+  "files": [
+    {
+      "file": "LICENSE",
+      "url": "https://raw.githubusercontent.com/kvark/blade/23e378613440513e1045f4e0f7c5979e67645d3b/LICENSE",
+      "sha256": "8e9e23a134d00ae1760811ca60482b2e98b2db9154ffda66e58791796aa24ca1"
+    },
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-blade-util.txt",
+      "url": "https://crates.io/crates/blade-util/0.3.0",
+      "sha256": "c339ced448378db0938789738849ed4e686f6a56933a89c09c546d9bde439b42"
+    }
+  ]
+}

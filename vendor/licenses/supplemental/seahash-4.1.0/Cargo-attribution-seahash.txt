@@ -1,0 +1,41 @@
+Package attribution and SPDX license declaration, as supplied in Cargo.toml
+Full declared terms are included separately; SPDX template fields are not
+a replacement for the authors and any copyright notices supplied upstream.
+
+[package]
+name = "seahash"
+version = "4.1.0"
+authors = ["ticki <ticki@users.noreply.github.com>", "Tom Almeida <tom@tommoa.me>"]
+description = "A blazingly fast, portable hash function with proven statistical guarantees."
+repository = "https://gitlab.redox-os.org/redox-os/seahash"
+documentation = "https://docs.rs/seahash"
+license = "MIT"
+keywords = ["hash", "hashing", "checksum", "checksumming", "portable"]
+exclude = ["target", "Cargo.lock"]
+
+[dev-dependencies]
+quickcheck = "0.9.2"
+criterion = "0.3"
+
+[features]
+default = []
+use_std = []
+
+[[bench]]
+name = "bench"
+harness = false
+
+
+Upstream README supplied with the crate:
+
+<div align="center"><img alt="Logo" width="200" src="./logo.png" /></div>
+===================
+
+SeaHash: A bizarrely fast hash function.
+
+SeaHash is a hash function with performance better than (around 3-20% improvement) xxHash and
+MetroHash. Furthermore, SeaHash has mathematically provable statistical guarantees.
+
+In action:
+
+[![The hash function in action.](http://ticki.github.io/img/seahash_construction_diagram.svg)](http://ticki.github.io/img/seahash_construction_diagram.svg)

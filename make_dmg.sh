@@ -1,14 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-APP="Schnauz.app"
+APP="${SCHNAUZ_APP_OUTPUT:-$PWD/Schnauz.app}"
+OUTPUT="${SCHNAUZ_DMG_OUTPUT:-$PWD/Schnauz.dmg}"
 if [ ! -d "$APP" ]; then
-    echo 'Run ./build.sh first.'
+    echo 'Run ./build.sh first.' >&2
     exit 1
 fi
+codesign --verify --deep --strict "$APP"
 STAGING=$(mktemp -d "${TMPDIR:-/tmp}/schnauz-dmg.XXXXXX")
 trap 'rm -rf "$STAGING"' EXIT
-cp -R "$APP" "$STAGING/"
+ditto "$APP" "$STAGING/Schnauz.app"
 ln -s /Applications "$STAGING/Applications"
 cp LICENSE "$STAGING/Shuffle-LICENSE.txt"
-hdiutil create -volname "Schnauz" -srcfolder "$STAGING" -ov -format UDZO "Schnauz.dmg"
+cp CREDITS.txt "$STAGING/Credits.txt"
+cp docs/INSTALL.txt "$STAGING/Read Me First.txt"
+mkdir -p "$(dirname "$OUTPUT")"
+hdiutil create -volname "Schnauz" -srcfolder "$STAGING" -ov -format UDZO "$OUTPUT"
+hdiutil verify "$OUTPUT"

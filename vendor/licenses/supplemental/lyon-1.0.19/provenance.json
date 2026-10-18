@@ -1,0 +1,55 @@
+{
+  "packages": [
+    {
+      "name": "lyon",
+      "version": "1.0.19",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/nical/lyon"
+    },
+    {
+      "name": "lyon_geom",
+      "version": "1.0.19",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/nical/lyon"
+    },
+    {
+      "name": "lyon_path",
+      "version": "1.0.19",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/nical/lyon"
+    }
+  ],
+  "upstream_commit": "56219c95c658d4f39de7b190d98e57d5773ba241",
+  "files": [
+    {
+      "file": "LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/nical/lyon/56219c95c658d4f39de7b190d98e57d5773ba241/LICENSE-APACHE",
+      "sha256": "216486f29671a4262efe32af6d84a75bef398127f8c5f369b5c8305983887a06"
+    },
+    {
+      "file": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/nical/lyon/56219c95c658d4f39de7b190d98e57d5773ba241/LICENSE-MIT",
+      "sha256": "80f275e90d799911ed3830a7f242a2ef5a4ade2092fe0aa07bfb2d2cf2f2b95e"
+    },
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-lyon.txt",
+      "url": "https://crates.io/crates/lyon/1.0.19",
+      "sha256": "014e2be0680c645b38fcdb7f1f0430d36a97abe1ec845a20859705598195d5b1"
+    },
+    {
+      "file": "Cargo-attribution-lyon_geom.txt",
+      "url": "https://crates.io/crates/lyon_geom/1.0.19",
+      "sha256": "f2a307de449f6a7279ceb852b3a31b51a92bf4b9e35b5b81f38c13ec87ce30de"
+    },
+    {
+      "file": "Cargo-attribution-lyon_path.txt",
+      "url": "https://crates.io/crates/lyon_path/1.0.19",
+      "sha256": "f2742ca278e6f25407f3bb82990545231ddeb38c650ab61c5722e13c90a06f2d"
+    }
+  ]
+}

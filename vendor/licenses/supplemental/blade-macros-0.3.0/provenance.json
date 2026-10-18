@@ -1,0 +1,28 @@
+{
+  "packages": [
+    {
+      "name": "blade-macros",
+      "version": "0.3.0",
+      "license": "MIT",
+      "repository": "https://github.com/kvark/blade"
+    }
+  ],
+  "upstream_commit": "875b9c87e15e83ed48414c094f9a2b3fb189925d",
+  "files": [
+    {
+      "file": "LICENSE",
+      "url": "https://raw.githubusercontent.com/kvark/blade/875b9c87e15e83ed48414c094f9a2b3fb189925d/LICENSE",
+      "sha256": "8e9e23a134d00ae1760811ca60482b2e98b2db9154ffda66e58791796aa24ca1"
+    },
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-blade-macros.txt",
+      "url": "https://crates.io/crates/blade-macros/0.3.0",
+      "sha256": "446357f1a1af57ee165cc6bf15274c4fde088b7df71e1f8d5bd153feed0f9ca3"
+    }
+  ]
+}

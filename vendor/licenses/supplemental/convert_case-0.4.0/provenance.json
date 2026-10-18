@@ -1,0 +1,23 @@
+{
+  "packages": [
+    {
+      "name": "convert_case",
+      "version": "0.4.0",
+      "license": "MIT",
+      "repository": "https://github.com/rutrum/convert-case"
+    }
+  ],
+  "upstream_commit": "300d9eef9e8c970e15f324afbc3df8b6a4ebbf71",
+  "files": [
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-convert_case.txt",
+      "url": "https://crates.io/crates/convert_case/0.4.0",
+      "sha256": "078eff7ff3b5f0a1fbc8a373625c64da9b6a633dbc20036c8cfda0a8bd2d47a1"
+    }
+  ]
+}

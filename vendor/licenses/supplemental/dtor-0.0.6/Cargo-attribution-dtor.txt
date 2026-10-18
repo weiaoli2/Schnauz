@@ -1,0 +1,70 @@
+Package attribution and SPDX license declaration, as supplied in Cargo.toml
+Full declared terms are included separately; SPDX template fields are not
+a replacement for the authors and any copyright notices supplied upstream.
+
+[package]
+name = "dtor"
+version = "0.0.6"
+authors = ["Matt Mastracci <matthew@mastracci.com>"]
+edition = "2021"
+description = "__attribute__((destructor)) for Rust"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/mmastrac/rust-ctor"
+readme = "README.md"
+
+[features]
+default = ["proc_macro", "__no_warn_on_missing_unsafe"]
+proc_macro = ["dep:dtor-proc-macro"]
+used_linker = []
+__no_warn_on_missing_unsafe = []
+
+[dependencies]
+dtor-proc-macro = { version = "=0.0.5", optional = true }
+
+[dev-dependencies]
+libc-print = "0.1.20"
+
+[lib]
+name = "dtor"
+
+
+Upstream README supplied with the crate:
+
+# dtor
+
+![Build Status](https://github.com/mmastrac/rust-ctor/actions/workflows/rust.yml/badge.svg)
+
+`ctor` [![docs.rs](https://docs.rs/ctor/badge.svg)](https://docs.rs/ctor)
+[![crates.io](https://img.shields.io/crates/v/ctor.svg)](https://crates.io/crates/ctor)
+
+`dtor` [![docs.rs](https://docs.rs/dtor/badge.svg)](https://docs.rs/dtor)
+[![crates.io](https://img.shields.io/crates/v/dtor.svg)](https://crates.io/crates/dtor)
+
+Module teardown functions for Rust (like `__attribute__((destructor))` in C/C++)
+for Linux, OSX, FreeBSD, NetBSD, Illumos, OpenBSD, DragonFlyBSD, Android, iOS,
+WASM, and Windows.
+
+# Examples
+
+Print a message at shutdown time. Note that Rust may have shut down
+some stdlib services at this time.
+
+```rust,ignore
+    #[dtor]
+    unsafe fn shutdown() {
+        // Using println or eprintln here will panic as Rust has shut down
+        libc::printf("Shutting down!\n\0".as_ptr() as *const i8);
+    }
+```
+
+# Under the Hood
+
+The `#[dtor]` macro effectively creates a constructor that calls `libc::atexit`
+with the provided function, ie roughly equivalent to:
+
+```rust,ignore
+    #[ctor]
+    fn dtor_atexit() {
+        libc::atexit(dtor);
+    }
+```

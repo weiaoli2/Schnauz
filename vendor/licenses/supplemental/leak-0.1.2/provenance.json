@@ -1,0 +1,23 @@
+{
+  "packages": [
+    {
+      "name": "leak",
+      "version": "0.1.2",
+      "license": "Apache-2.0 OR MIT",
+      "repository": "https://github.com/jmesmon/leak.git"
+    }
+  ],
+  "upstream_commit": null,
+  "files": [
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-leak.txt",
+      "url": "https://crates.io/crates/leak/0.1.2",
+      "sha256": "c6744565e87a6319f917583100c8c5f8cc63721f6b4d1c8f313163ed7211a853"
+    }
+  ]
+}

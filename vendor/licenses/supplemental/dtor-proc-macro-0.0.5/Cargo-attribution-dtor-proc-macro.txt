@@ -1,0 +1,28 @@
+Package attribution and SPDX license declaration, as supplied in Cargo.toml
+Full declared terms are included separately; SPDX template fields are not
+a replacement for the authors and any copyright notices supplied upstream.
+
+[package]
+name = "dtor-proc-macro"
+version = "0.0.5"
+authors = ["Matt Mastracci <matthew@mastracci.com>"]
+edition = "2021"
+description = "proc-macro support for the dtor crate"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/mmastrac/rust-ctor"
+readme = "README.md"
+
+[features]
+default = []
+
+[lib]
+proc-macro = true
+
+
+Upstream README supplied with the crate:
+
+# Support crate only
+
+This crate is not intended to be used directly and does not have any public exports.
+
+See [ctor](https://crates.io/crates/ctor) and [dtor](https://crates.io/crates/dtor) on [crates.io](https://crates.io) for the main crates.

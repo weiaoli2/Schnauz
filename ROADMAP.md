@@ -2,19 +2,19 @@
 
 ## Current focus
 
+- Public 0.5.0 release candidate for Apple Silicon and Intel Macs.
 - Oliver's manual testing and reported bug fixes.
-- Verify Nextcloud login/actions and Todoist project/task behaviour with real accounts.
 - Keep browsing responsive, with explicit scans and background work.
 
-## Release preparation
+## Next steps
 
-- After Oliver's review, publish to his Gitea and prepare a 0.5 candidate.
-- Install the reviewed release app in Applications for everyday testing.
-- Complete dependency notices and distribution signing/notarization setup.
+- Developer ID signing and Apple notarization for smoother installation.
+- Real-account Nextcloud interoperability and broader Intel hardware testing.
+- Review community feedback before a stable 0.5 release.
 
 ## Future ideas
 
-- Todoist OAuth for distribution and optional file-to-task actions.
+- Todoist OAuth and optional file-to-task actions.
 - Advanced task editing and additional preview formats as requested.
 
-PROJECT.md records the current implementation; AGENTS.md records product decisions.
+PROJECT.md records implementation details; AGENTS.md records product decisions.

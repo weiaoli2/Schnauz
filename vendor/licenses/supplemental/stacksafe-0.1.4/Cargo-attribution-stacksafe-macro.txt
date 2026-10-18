@@ -1,0 +1,37 @@
+Package attribution and SPDX license declaration, as supplied in Cargo.toml
+Full declared terms are included separately; SPDX template fields are not
+a replacement for the authors and any copyright notices supplied upstream.
+
+[package]
+name = "stacksafe-macro"
+
+categories = ["memory-management", "rust-patterns"]
+description = "Procedural macro implementation for the stacksafe crate."
+documentation = "https://docs.rs/stacksafe-macro"
+keywords = ["recursion", "recursive", "stacker", "stack", "overflow"]
+readme = "README.md"
+
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro-error2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true, features = ["full"] }
+
+
+Upstream README supplied with the crate:
+
+# stacksafe-macro 
+
+This is an implementation crate for the [`stacksafe`](https://crates.io/crates/stacksafe) library. 
+
+**Please refer to the main [`stacksafe`](https://crates.io/crates/stacksafe) crate for documentation and usage examples.**
+
+This crate contains the procedural macro that powers the `#[stacksafe]` attribute and should not be used directly.

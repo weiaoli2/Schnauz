@@ -1,0 +1,28 @@
+{
+  "packages": [
+    {
+      "name": "malloc_buf",
+      "version": "0.0.6",
+      "license": "MIT",
+      "repository": "https://github.com/SSheldon/malloc_buf"
+    }
+  ],
+  "upstream_commit": "d9a3e539642bd90e07df458d226b19cdfa606863",
+  "files": [
+    {
+      "file": "LICENSE",
+      "url": "https://raw.githubusercontent.com/SSheldon/malloc_buf/d9a3e539642bd90e07df458d226b19cdfa606863/LICENSE",
+      "sha256": "aced7b57e474a63edb5a724954222bf7659c01ceef0e648a03af799582991db7"
+    },
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-malloc_buf.txt",
+      "url": "https://crates.io/crates/malloc_buf/0.0.6",
+      "sha256": "19cb2415d6557d19d5daa5ff21c3970736d982011a0d64644515aaa87f87091f"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "packages": [
+    {
+      "name": "pathfinder_geometry",
+      "version": "0.5.1",
+      "license": "MIT/Apache-2.0",
+      "repository": "https://github.com/servo/pathfinder"
+    }
+  ],
+  "upstream_commit": "a5e98fac00f433fe2ff4b2135383d82491b8bfc5",
+  "files": [
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-pathfinder_geometry.txt",
+      "url": "https://crates.io/crates/pathfinder_geometry/0.5.1",
+      "sha256": "b00e6f66d9209bff923a4d4b02d7b7b6aa0eef15aaa82341fbdee6c11baf24a4"
+    }
+  ]
+}

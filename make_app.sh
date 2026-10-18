@@ -2,18 +2,35 @@
 # Assemble our own app from an existing Cargo build.
 set -euo pipefail
 cd "$(dirname "$0")"
-if [ -d /Applications/Xcode.app/Contents/Developer ]; then
-    export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-fi
-DEST_APP="$PWD/Schnauz.app"
+source ./dev-env.sh
+DEST_APP="${SCHNAUZ_APP_OUTPUT:-$PWD/Schnauz.app}"
 PROFILE="${SCHNAUZ_BUILD_PROFILE:-release}"
 TARGET="${CARGO_TARGET_DIR:-target}"
-BINARY="$TARGET/$PROFILE/schnauz"
+RUST_TARGET="${SCHNAUZ_TARGET:-$(rustc -vV | sed -n 's/^host: //p')}"
+case "$RUST_TARGET" in
+    aarch64-apple-darwin) APP_ARCH=arm64 ;;
+    x86_64-apple-darwin) APP_ARCH=x86_64 ;;
+    *) echo "Unsupported Mac target: $RUST_TARGET" >&2; exit 1 ;;
+esac
+BINARY_DIR="$TARGET"
+if [ -n "${SCHNAUZ_TARGET:-}" ]; then
+    BINARY_DIR="$TARGET/$SCHNAUZ_TARGET"
+fi
+BINARY="$BINARY_DIR/$PROFILE/schnauz"
 if [ ! -f "$BINARY" ]; then
     echo "Build the $PROFILE binary first with ./build.sh."
     exit 1
 fi
 VERSION=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -1)
+BUNDLE_VERSION="${SCHNAUZ_BUNDLE_VERSION:-${VERSION%%-*}}"
+if [[ ! "$BUNDLE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Bundle version must contain three numeric components." >&2
+    exit 1
+fi
+if [ "$(lipo -archs "$BINARY")" != "$APP_ARCH" ]; then
+    echo "Built binary does not match $APP_ARCH." >&2
+    exit 1
+fi
 # Resolve the certificate before touching the existing app. Ad-hoc signing is
 # opt-in because its changing cdhash invalidates macOS privacy permissions.
 source ./build-signing.sh
@@ -54,14 +71,17 @@ cp LICENSE "$APP/Contents/Resources/Licenses/Shuffle-MIT.txt"
 cp vendor/gpui-terminal/LICENSE-MIT "$APP/Contents/Resources/Licenses/gpui-terminal-MIT.txt"
 cp vendor/gpui-terminal/LICENSE-APACHE "$APP/Contents/Resources/Licenses/gpui-terminal-Apache-2.0.txt"
 cp vendor/licenses/*.txt "$APP/Contents/Resources/Licenses/"
-mkdir -p "$TARGET/swift-module-cache"
+cp THIRD_PARTY_NOTICES.txt "$APP/Contents/Resources/Licenses/THIRD_PARTY_NOTICES.txt"
+SWIFT_CACHE="$TARGET/swift-module-cache/$APP_ARCH"
+mkdir -p "$SWIFT_CACHE"
+SWIFT_ARGS=(-module-cache-path "$SWIFT_CACHE" -target "$APP_ARCH-apple-macosx14.0" -O)
 for helper in removebg cloudctl volumectl; do
-    xcrun swiftc -module-cache-path "$TARGET/swift-module-cache" -O "$helper.swift" -o "$APP/Contents/MacOS/$helper"
+    xcrun swiftc "${SWIFT_ARGS[@]}" "$helper.swift" -o "$APP/Contents/MacOS/$helper"
     codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/$helper"
 done
-xcrun swiftc -module-cache-path "$TARGET/swift-module-cache" -O native/nextcloud/Core.swift native/nextcloud/main.swift -o "$APP/Contents/MacOS/nextcloudctl"
+xcrun swiftc "${SWIFT_ARGS[@]}" native/nextcloud/Core.swift native/nextcloud/main.swift -o "$APP/Contents/MacOS/nextcloudctl"
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/nextcloudctl"
-xcrun swiftc -module-cache-path "$TARGET/swift-module-cache" -O native/todoist/Core.swift native/todoist/main.swift -o "$APP/Contents/MacOS/todoistctl"
+xcrun swiftc "${SWIFT_ARGS[@]}" native/todoist/Core.swift native/todoist/main.swift -o "$APP/Contents/MacOS/todoistctl"
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/todoistctl"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -73,16 +93,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>local.schnauz.app</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>$VERSION</string>
-    <key>CFBundleVersion</key><string>$VERSION</string>
+    <key>CFBundleShortVersionString</key><string>$BUNDLE_VERSION</string>
+    <key>CFBundleGetInfoString</key><string>Schnauz $VERSION</string>
+    <key>CFBundleVersion</key><string>$BUNDLE_VERSION</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
-    <key>NSHumanReadableCopyright</key><string>Based on Shuffle. Original code © Jaime Guzman, MIT license.</string>
+    <key>NSHumanReadableCopyright</key><string>Schnauz © Oliver Weber. Based on Shuffle © Jaime Guzman. MIT license.</string>
 </dict></plist>
 PLIST
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" --identifier local.schnauz.app "$APP"
 codesign --verify --deep --strict "$APP"
+for executable in "$APP"/Contents/MacOS/*; do
+    if [ "$(lipo -archs "$executable")" != "$APP_ARCH" ]; then
+        echo "Helper architecture mismatch: $executable" >&2
+        exit 1
+    fi
+done
+mkdir -p "$(dirname "$DEST_APP")"
 if [ -d "$DEST_APP" ]; then
     mkdir -p "$STAGING_ROOT/previous"
     mv "$DEST_APP" "$STAGING_ROOT/previous/Schnauz.app"

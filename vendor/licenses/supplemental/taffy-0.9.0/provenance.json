@@ -1,0 +1,28 @@
+{
+  "packages": [
+    {
+      "name": "taffy",
+      "version": "0.9.0",
+      "license": "MIT",
+      "repository": "https://github.com/DioxusLabs/taffy"
+    }
+  ],
+  "upstream_commit": "599b1b7d7410d97e13bafc4c01fbe6d7a9cf060a",
+  "files": [
+    {
+      "file": "LICENSE.md",
+      "url": "https://raw.githubusercontent.com/DioxusLabs/taffy/599b1b7d7410d97e13bafc4c01fbe6d7a9cf060a/LICENSE.md",
+      "sha256": "a7083ef3dd41a65eeb2162c2c091b0082e2724fb4c6ed029b363c7840d244ecd"
+    },
+    {
+      "file": "Declared-MIT.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "Cargo-attribution-taffy.txt",
+      "url": "https://crates.io/crates/taffy/0.9.0",
+      "sha256": "d66bba6578edd2e2fb16e257ff29ef73dd0b656598a9d09fec5977c833b8cb29"
+    }
+  ]
+}

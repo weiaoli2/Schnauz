@@ -1,0 +1,43 @@
+Package attribution and SPDX license declaration, as supplied in Cargo.toml
+Full declared terms are included separately; SPDX template fields are not
+a replacement for the authors and any copyright notices supplied upstream.
+
+[package]
+name = "simd_helpers"
+version = "0.1.0"
+authors = ["Luca Barbato <lu_zero@gentoo.org>"]
+edition = "2018"
+description = "Helpers to write more compact simd code"
+repository = "https://github.com/lu-zero/simd_helpers"
+readme = "README.md"
+keywords = ["proc_macro", "simd"]
+license = "MIT"
+
+[lib]
+proc-macro = true
+test = false
+
+[dependencies]
+quote = "1.0.2"
+
+
+Upstream README supplied with the crate:
+
+# Helpers to write more compact simd code
+
+## Implemented so far
+- [x] `cold_for_target_arch` mark a function cold for certain arches only
+- [ ] `cold_for_target_feature`
+
+## Example
+``` toml
+[dependencies]
+simd_helpers = "0.1"
+```
+``` rust
+use simd_helpers::cold_for_target_arch;
+
+// On arm and power it is the main, impl for x86_64 there is a asm-optimized variant
+#[cold_for_target_arch("x86_64")]
+fn fallback_simple_impl() { ... }
+```

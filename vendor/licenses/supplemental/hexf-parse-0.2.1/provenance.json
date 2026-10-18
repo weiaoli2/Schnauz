@@ -1,0 +1,23 @@
+{
+  "packages": [
+    {
+      "name": "hexf-parse",
+      "version": "0.2.1",
+      "license": "CC0-1.0",
+      "repository": "https://github.com/lifthrasiir/hexf"
+    }
+  ],
+  "upstream_commit": "4225763d744183d720f575ae96d04161b4d08ea0",
+  "files": [
+    {
+      "file": "Declared-CC0-1.0.txt",
+      "url": "https://raw.githubusercontent.com/spdx/license-list-data/main/text/CC0-1.0.txt",
+      "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+    },
+    {
+      "file": "Cargo-attribution-hexf-parse.txt",
+      "url": "https://crates.io/crates/hexf-parse/0.2.1",
+      "sha256": "655405e145eef7db4cb321e8d65745703d7f81489c0048430d0fad34ca1c5cfe"
+    }
+  ]
+}
