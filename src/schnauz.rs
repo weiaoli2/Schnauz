@@ -256,9 +256,9 @@ impl Schnauz {
             .child(div().flex_1())
             .when(tab.remote.is_none(), |d| d.child(
                 div().id(("inspect-storage", pane)).h(px(26.)).px_2().flex().items_center().gap_2().rounded_md().cursor_pointer()
-                    .hover(|s| s.bg(rgb(t.hover))).tooltip(tip("Speicherbelegung… · GrandPerspective view"))
+                    .hover(|s| s.bg(rgb(t.hover))).tooltip(tip("Disk Usage…"))
                     .child(ui_icon(Icon::Storage, 16., rgb(t.text_muted)))
-                    .when(pane_width(pane) > 700., |d| d.child("Speicherbelegung"))
+                    .when(pane_width(pane) > 700., |d| d.child("Disk Usage"))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.inspect_folder(pane, this.tab(pane).current_dir.clone(), window, cx);
                     }))
@@ -664,7 +664,7 @@ impl Schnauz {
                     .tooltip(tip("Show or hide the preview panel · ⌘⇧I"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.show_file_preview(cx))),
             )
-            .child(schnauz_button("schnauz-todoist", "Tasks", self.todoist.open)
+            .child(schnauz_button("schnauz-todoist", "Todoist", self.todoist.open)
                 .tooltip(tip("Todoist tasks for the current project"))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     if this.todoist.open { this.todoist.open = false; cx.notify(); }
@@ -1015,10 +1015,13 @@ pub(super) fn schnauz_button(
     accented: bool,
 ) -> gpui::Stateful<gpui::Div> {
     let t = theme();
+    let compact = matches!(id, "schnauz-split" | "schnauz-terminal" | "schnauz-preview");
     div()
         .id(id)
+        .flex_none()
         .h(px(30.0))
         .px_3()
+        .when(compact, |d| d.w(px(32.)).px_0())
         .rounded_lg()
         .flex()
         .items_center()
@@ -1038,9 +1041,10 @@ pub(super) fn schnauz_button(
         })
         .children(match id {
             "schnauz-split" => Some(Icon::Split), "schnauz-terminal" => Some(Icon::Terminal),
-            "schnauz-preview" => Some(Icon::Preview), "schnauz-save" => Some(Icon::Project), _ => None,
+            "schnauz-preview" => Some(Icon::Preview), "schnauz-todoist" => Some(Icon::Tasks),
+            "schnauz-save" => Some(Icon::Project), _ => None,
         }.map(|icon| ui_icon(icon, 15., rgb(if accented { 0xffffff } else { t.text_muted }))))
-        .child(label)
+        .when(!compact, |d| d.child(label))
 }
 
 pub(super) fn toggle_inspector(cx: &mut App) {

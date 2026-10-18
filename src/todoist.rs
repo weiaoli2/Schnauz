@@ -20,6 +20,7 @@ pub(super) struct Global {
     pub busy: bool,
     pub notice: Option<String>,
     pub revision: u64,
+    pub tasks_request: u64,
 }
 impl gpui::Global for Global {}
 impl Global {
@@ -248,12 +249,20 @@ fn run(request: Request) -> Response {
     })();
     result.unwrap_or_else(|_| Response { message: "The Todoist helper is unavailable or stopped unexpectedly. Your existing tasks have been kept.".into(), ..Response::default() })
 }
+/// A UI request only: opening Tasks must not invalidate account/project caches.
+pub(super) fn show_tasks(cx: &mut App) {
+    let mut global = cx.global::<Global>().clone();
+    global.tasks_request = global.tasks_request.wrapping_add(1);
+    cx.set_global(global);
+}
+
 pub(super) fn account_action<T: 'static>(operation: &str, cx: &mut Context<T>) {
     let mut global = cx.global::<Global>().clone();
     if global.busy {
         return;
     }
     let request = Request::account(operation, global.account.as_ref().map(|a| a.id.clone()));
+    let open_after_connect = operation == "connect";
     global.busy = true;
     global.notice = Some("Todoist: working…".into());
     cx.set_global(global);
@@ -267,6 +276,9 @@ pub(super) fn account_action<T: 'static>(operation: &str, cx: &mut Context<T>) {
                     Ok(account) => {
                         global.account = account;
                         global.revision += 1;
+                        if open_after_connect && global.account.is_some() {
+                            global.tasks_request = global.tasks_request.wrapping_add(1);
+                        }
                     }
                     Err(error) => {
                         global.notice = Some(error);
@@ -342,10 +354,27 @@ pub(super) struct State {
     pub link_errors: HashMap<Option<u64>, String>,
     pub completions: HashMap<(String, String, String), (Option<String>, String)>,
     pub revision: u64,
+    pub tasks_request: u64,
     pub ticker: bool,
     pub scroll: UniformListScrollHandle,
 }
 impl State {
+    /// A new account invalidates data; a Show tasks request only opens the panel.
+    pub(super) fn observe_account(&mut self, global: &Global) -> (bool, bool) {
+        let changed = self.revision != global.revision;
+        let requested = self.tasks_request != global.tasks_request && global.account.is_some();
+        self.tasks_request = global.tasks_request;
+        if changed {
+            self.caches.clear();
+            self.attempted.clear();
+            self.pending.clear();
+            self.link_errors.clear();
+            self.completions.clear();
+            self.revision = global.revision;
+        }
+        (changed, requested)
+    }
+
     fn completion_request(&mut self, link: &projects::TodoistLink, task: String) -> Request {
         let key = (link.account_id.clone(), link.project_id.clone());
         let updated = self
@@ -613,6 +642,7 @@ impl Schnauz {
         .detach();
     }
     pub(super) fn open_todoist(&mut self, cx: &mut Context<Self>) {
+        self.dismiss_space_map |= self.space_map.is_some();
         self.todoist.open = true;
         self.todoist.scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.ensure_todoist(false, cx);
@@ -737,6 +767,25 @@ mod tests {
         assert!(tasks.contains(&("parent", 0)) && tasks.contains(&("child", 1)));
         assert!(tasks.contains(&("orphan", 0)));
     }
+    #[test]
+    fn opening_tasks_preserves_cache_but_account_changes_discard_it() {
+        let mut state = State::default();
+        let key = ("account".to_string(), "A".to_string());
+        state.caches.insert(key.clone(), Cache { data: Some(snapshot("A", serde_json::json!([]))), ..Cache::default() });
+        let mut global = Global {
+            account: Some(Account { id: "account".into(), user_id: "user".into(), name: "Test".into() }),
+            tasks_request: 1,
+            ..Global::default()
+        };
+        assert_eq!(state.observe_account(&global), (false, true));
+        assert!(state.caches[&key].data.is_some());
+        assert_eq!(state.observe_account(&global), (false, false));
+        global.revision += 1;
+        global.account = None;
+        assert_eq!(state.observe_account(&global), (true, false));
+        assert!(state.caches.is_empty());
+    }
+
     #[test]
     fn uncertain_completions_reuse_the_request_until_the_visible_task_revision_changes() {
         let link = projects::TodoistLink {

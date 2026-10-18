@@ -20,6 +20,7 @@ pub(super) enum Icon {
     Terminal,
     Split,
     Preview,
+    Tasks,
     Project,
     Settings,
     Storage,
@@ -215,6 +216,14 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
                     line!(12,3;12,17);
                     line!(5,7;9,7);
                     line!(5,10;9,10);
+                }
+                Icon::Tasks => {
+                    line!(2,5;4,7;7,3);
+                    line!(10,5;18,5);
+                    line!(2,11;4,13;7,9);
+                    line!(10,11;18,11);
+                    line!(3,17;6,17);
+                    line!(10,17;18,17);
                 }
                 Icon::Project => {
                     line!(2,7;2,5;8,5;10,7;18,7;18,17;2,17;2,7);

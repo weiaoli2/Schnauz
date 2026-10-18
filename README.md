@@ -94,8 +94,8 @@ search the running Schnauz stops the scan and keeps results instead. The status 
 Escape or **Done ×** closes search and
 restores Current Folder + File. No home-folder index is built at launch.
 
-Click **Speicherbelegung** in the filter row, or right-click a folder, empty folder
-area or sidebar folder and choose **Speicherbelegung…**
+Click **Disk Usage** in the filter row, or right-click a folder, empty folder
+area or sidebar folder and choose **Disk Usage…**
 for an on-demand size map on the right. The window widens when the display has room.
 Rectangle area represents file sizes, with colors grouped by file type. Click a
 folder heading to open it on the left and zoom; click a file tile to reveal and
@@ -184,12 +184,17 @@ switches while the app stays open; terminals start fresh after quitting the app.
 Projects persist local tabs; remote tabs remain available during the running
 session. Unavailable local folders are skipped when restoring.
 
-The **Tasks** button opens Todoist beside the file pane. First connect under
+The **Todoist** button opens Todoist beside the file pane. First connect under
 **Settings → General → Connections → Todoist**, using an API token entered in a
 secure native field and stored in Keychain. A Schnauz project uses the same name
 as its Todoist project: a unique existing match is linked, while a newly created
 Schnauz project creates the Todoist counterpart only if no match exists. Duplicate
 Todoist names get a chooser. Offline creation intents wait until connected.
+
+Todoist opens a project-specific Tasks pane on the right after connection.
+Use the **Todoist** toolbar button or **Settings → General → Connections →
+Todoist → Show tasks** to reopen it. The pane shares the saved preview width
+and resize boundary with file previews and Disk Usage.
 
 Selecting another Schnauz project switches Tasks with it. Existing unlinked
 projects first search by name; **Find or create matching project** can create a

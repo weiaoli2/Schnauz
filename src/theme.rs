@@ -31,6 +31,21 @@ impl Default for Theme {
     }
 }
 
+/// Upgrade the former default's grey foregrounds without changing custom or
+/// dark palettes. Existing saved defaults should receive the new black text too.
+pub(super) fn upgrade_saved_foreground(mut saved: Theme) -> Theme {
+    let mut previous = Theme::default();
+    previous.text = 0x272a3c;
+    previous.text_muted = 0x626980;
+    previous.text_dim = 0x7b8298;
+    if saved == previous {
+        saved.text = 0x000000;
+        saved.text_muted = 0x000000;
+        saved.text_dim = 0x000000;
+    }
+    saved
+}
+
 /// Clamp a channel value to 0..=255.
 pub(super) const fn clamp8(x: u32) -> u32 {
     if x > 0xff {
@@ -98,9 +113,9 @@ pub(super) const PRESETS: &[(&str, Theme)] = &[
             selected: 0xe7e8fb,
             border: 0xe0e3ed,
             border_strong: 0xcbd0e0,
-            text: 0x272a3c,
-            text_muted: 0x626980,
-            text_dim: 0x7b8298,
+            text: 0x000000,
+            text_muted: 0x000000,
+            text_dim: 0x000000,
             accent: 0x5a5de6,
         },
     ),
@@ -302,4 +317,25 @@ pub(super) fn apply_theme(t: Theme, cx: &mut App) {
         cx.set_global(MenuStyleGlobal(m));
     }
     cx.refresh_windows();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_default_gets_black_foregrounds_without_replacing_custom_or_dark_palettes() {
+        let mut previous = Theme::default();
+        previous.text = 0x272a3c;
+        previous.text_muted = 0x626980;
+        previous.text_dim = 0x7b8298;
+        let upgraded = upgrade_saved_foreground(previous);
+        assert!(upgraded == Theme::default());
+        assert_eq!((upgraded.text, upgraded.text_muted, upgraded.text_dim), (0, 0, 0));
+        for (_, preset) in PRESETS.iter().skip(1) {
+            assert!(upgrade_saved_foreground(*preset) == *preset);
+        }
+        previous.text = 0x123456;
+        assert!(upgrade_saved_foreground(previous) == previous);
+    }
 }

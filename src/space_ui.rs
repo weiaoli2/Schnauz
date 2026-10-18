@@ -46,6 +46,8 @@ impl Schnauz {
             self.set_notice("Choose a local folder to inspect.".into(), cx);
             return;
         }
+        self.dismiss_space_map = false;
+        self.todoist.open = false;
         let mut expanded_from = self.space_map.as_ref().and_then(|s| s.expanded_from);
         if self.space_map.is_none() && !window.is_fullscreen() {
             if let Some(display) = window.display(cx) {
@@ -199,6 +201,8 @@ impl Schnauz {
             self.navigate_in(pane, folder, cx);
             self.reveal_in_pane(pane, path, cx);
         }
+        // Navigation initiated by the map keeps that map open.
+        self.dismiss_space_map = false;
         window.focus(&self.focus);
         cx.notify();
     }
@@ -212,7 +216,9 @@ impl Schnauz {
             .unwrap_or(&state.root);
         let root_label = path_label(current);
         let mut panel = div()
-            .w(px((pane_width(self.panes.len()-1) - 220.).clamp(0., 420.)))
+            .w_full()
+            .h_full()
+            .min_w_0()
             .flex_none()
             .min_h_0()
             .flex()
@@ -220,10 +226,12 @@ impl Schnauz {
             .border_l_1()
             .border_color(rgb(t.border))
             .bg(rgb(t.surface))
+            .text_color(rgb(t.text))
             .overflow_hidden()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
+                    .flex_none()
                     .px_3()
                     .py_2()
                     .flex()
@@ -233,7 +241,7 @@ impl Schnauz {
                         div()
                             .flex_1()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Speicherbelegung"),
+                            .child("Disk Usage"),
                     )
                     .child(
                         map_button("inspect-refresh", "Refresh").on_click(cx.listener(
@@ -261,6 +269,7 @@ impl Schnauz {
             )
             .child(
                 div()
+                    .flex_none()
                     .px_3()
                     .pb_2()
                     .flex()
@@ -327,6 +336,7 @@ impl Schnauz {
                 panel = panel.child(
                     div()
                         .id("inspect-map")
+                        .relative()
                         .flex_1()
                         .min_h_0()
                         .mx_2()

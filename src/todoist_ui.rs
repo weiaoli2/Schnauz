@@ -45,6 +45,9 @@ pub(super) fn settings_rows<T: 'static>(cx: &Context<T>) -> Vec<AnyElement> {
             ),
         );
     if state.account.is_some() {
+        row = row.child(button("todoist-show-tasks", "Show tasks").on_click(
+            cx.listener(|_, _: &ClickEvent, _, cx| todoist::show_tasks(cx)),
+        ));
         row = row.child(button("todoist-disconnect", "Disconnect…").on_click(
             cx.listener(|_, _: &ClickEvent, _, cx| todoist::account_action("disconnect", cx)),
         ));
@@ -63,6 +66,13 @@ pub(super) fn settings_rows<T: 'static>(cx: &Context<T>) -> Vec<AnyElement> {
 }
 impl Schnauz {
     pub(super) fn show_file_preview(&mut self, cx: &mut Context<Self>) {
+        if self.space_map.is_some() {
+            self.dismiss_space_map = true;
+            self.todoist.open = false;
+            if !prefs().preview { schnauz::toggle_inspector(cx); }
+            cx.notify();
+            return;
+        }
         if self.todoist.open {
             self.todoist.open = false;
             if !prefs().preview {

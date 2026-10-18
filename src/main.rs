@@ -1408,18 +1408,11 @@ impl Schnauz {
         .detach();
         cx.observe_global::<todoist::Global>(|this, cx| {
             let state = cx.global::<todoist::Global>().clone();
-            if this.todoist.revision != state.revision {
-                this.todoist.caches.clear();
-                this.todoist.attempted.clear();
-                this.todoist.pending.clear();
-                this.todoist.link_errors.clear();
-                this.todoist.completions.clear();
-                this.todoist.revision = state.revision;
-                if state.account.is_some() && this.projects.sidebar().todoist_create_request.is_some() {
-                    this.open_todoist(cx);
-                } else {
-                    this.ensure_todoist(false, cx);
-                }
+            let (changed, requested) = this.todoist.observe_account(&state);
+            if requested || (changed && state.account.is_some() && this.projects.sidebar().todoist_create_request.is_some()) {
+                this.open_todoist(cx);
+            } else if changed {
+                this.ensure_todoist(false, cx);
             }
             if let Some(message) = state.notice { this.set_notice(message, cx); }
             cx.notify();
@@ -1956,6 +1949,7 @@ impl Schnauz {
     fn reveal_in_pane(&mut self, pane: usize, path: PathBuf, cx: &mut Context<Self>) {
         let paths = self.display_paths(pane);
         if let Some(ix) = paths.iter().position(|p| p == &path) {
+            self.dismiss_space_map |= self.space_map.is_some();
             let (view, off) = {
                 let tab = self.tab(pane);
                 let off = usize::from(
@@ -3609,7 +3603,7 @@ impl Schnauz {
         if let Some(folder) = inspect {
             let view_folder = folder.clone();
             nodes.push(mi("Apply view to folder + subfolders", move |this, _, cx| this.apply_view_to_tree(pane, view_folder.clone(), cx)));
-            nodes.push(mi("Speicherbelegung…", move |this,window,cx| this.inspect_folder(pane,folder.clone(),window,cx)));
+            nodes.push(mi("Disk Usage…", move |this,window,cx| this.inspect_folder(pane,folder.clone(),window,cx)));
             push_menu_sep(&mut nodes);
         }
         if let Some((path, is_dir)) = target {
@@ -4874,7 +4868,7 @@ impl Schnauz {
             let view_folder = folder.clone();
             let view_pane = match &target { SidebarTarget::NavBar(p) | SidebarTarget::Tab(p, _) => *p, _ => self.active_pane };
             items.push(mi("Apply view to folder + subfolders", move |this, _, cx| this.apply_view_to_tree(view_pane, view_folder.clone(), cx)));
-            items.push(mi("Speicherbelegung…", move|this,window,cx|{
+            items.push(mi("Disk Usage…", move|this,window,cx|{
                 this.inspect_folder(this.active_pane,folder.clone(),window,cx);
             }));
             items.push(MenuNode::Sep);
@@ -6110,6 +6104,7 @@ impl Schnauz {
     /// current folder, record it as most-recent, and persist. Does
     /// NOT touch back/forward history (callers manage that).
     fn load_dir_in(&mut self, pane: usize, dir: PathBuf, cx: &mut Context<Self>) {
+        self.dismiss_space_map |= self.space_map.is_some();
         if self.search_in_pane(pane) { self.close_palette(cx); }
         self.rename = None;
 
@@ -7150,6 +7145,7 @@ impl Schnauz {
     /// would slide with the scroll — moving the box off the rows it had already
     /// swept and re-selecting the wrong ones.
     fn begin_marquee(&mut self, pane: usize, x: f32, y: f32, cx: &mut Context<Self>) {
+        self.dismiss_space_map |= self.space_map.is_some();
         if mq_log() {
             eprintln!("[mq] begin pane={pane} at ({x:.0},{y:.0})");
         }
@@ -9150,7 +9146,7 @@ impl Schnauz {
         // navigation/filter row. Inspect retains its separate full-height map.
         if pane + 1 == self.panes.len() {
             if let Some(map) = self.render_space_map(cx) {
-                body_row = body_row.child(map);
+                body_row = body_row.child(self.render_preview_panel(map, pane, cx));
             } else if self.todoist.open {
                 body_row = body_row.child(self.render_preview_panel(self.render_todoist(cx), pane, cx));
             } else if let Some(inspector) = self.render_inspector(cx) {
@@ -9760,9 +9756,6 @@ impl Render for Schnauz {
                 this.pending_click_rename = None;
             }))
             .on_key_down(cx.listener(Self::on_key))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _: &MouseDownEvent, window, cx| {
-                if this.space_map.is_some() { this.close_space_map(window, cx); }
-            }))
             // Native menu-bar actions (File / View / Go menus).
             .on_action(cx.listener(|this, _: &NewProject, window, cx| this.open_project_dialog(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleSplit, _, cx| this.toggle_schnauz_split(cx)))
@@ -13097,7 +13090,7 @@ fn load_theme() -> Theme {
                 .filter_map(|l| u32::from_str_radix(l.trim(), 16).ok())
                 .collect();
             if v.len() == 11 {
-                return Theme {
+                return upgrade_saved_foreground(Theme {
                     bg: v[0],
                     sidebar: v[1],
                     surface: v[2],
@@ -13109,7 +13102,7 @@ fn load_theme() -> Theme {
                     text_muted: v[8],
                     text_dim: v[9],
                     accent: v[10],
-                };
+                });
             }
         }
     }

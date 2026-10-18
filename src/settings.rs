@@ -275,15 +275,6 @@ impl Render for Settings {
             .bg(rgb(t.sidebar))
             .border_r_1()
             .border_color(rgb(t.border))
-            .child(
-                div()
-                    .px_4()
-                    .pb_2()
-                    .text_base()
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(rgb(t.text))
-                    .child("Settings"),
-            )
             .children(tab_items);
 
         let children = match self.tab {
@@ -292,9 +283,11 @@ impl Render for Settings {
             _ => self.render_customization(cx),
         };
 
-        div()
+        let body = div()
             .flex()
-            .size_full()
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .bg(rgb(t.bg))
             .text_size(px(UI_FONT_SIZE))
             .text_color(rgb(t.text))
@@ -326,7 +319,17 @@ impl Render for Settings {
                             .children(children),
                     )
                     .children(static_scrollbar_thumb(&self.content_scroll)),
+            );
+
+        div().flex().flex_col().size_full().bg(rgb(t.bg)).text_color(rgb(t.text))
+            .child(
+                div().flex_none().w_full().h(px(TITLEBAR_H)).flex().items_center()
+                    .pl(px(88.)).pr_4().bg(rgb(t.sidebar))
+                    .border_b_1().border_color(rgb(t.border))
+                    .text_size(px(14.)).font_weight(FontWeight::SEMIBOLD)
+                    .child("Schnauz · Settings"),
             )
+            .child(body)
     }
 }
 
@@ -1224,8 +1227,10 @@ pub(super) fn open_settings_window(cx: &mut App) {
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(760.), px(500.))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Settings".into()),
+                title: None,
+                appears_transparent: true,
                 ..Default::default()
             }),
             ..Default::default()

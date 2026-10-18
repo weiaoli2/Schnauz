@@ -172,7 +172,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   sidebar menus. Keep automatic browsing calculations off. Preserve the right-hand
   map while navigating from its file tiles or folder headings; never open a file
   merely by clicking its tile. Cancel replaced/closed scans and flag partial maps.
-  It is labeled “Speicherbelegung…” and also has a button in the filter row.
+  It is labeled “Disk Usage…” and also has a button in the filter row.
   Like the preview, its panel starts below the path and filter bars. Selecting
   outside it closes the map; navigation from within its graphic keeps it open.
 
@@ -251,3 +251,20 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   isolates read compatibility for earlier settings, script headers/environment,
   SFTP Keychain items and active control sockets. Do not drop saved access when
   changing internal names. The former upstream updater is removed.
+
+- The interface language is English; call the storage map Disk Usage. Disk Usage,
+  file previews and Todoist share the right-panel wrapper, height, saved width
+  and resize boundary below the navigation/filter rows. Always show scan progress
+  or errors instead of an empty panel. Inspect closes Tasks; opening Tasks
+  dismisses Disk Usage through the existing deferred close path.
+  Close the map on actual browser selection/navigation, never on a root-level
+  mouse press; moving/resizing the window and dragging its panel divider must
+  preserve the map. Map-originated navigation explicitly preserves it too.
+- Schnauz Light uses black normal/secondary text and controls. Upgrade saved
+  stock light colours on load; preserve custom and dark palettes. Native macOS
+  folder icons stay blue. Keep semantic status/tag colours and disabled states.
+- The toolbar button is labeled Todoist with a checklist icon. Successful
+  connection requests the Tasks pane; Settings → Connections also offers Show
+  tasks. A pane-open request must not invalidate account/project caches.
+- Settings uses the main app's transparent native titlebar and 56 pt themed
+  header, with traffic-light clearance and independently scrolling content.

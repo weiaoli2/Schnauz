@@ -53,6 +53,12 @@ access. Original credits and license notices remain intact; the old updater
 has been removed. App-icon customization and icon packs are also removed;
 Schnauz keeps its fixed app icon and uses native macOS file/application icons.
 
+Schnauz Light uses black text and controls; saved stock light themes upgrade
+on load while native folder icons keep macOS blue. The English Disk Usage
+panel shares the preview/Tasks sizing and resize boundary, including its
+loading state. The Todoist toolbar button and Settings → Show tasks open
+the right Tasks pane; successful connection opens it automatically.
+
 ## Current stage and user data
 
 Oliver is manually testing the current app and reporting individual fixes. Wait
@@ -114,14 +120,18 @@ or creates a same-named Todoist project if absent. Ambiguous duplicate names get
 an explicit chooser. A failed lookup cannot cause project creation. If disconnected,
 the creation intent waits in the local project until Todoist is connected.
 
-Connect in **Settings → General → Connections → Todoist**, or open **Tasks** and
+Connect in **Settings → General → Connections → Todoist**, or click **Todoist** and
 use **Connect Todoist…**. For this personal build, enter the API token in the native
 secure dialog. Only macOS Keychain stores it. `todoist.json` holds the local account
 reference and display identity; project links and stable creation-request IDs live
 in `projects.json`. Existing projects migrate without links. Disconnect removes
 Schnauz access without revoking a personal token used by other apps.
 
-The **Tasks** button selects the right pane, below the full-width navigation and
+Oliver confirmed that Todoist was connected on 2026-10-18. The reported panel
+visibility and layout issues are addressed in the current build; visual/task
+verification remains his manual workflow.
+
+The **Todoist** button selects the right pane, below the full-width navigation and
 filter bars. It follows Schnauz project switching and uses the saved preview width.
 Existing unlinked projects look for matching names; **Find or create matching
 project** can explicitly create one if absent. Open tasks show sections, subtasks,

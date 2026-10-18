@@ -336,7 +336,7 @@ impl Schnauz {
         div()
             .flex()
             .flex_1()
-            .min_w(px(380.0))
+            .min_w_0()
             .items_center()
             .gap_2()
             .child(scopes)

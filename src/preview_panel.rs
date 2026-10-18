@@ -73,7 +73,7 @@ impl Schnauz {
                     .when(self.preview_resize.is_some(), |s| {
                         s.bg(Theme::alpha(theme().accent, 0x55))
                     })
-                    .tooltip(tip("Drag to resize preview · double-click to reset"))
+                    .tooltip(tip("Drag to resize panel · double-click to reset"))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
