@@ -85,53 +85,137 @@ pub(crate) struct TodoistLink {
     pub project_name: String,
 }
 
-/// Explicit project shortcuts and connections. No automatically discovered roots.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
+/// The two kinds of project favourites, independent of their storage provider.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Section {
+    #[serde(rename = "folder")]
+    Folders,
+    #[serde(rename = "file")]
+    Files,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct Shortcut {
+    pub path: PathBuf,
+    pub kind: Section,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<SftpServer>,
+}
+impl Shortcut {
+    pub fn local(path: PathBuf, kind: Section) -> Self {
+        Self {
+            path,
+            kind,
+            server: None,
+        }
+    }
+
+    pub fn same_place(&self, other: &Self) -> bool {
+        self.path == other.path
+            && match (&self.server, &other.server) {
+                (None, None) => true,
+                (Some(a), Some(b)) => same_server(a, b),
+                _ => false,
+            }
+    }
+}
+
+pub(crate) fn same_server(a: &SftpServer, b: &SftpServer) -> bool {
+    a.host.trim().eq_ignore_ascii_case(b.host.trim())
+        && a.user.trim() == b.user.trim()
+        && a.port == b.port
+}
+
+/// Nonsecret project shortcuts and account routing. Connections remain in Settings.
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub(crate) struct Sidebar {
-    pub locations: Vec<PathBuf>,
-    pub cloud: Vec<PathBuf>,
-    pub server_folders: Vec<PathBuf>,
+    pub shortcuts: Vec<Shortcut>,
     pub servers: Vec<SftpServer>,
-    pub tagged: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub todoist: Option<TodoistLink>,
-    /// Stable idempotency key for a user-requested matching project creation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub todoist_create_request: Option<String>,
 }
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Section {
-    Locations,
-    Cloud,
-    ServerFolders,
-    Tagged,
-}
 impl Sidebar {
-    pub fn paths(&self, section: Section) -> &[PathBuf] {
-        match section {
-            Section::Locations => &self.locations,
-            Section::Cloud => &self.cloud,
-            Section::ServerFolders => &self.server_folders,
-            Section::Tagged => &self.tagged,
-        }
+    pub fn contains(&self, shortcut: &Shortcut) -> bool {
+        self.shortcuts.iter().any(|s| s.same_place(shortcut))
     }
-    pub fn set_path(&mut self, section: Section, path: PathBuf, add: bool) {
-        let paths = match section {
-            Section::Locations => &mut self.locations,
-            Section::Cloud => &mut self.cloud,
-            Section::ServerFolders => &mut self.server_folders,
-            Section::Tagged => &mut self.tagged,
-        };
-        if add {
-            if !paths.contains(&path) {
-                paths.push(path);
+
+    pub fn set_shortcut(&mut self, mut shortcut: Shortcut, add: bool) {
+        // Favourites describe destinations, never ownership of a live SSH session.
+        if let Some(server) = &mut shortcut.server {
+            server.control_path = None;
+        }
+        if let Some(index) = self.shortcuts.iter().position(|s| s.same_place(&shortcut)) {
+            if add {
+                self.shortcuts[index] = shortcut;
+            } else {
+                self.shortcuts.remove(index);
             }
-        } else {
-            paths.retain(|p| p != &path);
+        } else if add {
+            self.shortcuts.push(shortcut);
         }
     }
+
+    pub fn set_path(&mut self, section: Section, path: PathBuf, add: bool) {
+        self.set_shortcut(Shortcut::local(path, section), add);
+    }
+}
+
+// Read old sidebar sections once. New saves contain only the unified shortcuts.
+// Metadata is needed only for legacy paths; new shortcuts keep their kind and
+// SSH identity, so rendering and subsequent loads perform no filesystem checks.
+impl<'de> Deserialize<'de> for Sidebar {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Default, Deserialize)]
+        #[serde(default)]
+        struct Stored {
+            shortcuts: Vec<Shortcut>,
+            locations: Vec<PathBuf>,
+            cloud: Vec<PathBuf>,
+            server_folders: Vec<PathBuf>,
+            tagged: Vec<PathBuf>,
+            servers: Vec<SftpServer>,
+            todoist: Option<TodoistLink>,
+            todoist_create_request: Option<String>,
+        }
+        let old = Stored::deserialize(deserializer)?;
+        let mut sidebar = Self {
+            shortcuts: Vec::new(),
+            servers: old.servers,
+            todoist: old.todoist,
+            todoist_create_request: old.todoist_create_request,
+        };
+        for shortcut in old.shortcuts {
+            sidebar.set_shortcut(shortcut, true);
+        }
+        for (paths, fallback) in [
+            (old.locations, Section::Folders),
+            (old.cloud, Section::Folders),
+            (old.server_folders, Section::Folders),
+            (old.tagged, Section::Files),
+        ] {
+            for path in paths {
+                let kind = legacy_kind(&path, fallback);
+                if !sidebar.contains(&Shortcut::local(path.clone(), kind)) {
+                    sidebar.set_path(kind, path, true);
+                }
+            }
+        }
+        Ok(sidebar)
+    }
+}
+
+fn legacy_kind(path: &Path, fallback: Section) -> Section {
+    fs::metadata(path)
+        .map(|m| {
+            if crate::is_browsable_folder(path, m.is_dir()) {
+                Section::Folders
+            } else {
+                Section::Files
+            }
+        })
+        .unwrap_or(fallback)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -218,7 +302,7 @@ impl Library {
         for path in favorites {
             library
                 .personal_sidebar
-                .set_path(Section::Locations, path, true);
+                .set_path(legacy_kind(&path, Section::Folders), path, true);
         }
         Ok(library)
     }
@@ -330,8 +414,7 @@ impl Library {
     }
 }
 
-/// Read-only compatibility for existing settings. New saves contain Locations
-/// only; files, unavailable paths and ordering are preserved without duplicates.
+/// Read-only compatibility for the earliest flat favourites. Preserve missing paths.
 fn merge_old_favorites(
     object: &mut serde_json::Map<String, serde_json::Value>,
     old: &str,
@@ -350,7 +433,10 @@ fn merge_old_favorites(
     )
     .map_err(decode)?;
     for path in paths {
-        sidebar.set_path(Section::Locations, path, true);
+        let kind = legacy_kind(&path, Section::Folders);
+        if !sidebar.contains(&Shortcut::local(path.clone(), kind)) {
+            sidebar.set_path(kind, path, true);
+        }
     }
     object.insert(
         target.into(),
@@ -397,6 +483,14 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    fn local_paths(sidebar: &super::Sidebar, kind: super::Section) -> Vec<std::path::PathBuf> {
+        sidebar
+            .shortcuts
+            .iter()
+            .filter(|s| s.kind == kind && s.server.is_none())
+            .map(|s| s.path.clone())
+            .collect()
+    }
     use super::*;
 
     struct Scratch(PathBuf);
@@ -406,8 +500,8 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let path =
-                std::env::temp_dir().join(format!("schnauz-project-{}-{nonce}", std::process::id()));
+            let path = std::env::temp_dir()
+                .join(format!("schnauz-project-{}-{nonce}", std::process::id()));
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }
@@ -506,7 +600,7 @@ mod tests {
     }
 
     #[test]
-    fn projects_isolate_locations_and_remember_each_layout_after_restart() {
+    fn projects_isolate_favourites_and_remember_each_layout_after_restart() {
         let scratch = Scratch::new();
         let make_layout = |name: &str| Layout {
             panes: vec![SavedPane {
@@ -520,26 +614,33 @@ mod tests {
         library.remember_layout(make_layout("personal"));
         library
             .sidebar_mut()
-            .set_path(Section::Locations, scratch.0.join("personal pin"), true);
+            .set_path(Section::Folders, scratch.0.join("personal pin"), true);
         let a = library.create("Design", make_layout("design")).unwrap();
         let b = library.create("Writing", make_layout("writing")).unwrap();
         library.active = Some(a);
-        assert!(library.sidebar().locations.as_slice().is_empty());
+        assert!(local_paths(library.sidebar(), Section::Folders)
+            .as_slice()
+            .is_empty());
         let pin = scratch.0.join("素材\nnotes");
         library
             .sidebar_mut()
-            .set_path(Section::Locations, pin.clone(), true);
+            .set_path(Section::Folders, pin.clone(), true);
         library
             .sidebar_mut()
-            .set_path(Section::Locations, pin.clone(), true);
+            .set_path(Section::Folders, pin.clone(), true);
         library.remember_layout(make_layout("design new folder"));
         library.active = Some(b);
-        assert!(library.sidebar().locations.as_slice().is_empty());
+        assert!(local_paths(library.sidebar(), Section::Folders)
+            .as_slice()
+            .is_empty());
         library
             .sidebar_mut()
-            .set_path(Section::Locations, scratch.0.join("writing pin"), true);
+            .set_path(Section::Folders, scratch.0.join("writing pin"), true);
         library.active = Some(a);
-        assert_eq!(library.sidebar().locations.as_slice(), &[pin.clone()]);
+        assert_eq!(
+            local_paths(library.sidebar(), Section::Folders).as_slice(),
+            &[pin.clone()]
+        );
         let path = scratch.0.join("projects.json");
         library.save(&path).unwrap();
         let mut restored = Library::load(&path).unwrap();
@@ -547,11 +648,13 @@ mod tests {
         assert_eq!(restored.items[0].layout, make_layout("design new folder"));
         restored
             .sidebar_mut()
-            .set_path(Section::Locations, pin, false);
-        assert!(restored.sidebar().locations.as_slice().is_empty());
+            .set_path(Section::Folders, pin, false);
+        assert!(local_paths(restored.sidebar(), Section::Folders)
+            .as_slice()
+            .is_empty());
         restored.active = None;
         assert_eq!(
-            restored.sidebar().locations.as_slice(),
+            local_paths(restored.sidebar(), Section::Folders).as_slice(),
             &[scratch.0.join("personal pin")]
         );
         assert_eq!(restored.personal_layout, Some(make_layout("personal")));
@@ -577,39 +680,42 @@ mod tests {
         library.active = Some(a);
         library
             .sidebar_mut()
-            .set_path(Section::Locations, location.clone(), true);
+            .set_path(Section::Folders, location.clone(), true);
         library
             .sidebar_mut()
-            .set_path(Section::Cloud, location.clone(), true);
+            .set_path(Section::Folders, location.clone(), true);
         library
             .sidebar_mut()
-            .set_path(Section::Tagged, file.clone(), true);
+            .set_path(Section::Files, file.clone(), true);
         library
             .sidebar_mut()
-            .set_path(Section::Tagged, file.clone(), true);
+            .set_path(Section::Files, file.clone(), true);
         library.sidebar_mut().servers.push(SftpServer {
             host: "design-host".into(),
             name: "Design server".into(),
             ..Default::default()
         });
-        assert_eq!(library.sidebar().tagged, vec![file.clone()]);
+        assert_eq!(
+            local_paths(library.sidebar(), Section::Files),
+            vec![file.clone()]
+        );
         library.active = Some(b);
         assert_eq!(library.sidebar(), &Sidebar::default());
         // Sharing from a sidebar menu updates its destination without switching.
         library.sidebar_for_mut(Some(a)).unwrap().set_path(
-            Section::Locations,
+            Section::Folders,
             location.clone(),
             true,
         );
         library.sidebar_for_mut(Some(b)).unwrap().set_path(
-            Section::Locations,
+            Section::Folders,
             location.clone(),
             true,
         );
         library
             .sidebar_for_mut(None)
             .unwrap()
-            .set_path(Section::Locations, location.clone(), true);
+            .set_path(Section::Folders, location.clone(), true);
         assert_eq!(library.active, Some(b));
         let path = scratch.0.join("projects.json");
         library.save(&path).unwrap();
@@ -617,23 +723,24 @@ mod tests {
         assert_eq!(restored, library);
         for id in [None, Some(a), Some(b)] {
             assert_eq!(
-                restored.sidebar_for(id).unwrap().locations,
+                local_paths(restored.sidebar_for(id).unwrap(), Section::Folders),
                 vec![location.clone()]
             );
         }
-        assert!(restored.sidebar().tagged.is_empty());
+        assert!(local_paths(restored.sidebar(), Section::Files).is_empty());
         assert!(restored.sidebar().servers.is_empty());
         restored.active = Some(a);
         assert_eq!(restored.sidebar().servers[0].host, "design-host");
+        restored.sidebar_mut().set_path(Section::Files, file, false);
+        assert!(local_paths(restored.sidebar(), Section::Files).is_empty());
         restored
             .sidebar_mut()
-            .set_path(Section::Tagged, file, false);
-        assert!(restored.sidebar().tagged.is_empty());
-        restored
-            .sidebar_mut()
-            .set_path(Section::Locations, location, false);
-        assert!(restored.sidebar().locations.is_empty());
-        assert_eq!(restored.sidebar_for(Some(b)).unwrap().locations.len(), 1);
+            .set_path(Section::Folders, location, false);
+        assert!(local_paths(restored.sidebar(), Section::Folders).is_empty());
+        assert_eq!(
+            local_paths(restored.sidebar_for(Some(b)).unwrap(), Section::Folders).len(),
+            1
+        );
     }
 
     #[test]
@@ -655,7 +762,7 @@ mod tests {
     }
 
     #[test]
-    fn merges_old_favorites_into_locations_once_without_losing_files_or_missing_paths() {
+    fn merges_old_favorites_once_without_losing_files_or_missing_paths() {
         let scratch = Scratch::new();
         let path = scratch.0.join("projects.json");
         let layout = Layout {
@@ -672,20 +779,24 @@ mod tests {
         let existing = scratch.0.join("existing folder");
         let file = scratch.0.join("notes.txt");
         let missing = scratch.0.join("unavailable volume");
-        library.sidebar_mut().locations.push(existing.clone());
-        library.sidebar_mut().cloud.push(scratch.0.join("cloud"));
+        library
+            .sidebar_mut()
+            .set_path(Section::Folders, existing.clone(), true);
         let mut old = serde_json::to_value(&library).unwrap();
+        old["items"][0]["sidebar"]["cloud"] = serde_json::json!([scratch.0.join("cloud")]);
         old["personal_favorites"] = serde_json::json!([file]);
         old["items"][0]["favorites"] = serde_json::json!([existing, file, missing, file]);
         let original = serde_json::to_vec(&old).unwrap();
         fs::write(&path, &original).unwrap();
         let restored = Library::load(&path).unwrap();
         assert_eq!(
-            restored.sidebar().locations,
-            [existing, file.clone(), missing]
+            local_paths(restored.sidebar(), Section::Folders),
+            [existing, scratch.0.join("cloud"), file.clone(), missing]
         );
-        assert_eq!(restored.personal_sidebar.locations, [file]);
-        assert_eq!(restored.sidebar().cloud, library.sidebar().cloud);
+        assert_eq!(
+            local_paths(&restored.personal_sidebar, Section::Folders),
+            [file]
+        );
         assert_eq!(fs::read(&path).unwrap(), original);
         restored.save(&path).unwrap();
         let saved = fs::read_to_string(&path).unwrap();
@@ -703,15 +814,18 @@ mod tests {
         let pin = scratch.0.join("old bookmark");
         let mut library = Library::load_migrating(&path, &legacy, vec![pin.clone()]).unwrap();
         assert_eq!(library.items[0].name, "Existing");
-        assert!(library.items[0].sidebar.locations.is_empty());
-        assert_eq!(library.sidebar().locations.as_slice(), &[pin.clone()]);
-        library
-            .sidebar_mut()
-            .set_path(Section::Locations, pin, false);
+        assert!(local_paths(&library.items[0].sidebar, Section::Folders).is_empty());
+        assert_eq!(
+            local_paths(library.sidebar(), Section::Folders).as_slice(),
+            &[pin.clone()]
+        );
+        library.sidebar_mut().set_path(Section::Folders, pin, false);
         library.save(&path).unwrap();
         let restored =
             Library::load_migrating(&path, &legacy, vec![scratch.0.join("stale")]).unwrap();
-        assert!(restored.sidebar().locations.as_slice().is_empty());
+        assert!(local_paths(restored.sidebar(), Section::Folders)
+            .as_slice()
+            .is_empty());
         assert_eq!(fs::read(legacy).unwrap(), bytes);
         assert!(library
             .create("Personal", library.items[0].layout.clone())
@@ -742,8 +856,7 @@ mod tests {
             .todoist_create_request = Some("stable-idempotency-key".into());
         library
             .personal_sidebar
-            .locations
-            .push(scratch.0.join("unavailable"));
+            .set_path(Section::Folders, scratch.0.join("unavailable"), true);
         let file = scratch.0.join("projects.json");
         library.save(&file).unwrap();
         let restored = Library::load(&file).unwrap();
@@ -752,7 +865,10 @@ mod tests {
         assert!(restored.sidebar_for(Some(b)).unwrap().todoist.is_none());
         let legacy: Sidebar = serde_json::from_str(r#"{"locations":["/legacy-folder"]}"#).unwrap();
         assert!(legacy.todoist.is_none() && legacy.todoist_create_request.is_none());
-        assert_eq!(legacy.locations, vec![PathBuf::from("/legacy-folder")]);
+        assert_eq!(
+            local_paths(&legacy, Section::Folders),
+            vec![PathBuf::from("/legacy-folder")]
+        );
         library.set_name(a, "DESIGN").unwrap();
         assert!(library.set_name(a, "Admin").is_err());
         assert!(library.set_name(a, "Personal").is_err());
@@ -768,5 +884,89 @@ mod tests {
                 .project_id,
             "opaque-project-A"
         );
+    }
+    #[test]
+    fn legacy_sections_merge_and_sort_actual_files_and_folders_without_touching_sources() {
+        let scratch = Scratch::new();
+        let folder = scratch.0.join("folder");
+        let tagged_folder = scratch.0.join("tagged folder");
+        let file = scratch.0.join("notes.txt");
+        let cloud = scratch.0.join("cloud");
+        let network = scratch.0.join("missing network mount");
+        fs::create_dir(&folder).unwrap();
+        fs::create_dir(&tagged_folder).unwrap();
+        fs::create_dir(&cloud).unwrap();
+        fs::write(&file, "keep this text").unwrap();
+        let legacy = serde_json::json!({"locations":[folder, file], "cloud":[cloud, folder], "server_folders":[network], "tagged":[file, tagged_folder]});
+        let sidebar: Sidebar = serde_json::from_value(legacy).unwrap();
+        assert_eq!(
+            local_paths(&sidebar, Section::Folders),
+            [folder, cloud, network, tagged_folder]
+        );
+        assert_eq!(local_paths(&sidebar, Section::Files), [file.clone()]);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "keep this text");
+        let encoded = serde_json::to_string(&sidebar).unwrap();
+        for obsolete in [
+            "\"locations\"",
+            "\"cloud\"",
+            "\"server_folders\"",
+            "\"tagged\"",
+        ] {
+            assert!(!encoded.contains(obsolete));
+        }
+        assert_eq!(serde_json::from_str::<Sidebar>(&encoded).unwrap(), sidebar);
+    }
+
+    #[test]
+    fn remote_favourites_keep_server_identity_without_persisting_live_ssh_transport() {
+        let path = PathBuf::from("/srv/素材/reports");
+        let server = SftpServer {
+            host: "work-host".into(),
+            user: "oliver".into(),
+            port: 2222,
+            control_path: Some(PathBuf::from("/private/tmp/live-terminal-mux")),
+            ..Default::default()
+        };
+        let remote = Shortcut {
+            path: path.clone(),
+            kind: Section::Folders,
+            server: Some(server.clone()),
+        };
+        let mut sidebar = Sidebar::default();
+        sidebar.set_shortcut(remote.clone(), true);
+        let mut updated = remote.clone();
+        updated.server.as_mut().unwrap().name = "Renamed host".into();
+        sidebar.set_shortcut(updated, true);
+        assert_eq!(
+            sidebar.shortcuts.len(),
+            1,
+            "Changing a label must not duplicate a remote pin"
+        );
+        sidebar.set_path(Section::Folders, path.clone(), true);
+        let mut other_host = remote.clone();
+        other_host.server.as_mut().unwrap().host = "other-host".into();
+        sidebar.set_shortcut(other_host, true);
+        let mut other_user = remote.clone();
+        other_user.server.as_mut().unwrap().user = "other-user".into();
+        sidebar.set_shortcut(other_user, true);
+        assert_eq!(
+            sidebar.shortcuts.len(),
+            4,
+            "Local paths and different remote namespaces must stay separate"
+        );
+        let encoded = serde_json::to_string(&sidebar).unwrap();
+        assert!(!encoded.contains("control_path") && !encoded.contains("live-terminal-mux"));
+        let mut restored: Sidebar = serde_json::from_str(&encoded).unwrap();
+        assert!(restored.contains(&remote));
+        assert_eq!(restored.shortcuts[0].kind, Section::Folders);
+        assert!(restored.shortcuts[0]
+            .server
+            .as_ref()
+            .unwrap()
+            .control_path
+            .is_none());
+        restored.set_shortcut(remote, false);
+        assert_eq!(restored.shortcuts.len(), 3);
+        assert!(restored.contains(&Shortcut::local(path, Section::Folders)));
     }
 }

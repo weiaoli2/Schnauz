@@ -5,8 +5,14 @@ use super::*;
 pub(super) struct Volume {
     name: String,
     path: PathBuf,
+    #[serde(default = "default_local")]
+    local: bool,
     total: Option<u64>,
     free: Option<u64>,
+}
+
+fn default_local() -> bool {
+    true
 }
 
 #[derive(Debug, PartialEq)]
@@ -32,6 +38,28 @@ fn usage(total: Option<u64>, free: Option<u64>, warning: u8, critical: u8) -> Us
 }
 
 impl Schnauz {
+    pub(super) fn network_volume_path(&self, path: &Path) -> bool {
+        self.volumes
+            .iter()
+            .any(|v| !v.local && path.starts_with(&v.path))
+    }
+
+    pub(super) fn volume_sidebar_width(&self, window: &Window) -> f32 {
+        self.volumes
+            .iter()
+            .filter(|v| v.local)
+            .map(|volume| {
+                let free = volume
+                    .free
+                    .map(|n| format_size(false, n))
+                    .unwrap_or_else(|| "—".into());
+                project_sidebar::text_width(window, &volume.name, UI_FONT_SIZE)
+                    + project_sidebar::text_width(window, &free, 10.)
+                    + 65.
+            })
+            .fold(0., f32::max)
+    }
+
     pub(super) fn watch_volumes_start(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| loop {
             let result = cx
@@ -77,7 +105,7 @@ impl Schnauz {
                 .child("DEVICES")
                 .into_any_element(),
         );
-        for (index, volume) in self.volumes.iter().enumerate() {
+        for (index, volume) in self.volumes.iter().filter(|v| v.local).enumerate() {
             let p = prefs();
             let color = match usage(volume.total, volume.free, p.drive_warning, p.drive_critical) {
                 Usage::Healthy => 0x237a49,
@@ -104,7 +132,7 @@ impl Schnauz {
                     .id(("device", index))
                     .mx_2()
                     .px_2()
-                    .py_1p5()
+                    .h(px(24.))
                     .rounded_md()
                     .flex()
                     .items_center()

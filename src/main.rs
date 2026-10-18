@@ -48,6 +48,7 @@ actions!(
     schnauz,
     [
         NewTab,
+        ConnectToServer,
         NewFolder,
         CloseTab,
         MoveToTrash,
@@ -646,7 +647,6 @@ const ICON_W: f32 = 18.0;
 const PALETTE_ROW_H: f32 = 26.0;
 const PALETTE_MAX_ROWS: usize = 7;
 /// Sidebar width; also the left edge of the content/canvas area.
-const SIDEBAR_W: f32 = 232.0;
 /// Sidebar width when collapsed to the expand button only.
 const SIDEBAR_COLLAPSED_W: f32 = 52.0;
 /// Height of the custom titlebar strip (the OS titlebar is transparent, so this
@@ -838,15 +838,13 @@ struct Group {
 #[derive(Clone)]
 enum SidebarTarget {
     Project(u64),
-    ProjectPath(projects::Section, PathBuf),
+    Favourite(projects::Shortcut),
     /// Empty sidebar space → offer "New Group".
     Empty,
     /// A group's header (by index) → offer "Delete Group".
     GroupHeader(usize),
     /// A member of a group: (group index, path) → offer "Remove from Group".
     GroupMember(usize, PathBuf),
-    /// A saved SFTP server → offer "Edit…" / "Remove".
-    Sftp(SftpServer),
     /// A tab chip: (pane, tab index) → New Tab / Duplicate / Close / Close Others.
     Tab(usize, usize),
     /// The nav/path bar of a pane → New Tab / Copy Path / Open in Terminal.
@@ -1304,7 +1302,9 @@ struct Schnauz {
     /// A name click or native drag consumed this gesture; still bubble mouse-up
     /// so the root clears drag and marquee state. Reset on the next press.
     suppress_entry_click: bool,
-    locations_drop_hover: bool,
+    favourites_drop_hover: bool,
+    favourite_drag: Option<project_sidebar::RemoteDrag>,
+    sidebar_bounds: Rc<RefCell<Option<Bounds<gpui::Pixels>>>>,
     todoist: todoist::State,
     /// Open "Sort By" dropdown: (pane, x, y) in window coords.
     sort_menu: Option<(usize, f32, f32)>,
@@ -1592,7 +1592,9 @@ impl Schnauz {
             rename: None,
             pending_click_rename: None,
             suppress_entry_click: false,
-            locations_drop_hover: false,
+            favourites_drop_hover: false,
+            favourite_drag: None,
+            sidebar_bounds: Rc::new(RefCell::new(None)),
             todoist: todoist::State::default(),
             sort_menu: None,
             confirm_delete: None,
@@ -1779,6 +1781,9 @@ impl Schnauz {
                             this.recompute_find(pane);
                         }
                         this.prewarm_icons(cx);
+                        if let Some(path) = this.tab(pane).anchor.clone().filter(|p| this.tab(pane).selection.contains(p)) {
+                            this.reveal_in_pane(pane, path, cx);
+                        }
                     }
                     Err(e) => {
                         this.tab_mut(pane).entries.clear();
@@ -3820,12 +3825,12 @@ impl Schnauz {
                     this.close_context_menu(cx);
                     let _ = Command::new("open").arg("-R").arg(&p).spawn();
                 }));
-                let p = path.clone();
-                let already = self.projects.sidebar().locations.contains(&p);
-                let label = if already { "Remove from Locations" } else { "Add to Locations" };
+                let shortcut = self.shortcut_for_path(pane, path.clone());
+                let already = self.projects.sidebar().contains(&shortcut);
+                let label = if already { "Remove from Favourites" } else { "Add to Favourites" };
                 nodes.push(mi(label, move |this, _, cx| {
                     this.close_context_menu(cx);
-                    this.set_project_path(projects::Section::Locations, p.clone(), !already, cx);
+                    this.set_project_shortcut(shortcut.clone(), !already, cx);
                 }));
                 // "Add to Group ▸" (only when groups are enabled and exist).
                 if prefs().groups_enabled && !self.groups.is_empty() {
@@ -3898,6 +3903,14 @@ impl Schnauz {
     /// over the network.
     fn menu_nodes_remote(&self, pane: usize, target: Option<(PathBuf, bool)>) -> Vec<MenuNode> {
         let mut nodes: Vec<MenuNode> = Vec::new();
+        let pin = target.as_ref().map(|(p, _)| p.clone()).unwrap_or_else(|| self.tab(pane).current_dir.clone());
+        let shortcut = self.shortcut_for_path(pane, pin);
+        let already = self.projects.sidebar().contains(&shortcut);
+        nodes.push(mi(if already { "Remove from Favourites" } else { "Add to Favourites" }, move |this, _, cx| {
+            this.close_context_menu(cx);
+            this.set_project_shortcut(shortcut.clone(), !already, cx);
+        }));
+        nodes.push(MenuNode::Sep);
         if let Some((path, is_dir)) = target {
             let p = path.clone();
             let label = if is_dir { "Open" } else { "Open (Download)" };
@@ -4858,7 +4871,8 @@ impl Schnauz {
         let groups_on = prefs().groups_enabled;
         let mut items: Vec<MenuNode> = Vec::new();
         let folder = match &target {
-            SidebarTarget::ProjectPath(_,p) | SidebarTarget::GroupMember(_,p) => Some(p.clone()),
+            SidebarTarget::Favourite(s) => s.server.is_none().then(|| s.path.clone()),
+            SidebarTarget::GroupMember(_,p) => Some(p.clone()),
             SidebarTarget::Empty => Some(self.active_tab().current_dir.clone()).filter(|_| self.active_tab().remote.is_none()),
             SidebarTarget::Tab(p,t) => self.panes.get(*p).and_then(|p|p.tabs.get(*t)).filter(|t|t.remote.is_none()).map(|t|t.current_dir.clone()),
             SidebarTarget::NavBar(p) => Some(self.tab(*p)).filter(|t|t.remote.is_none()).map(|t|t.current_dir.clone()),
@@ -4870,8 +4884,7 @@ impl Schnauz {
             }
         }
         if let Some(folder) = folder.filter(|p|p.is_dir()) {
-            let section = match &target { SidebarTarget::ProjectPath(section, _) => *section, _ => projects::Section::Locations };
-            items.push(self.project_visibility_menu(section, folder.clone()));
+            if !matches!(target, SidebarTarget::Favourite(_)) { items.push(self.project_visibility_menu(projects::Shortcut::local(folder.clone(), projects::Section::Folders))); }
             items.push(MenuNode::Sep);
             let view_folder = folder.clone();
             let view_pane = match &target { SidebarTarget::NavBar(p) | SidebarTarget::Tab(p, _) => *p, _ => self.active_pane };
@@ -4882,8 +4895,9 @@ impl Schnauz {
             items.push(MenuNode::Sep);
         }
         match target {
-            SidebarTarget::ProjectPath(section, path) => {
-                items.push(mi("Remove from this project", move |this, _, cx| this.set_project_path(section, path.clone(), false, cx)));
+            SidebarTarget::Favourite(shortcut) => {
+                items.push(self.project_visibility_menu(shortcut.clone()));
+                items.push(mi("Remove from Favourites", move |this, _, cx| this.set_project_shortcut(shortcut.clone(), false, cx)));
             },
             SidebarTarget::Project(id) => {
                 items.push(mi("Open project", move |this, window, cx| { window.focus(&this.focus); this.restore_project(id, cx); }));
@@ -4922,32 +4936,6 @@ impl Schnauz {
                     mi("Remove from Group", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
                         this.remove_from_group(idx, &p, cx);
-                    }),
-                );
-            }
-            SidebarTarget::Sftp(server) => {
-                let s = server.clone();
-                items.push(
-                    mi("Connect", move |this, _, cx| {
-                        this.close_sidebar_menu(cx);
-                        this.connect_sftp(s.clone(), cx);
-                    }),
-                );
-                let s = server.clone();
-                items.push(
-                    mi("Edit\u{2026}", move |this, _, cx| {
-                        this.edit_server(&s, cx);
-                    }),
-                );
-                let s = server.clone();
-                items.push(
-                    mi("Remove", move |this, _, cx| {
-                        this.close_sidebar_menu(cx);
-                        let list: Vec<SftpServer> = sftp_servers()
-                            .into_iter()
-                            .filter(|x| x.display() != s.display())
-                            .collect();
-                        apply_sftp_servers(list, cx);
                     }),
                 );
             }
@@ -5378,6 +5366,10 @@ impl Schnauz {
         let ks = &ev.keystroke;
         let cmd = ks.modifiers.platform;
         let key = ks.key.as_str();
+        if self.favourite_drag.is_some() {
+            if key == "escape" { self.favourite_drag = None; cx.notify(); }
+            cx.stop_propagation(); return;
+        }
 
         if self.new_text_file.is_some() { self.handle_text_file_key(ev, cx); return; }
         if self.project_dialog.is_some() {
@@ -7460,7 +7452,10 @@ impl Schnauz {
         };
         paths.sort();
 
-        if let Some(view) = ns_view_ptr(window) {
+        if self.tab(pane).remote.is_some() {
+            let items = paths.into_iter().map(|p| self.shortcut_for_path(pane, p)).collect();
+            self.favourite_drag = Some(project_sidebar::RemoteDrag { items, position: point(px(x), px(y)) });
+        } else if let Some(view) = ns_view_ptr(window) {
             start_os_file_drag(view, &paths);
         }
         cx.notify();
@@ -8095,7 +8090,7 @@ impl Schnauz {
                     .text_size(px(UI_SMALL_FONT_SIZE))
                     .text_color(rgb(t.text_dim))
                     .hover(|s| s.text_color(rgb(t.text)))
-                    .child(div().w(px(10.0)).child(arrow.to_string()))
+                    .when(!matches!(title, "PROJECTS" | "FAVOURITES"), |d| d.child(div().w(px(10.0)).child(arrow.to_string())))
                     .child(title.to_string())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.toggle_section(title_owned.clone(), cx);
@@ -8328,18 +8323,7 @@ impl Schnauz {
         }
     }
 
-    /// Push a section header and report whether its items are expanded.
-    fn begin_section(
-        &self,
-        items: &mut Vec<AnyElement>,
-        title: &'static str,
-        cx: &Context<Self>,
-    ) -> bool {
-        items.push(self.section_header_el(title, None, cx));
-        !self.collapsed_sections.contains(title)
-    }
-
-    fn render_sidebar(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_sidebar(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let collapsed = prefs().sidebar_collapsed;
         let mut items: Vec<AnyElement> = Vec::new();
 
@@ -8372,7 +8356,10 @@ impl Schnauz {
         let sidebar = div()
             .id("sidebar")
             .flex_none()
-            .w(px(if collapsed { SIDEBAR_COLLAPSED_W } else { SIDEBAR_W }))
+            .w(px(self.sidebar_width(window)))
+            .overflow_hidden()
+            .relative()
+            .child(gpui::canvas({ let bounds_store = self.sidebar_bounds.clone(); move |bounds, _, _| { *bounds_store.borrow_mut() = Some(bounds); } }, |_, _, _, _| {}).absolute().size_full())
             .h_full()
             .flex()
             .flex_col()
@@ -8393,8 +8380,7 @@ impl Schnauz {
         let mut items = Vec::new();
         self.push_project_sidebar(&mut items, cx);
 
-        self.project_folder_section(&mut items, &mut key, "LOCATIONS", projects::Section::Locations, cx);
-        self.project_tagged_section(&mut items, &mut key, cx);
+        self.favourites_section(&mut items, &mut key, cx);
 
         // --- Groups (user-defined; only when the feature is enabled) ---
         if prefs().groups_enabled {
@@ -8457,79 +8443,6 @@ impl Schnauz {
             }
         }
 
-        self.project_folder_section(&mut items, &mut key, "CLOUD", projects::Section::Cloud, cx);
-
-        // Saved connections and explicit network-folder shortcuts belong to this project.
-        if self.begin_section(&mut items, "SERVERS", cx) {
-            for path in &self.projects.sidebar().server_folders {
-                self.project_path_row(&mut items, &mut key, path, projects::Section::ServerFolders, cx);
-            }
-            // Saved SFTP servers — click to connect and browse remotely.
-            for server in sftp_servers() {
-                key += 1;
-                let s = server.clone();
-                let label = server.name.clone();
-                let tip_text = format!("{}\nsftp://{}", server.name, server.display());
-                let row = div()
-                    .id(("sftp", key))
-                    .flex()
-                    .items_center()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .text_color(rgb(theme().text_muted))
-                    .hover(|s| s.bg(rgb(theme().hover)).text_color(rgb(theme().text)))
-                    .mx_2()
-                    .px_2()
-                    .py_1()
-                    .gap_2()
-                    .child(div().w(px(16.0)).flex().justify_center().child("🖧"))
-                    .child(div().min_w_0().truncate().child(label));
-                let s2 = server.clone();
-                items.push(
-                    row.tooltip(tip(tip_text))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.connect_sftp(s.clone(), cx);
-                        }))
-                        .on_mouse_down(
-                            MouseButton::Right,
-                            cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                                let (x, y) = (
-                                    f64::from(ev.position.x) as f32,
-                                    f64::from(ev.position.y) as f32,
-                                );
-                                this.open_sidebar_menu(x, y, SidebarTarget::Sftp(s2.clone()), cx);
-                                cx.stop_propagation();
-                            }),
-                        )
-                        .into_any_element(),
-                );
-            }
-            items.push(div().id("add-server-folder").mx_2().px_2().py_1().cursor_pointer().text_color(rgb(theme().text_muted))
-                .child("+ Add network folder…").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.choose_project_folder(projects::Section::ServerFolders, cx))).into_any_element());
-            // "Connect to Server…" action row.
-            let base = div()
-                .id("connect-server")
-                .flex()
-                .items_center()
-                .rounded_md()
-                .cursor_pointer()
-                .text_color(rgb(theme().text_muted))
-                .hover(|s| s.bg(rgb(theme().hover)).text_color(rgb(theme().text)))
-                .mx_2()
-                .px_2()
-                .py_1()
-                .gap_2()
-                .child(div().w(px(16.0)).flex().justify_center().child("🌐"))
-                .child("Connect to Server…");
-            items.push(
-                base.tooltip(tip("Connect to Server…"))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.open_server_dialog(cx);
-                    }))
-                    .into_any_element(),
-            );
-        }
-
         // --- Waterfall: an inline, expandable folder tree of the active dir ---
         if prefs().waterfall && self.active_tab().remote.is_none() {
             self.render_waterfall(&mut items, &mut key, current, cx);
@@ -8552,7 +8465,18 @@ impl Schnauz {
                 )
             })
             .children(items);
+        let hint = (self.favourites_drop_hover && cx.has_active_drag()) || self.remote_drop_hover();
         sidebar.children(fixed).child(sections)
+            .on_drag_move::<ExternalPaths>(cx.listener(|this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| {
+                let hovered = ev.bounds.contains(&ev.event.position);
+                if this.favourites_drop_hover != hovered { this.favourites_drop_hover = hovered; cx.notify(); }
+            }))
+            .drag_over::<ExternalPaths>(|s, _, _, _| s.bg(Theme::alpha(theme().accent, 0x18)))
+            .on_drop(cx.listener(|this, drag: &ExternalPaths, _, cx| {
+                this.favourites_drop_hover = false;
+                this.add_dropped_favourites(this.projects.active, drag.paths().to_vec(), cx);
+            }))
+            .when(hint, |d| d.child(div().absolute().left_2().right_2().bottom_3().p_2().rounded_md().bg(rgb(theme().surface)).border_1().border_color(rgb(theme().accent)).text_size(px(UI_SMALL_FONT_SIZE)).child("Drop to add to Favourites")))
     }
 
     /// The top bar for a pane: back/forward arrows then either the clickable
@@ -8625,10 +8549,10 @@ impl Schnauz {
                     cx.stop_propagation();
                 }))));
         }
+        let tagged = self.selection_is_favourite(pane);
+        row = row.child(button("tb-project-tag", pane, Icon::Tag, tagged, has_selection, "Tag selection in this project's Favourites")
+            .when(has_selection, |d| d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_project_tags(pane, cx)))));
         if local {
-            let tagged = has_selection && self.tab(pane).selection.iter().all(|p| self.projects.sidebar().tagged.contains(p));
-            row = row.child(button("tb-project-tag", pane, Icon::Tag, tagged, has_selection, "Tag selection in current project")
-                .when(has_selection, |d| d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_project_tags(pane, cx)))));
             row = row.child(button("tb-delete", pane, Icon::Trash, false, has_selection, "Move selection to Trash · ⌘⌫")
                 .when(has_selection, |d| d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| { this.active_pane = pane; this.request_delete(pane, cx); }))));
         }
@@ -9720,7 +9644,7 @@ impl Render for Schnauz {
             .flex()
             .flex_1()
             .min_h_0()
-            .child(self.render_sidebar(cx))
+            .child(self.render_sidebar(window, cx))
             .child(self.render_content(cx));
 
         let mut root = div()
@@ -9781,6 +9705,7 @@ impl Render for Schnauz {
                 apply_prefs(np, cx);
                 cx.notify();
             }))
+            .on_action(cx.listener(|this, _: &ConnectToServer, _, cx| this.open_server_dialog(cx)))
             .on_action(cx.listener(|this, _: &GoBack, _, cx| {
                 let p = this.active_pane;
                 this.go_back(p, cx);
@@ -9810,6 +9735,7 @@ impl Render for Schnauz {
                 // A press-then-move on a file row becomes a native OS drag (so
                 // files can be dropped into Finder or any other app).
                 this.maybe_start_os_drag(x, y, window, cx);
+                if let Some(drag) = &mut this.favourite_drag { drag.position = ev.position; cx.notify(); }
                 if let Some((pane, start_y, start_height)) = this.terminal_resize {
                     if pane < this.panes.len() {
                         this.tab_mut(pane).terminal_height = (start_height + start_y - y).clamp(150.0, (f32::from(window.bounds().size.height) - 230.0).max(150.0));
@@ -9825,7 +9751,8 @@ impl Render for Schnauz {
             }))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
+                cx.listener(|this, ev: &gpui::MouseUpEvent, _, cx| {
+                    this.finish_favourite_drag(ev.position, cx);
                     this.finish_preview_resize(cx);
                     this.drag_candidate = None;
                     this.terminal_resize = None;
@@ -9876,6 +9803,8 @@ impl Render for Schnauz {
                     ),
             );
         }
+
+        root = root.children(self.render_favourite_drag());
 
         // Cloud sync status (neutral; clears itself).
         if let Some(msg) = self.notice.clone() {
@@ -10986,7 +10915,7 @@ fn nav_item(
         .rounded_md()
         .cursor_pointer()
         .text_color(rgb(if active { t.text } else { t.text_muted }))
-        .mx_2().px_3().py_1p5().gap_2();
+        .mx_2().px_2().h(px(24.)).gap_2();
     let base = if active {
         base.bg(rgb(t.selected))
     } else {
@@ -10994,7 +10923,7 @@ fn nav_item(
             .active(|s| s.bg(rgb(t.selected)))
     };
     base.child(icon)
-        .child(div().min_w_0().overflow_hidden().child(label))
+        .child(div().min_w_0().truncate().child(label))
         .tooltip(tip(tooltip))
         .on_click(on_click)
         .on_mouse_down(MouseButton::Right, on_right)
@@ -13575,6 +13504,7 @@ fn main() {
 
         // Menu bar: app menu with Settings + Quit, plus their shortcuts.
         cx.bind_keys([
+            KeyBinding::new("cmd-k", ConnectToServer, None),
             KeyBinding::new("cmd-,", OpenSettings, None),
             KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("cmd-shift-s", NewProject, None),
@@ -13620,6 +13550,8 @@ fn main() {
                 items: vec![
                     MenuItem::action("Back", GoBack),
                     MenuItem::action("Forward", GoForward),
+                    MenuItem::separator(),
+                    MenuItem::action("Connect to Server…", ConnectToServer),
                     MenuItem::separator(),
                     MenuItem::action("Home", GoHome),
                     MenuItem::action("Applications", GoApplications),

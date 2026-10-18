@@ -100,8 +100,14 @@ the server account/repository and current review status before proceeding.
 Keep browsing fast: no automatic recursive size scans or home indexing. The
 collapsed sidebar contains only its reopen button; obsolete compact-rail controls
 are removed from the source. Devices stays above Projects with background capacity
-updates and adjustable 80/90%-used colour thresholds. Locations replaces Favorites;
-legacy shortcuts merge without duplicates. Cloud paths have a persistent blue
+updates and adjustable 80/90%-used colour thresholds. The compact sidebar has
+Projects without count badges, then Favourites → Folders / Files. Its width fits
+visible labels, capped for long names. Dropped local/SSH items and the Tag button
+use the same typed shortcuts. Legacy Locations, Cloud, network folders and Tagged
+Items merge without loss; their old sections are removed. Cloud/network badges
+identify providers without rendering-time I/O. SSH favourite navigation uses a
+browser-only tab and never sends terminal commands. Connections remain in Settings
+and Go → Connect to Server… (Cmd+K). Cloud paths have a persistent blue
 provider badge and relative breadcrumbs. The approved direct Nextcloud connection
 is implemented: Settings → General → Connections links a local folder through
 browser login, with its own credential in Keychain. Nextcloud menus offer sharing,

@@ -5,6 +5,7 @@ import Foundation
 struct Volume: Encodable {
     let name: String
     let path: String
+    let local: Bool
     let total: UInt64?
     let free: UInt64?
 }
@@ -24,18 +25,19 @@ for url in [URL(fileURLWithPath: "/")] + urls {
     let path = url.path
     guard path == "/" || url.deletingLastPathComponent().path == "/Volumes",
           seen.insert(path).inserted,
-          let info = try? url.resourceValues(forKeys: identityKeys), info.volumeIsLocal == true else { continue }
+          let info = try? url.resourceValues(forKeys: identityKeys) else { continue }
     // The system root is read-only on modern macOS; its paired Data volume
     // holds the user's files and gives the useful APFS space figure.
     let probe = path == "/" ? fm.homeDirectoryForCurrentUser : url
-    let space = (try? probe.resourceValues(forKeys: keys)) ?? info
+    let local = info.volumeIsLocal == true
+    let space = local ? ((try? probe.resourceValues(forKeys: keys)) ?? info) : info
     let total = space.volumeTotalCapacity.flatMap { $0 > 0 ? UInt64($0) : nil }
     // Some macOS versions return zero for the important-usage key even while
     // regular free space is available. Never mistake that for a full drive.
     let available = [space.volumeAvailableCapacityForImportantUsage,
                      space.volumeAvailableCapacity.map(Int64.init)].compactMap { $0 }.max()
     let free = available.flatMap { $0 >= 0 ? UInt64($0) : nil }
-    volumes.append(Volume(name: info.volumeName ?? url.lastPathComponent, path: path, total: total, free: free))
+    volumes.append(Volume(name: info.volumeName ?? url.lastPathComponent, path: path, local: local, total: total, free: free))
 }
 volumes.sort { $0.path == "/" || ($1.path != "/" && $0.name.localizedStandardCompare($1.name) == .orderedAscending) }
 let data = try JSONEncoder().encode(volumes)

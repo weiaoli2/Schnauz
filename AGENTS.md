@@ -95,25 +95,40 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   with the shell owning the PTY and no child jobs. Keep the panel open and file
   browser focused. Never restart automatically after a foreground app exits.
 
-- Projects replace the old workspace UI. Each owns its tagged items,
-  Locations, Cloud, saved servers/network folders and autosaved local layout.
-  New project sidebars start empty; Personal has its own profile. Recents and
-  automatic cloud-folder discovery are removed. Locations is the single shortcut
-  list; Favorites and its controls/model are removed. Merge legacy project and
-  Personal favorites into Locations on load, deduplicating without dropping files
-  or unavailable paths. Preserve legacy files; new saves contain Locations only.
-  Folders can be dropped onto Locations to add shortcuts to the active project.
-  Show “Drop to add to favourites” over that section while hovering a file drag.
-  Add folder references only, deduplicate, and never move/copy the dropped files.
-  A collapsed sidebar still has only its expand button.
-  The Tag icon adds/removes local
-  selection from Tagged Items; clicking a tagged file reveals it. Sidebar folders
-  offer View in… with All projects first, then checkable individual projects;
-  update destinations without switching. All affects existing projects only.
-  Central projects.json stores profiles; migrate legacy servers once to Personal,
-  preserve original legacy files and shared Keychain credentials. Migrate legacy workspaces
-  and bookmarks without modifying their original files. Keep live PTYs when switching.
-- Devices is a global fixed section above the scrolling Projects/Locations area,
+- Projects replace workspaces. Each owns Favourites, saved connection settings,
+  Todoist routing and autosaved local tabs/layout. Personal has its own profile;
+  new projects start with empty Favourites. Recents remains removed.
+  The expanded sidebar is Devices → Projects → Favourites, with compact 24 pt
+  rows and Folders / Files subsections. Projects has no leading disclosure marker
+  or tab-count badge. Cloud, Servers, Locations and Tagged Items sections and
+  their controls are removed. Preserve spacing between the main groups.
+  Fit sidebar width to measured visible labels (170–320 pt, capped at 30% of the
+  window). Truncate unusually long names with path tooltips, never horizontal
+  scrolling. Collapsed still contains only its reopen button.
+  All sidebar drops add references: folders to Folders, files to Files. Tag toggles
+  the same membership, including SSH items; Finder colour tags remain separate.
+  Show “Drop to add to Favourites” while hovering. Local drops validate metadata
+  in the background. Remote drags use known listing types and an internal gesture,
+  never fake local file URLs, transfers, terminal input or connection attempts.
+  Escape / dropping outside the expanded sidebar cancels remote reference drags.
+  Central projects.json stores typed shortcuts (path, folder/file kind, optional
+  nonsecret SFTP server identity). Deduplicate by path plus server host/user/port,
+  keeping identical local and remote paths separate. Never keep a live SSH mux in
+  favourites; reuse an active terminal's authenticated transport only on explicit
+  favourite navigation. Keep that terminal tab intact, using/reusing a separate
+  browser-only tab. A saved remote favourite can explicitly reconnect through the
+  normal SFTP flow after restart; never inject commands into an SSH terminal.
+  Local/cloud folders retain native blue icons with an overlaid cloud badge;
+  SSH/network shortcuts have a globe badge. Mounted-network identity is cached
+  by the volume helper; never probe mounts or connect while rendering.
+  Merge legacy favourites, Locations, Cloud, network folders and Tagged Items
+  without dropping missing paths. New saves contain only typed shortcuts plus
+  existing account/settings metadata. Preserve original legacy files and shared
+  Keychain credentials. Saved connections stay accessible in Settings and
+  Go → Connect to Server… (Cmd+K). View in… shares any favourite with All projects
+  first, then individual projects, without switching; All affects current projects
+  including Personal. Preserve live PTYs and imported workspace layouts.
+- Devices is a global fixed section above the scrolling Projects/Favourites area,
   independent of the selected project. Show mounted local startup/external drives
   with compact free-space labels. Use filesystem capacity, refreshed off-thread
   every 30 seconds; never calculate folder sizes. Default colours are green below

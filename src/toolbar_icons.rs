@@ -25,6 +25,9 @@ pub(super) enum Icon {
     Settings,
     Storage,
     Drive,
+    Globe,
+    Cloud,
+    Home,
 }
 
 thread_local! { static APPLE_SHARE: RefCell<HashMap<[u32; 4], Arc<RenderImage>>> = RefCell::new(HashMap::new()); }
@@ -138,6 +141,22 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
                         }
                     }
                 }
+                Icon::Globe => {
+                    circle!(10, 10, 8);
+                    line!(2,10;18,10);
+                    path.move_to(p(10.,2.));
+                    path.cubic_bezier_to(p(10.,18.),p(4.,5.),p(4.,15.));
+                    path.move_to(p(10.,2.));
+                    path.cubic_bezier_to(p(10.,18.),p(16.,5.),p(16.,15.));
+                }
+                Icon::Cloud => {
+                    path.move_to(p(5.,16.));
+                    path.cubic_bezier_to(p(5.,10.),p(0.,16.),p(0.,10.));
+                    path.cubic_bezier_to(p(15.,9.),p(5.,2.),p(14.,2.));
+                    path.cubic_bezier_to(p(16.,16.),p(20.,8.),p(20.,16.));
+                    path.line_to(p(5.,16.));
+                }
+                Icon::Home => { line!(2,9;10,2;18,9); line!(4,8;4,18;16,18;16,8); rect!(8,12,4,6); }
                 Icon::Drive => {
                     line!(2,12;5,4;15,4;18,12);
                     rect!(2, 12, 16, 5);

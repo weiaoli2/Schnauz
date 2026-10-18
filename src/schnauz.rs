@@ -401,7 +401,7 @@ impl Schnauz {
                 self.project_dialog = None;
                 self.project_dialog_error = None;
                 self.collapsed_sections.remove("PROJECTS");
-                self.collapsed_sections.remove("LOCATIONS");
+                for title in ["FAVOURITES", "FOLDERS", "FILES"] { self.collapsed_sections.remove(title); }
                 self.set_notice(format!("Created project ‘{}’", name.trim()), cx);
                 self.open_todoist(cx);
             }
@@ -703,30 +703,13 @@ impl Schnauz {
         if self.collapsed_sections.contains("PROJECTS") {
             return;
         }
-        if self.projects.items.is_empty() {
-            items.push(
-                div()
-                    .mx_3()
-                    .mt_2()
-                    .mb_1()
-                    .p_3()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(rgb(t.border))
-                    .text_size(px(UI_SMALL_FONT_SIZE))
-                    .text_color(rgb(t.text_muted))
-                    .child("Create a project for its own folders, tags, servers and tabs.")
-                    .into_any_element(),
-            );
-        }
         items.push(
             div()
                 .id("project-personal")
                 .mx_2()
-                .mt_1()
-                .px_3()
-                .py_2()
-                .rounded_lg()
+                .px_2()
+                .h(px(24.))
+                .rounded_md()
                 .flex()
                 .items_center()
                 .gap_2()
@@ -738,9 +721,9 @@ impl Schnauz {
                     t.text_muted
                 }))
                 .hover(|s| s.bg(rgb(t.hover)))
-                .child("⌂")
+                .child(ui_icon(Icon::Home, 15., rgb(t.text)))
                 .child("Personal")
-                .tooltip(tip("Your general browsing tabs and locations"))
+                .tooltip(tip("Your general browsing tabs and favourites"))
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     window.focus(&this.focus);
                     this.restore_personal(cx);
@@ -754,10 +737,9 @@ impl Schnauz {
                 div()
                     .id(SharedString::from(format!("project-{id}")))
                     .mx_2()
-                    .mt_1()
-                    .px_3()
-                    .py_2()
-                    .rounded_lg()
+                    .px_2()
+                    .h(px(24.))
+                    .rounded_md()
                     .flex()
                     .items_center()
                     .gap_2()
@@ -765,7 +747,7 @@ impl Schnauz {
                     .when(active, |s| s.bg(rgb(t.selected)))
                     .hover(|s| s.bg(rgb(t.hover)))
                     .text_color(rgb(if active { t.accent } else { t.text_muted }))
-                    .child(div().text_size(px(17.0)).child("▦"))
+                    .child(ui_icon(Icon::Project, 15., rgb(t.text)))
                     .child(
                         div()
                             .flex_1()
@@ -773,17 +755,7 @@ impl Schnauz {
                             .truncate()
                             .child(project.name.clone()),
                     )
-                    .child(
-                        div()
-                            .text_size(px(10.0))
-                            .child(project.layout.tab_count().to_string()),
-                    )
-                    .tooltip(tip(format!(
-                        "{} · {} tab(s) · {} location(s)\nChanges are remembered automatically",
-                        project.name,
-                        project.layout.tab_count(),
-                        project.sidebar.locations.len()
-                    )))
+                    .tooltip(tip(format!("{}\nSaved tabs, layout and favourites", project.name)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         window.focus(&this.focus);
                         this.restore_project(id, cx)
@@ -848,7 +820,7 @@ impl Schnauz {
                             .child("Create a project"),
                     )
                     .child(div().text_size(px(UI_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
-                        "Your own locations, tabs and split panes. Changes are remembered automatically.",
+                        "Your own favourites, tabs and split panes. Changes are remembered automatically.",
                     ))
                     .child(
                         div()

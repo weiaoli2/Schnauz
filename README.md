@@ -44,7 +44,7 @@ with a suggested USD 2.50 amount; the user completes any payment on PayPal.
   in-memory ancestor lookups and background atomic writes. No directory scan or
   per-folder settings files. **Use inherited / default view** removes that folder's
   rule. Applying a tree rule replaces existing child overrides.
-- Projects with separate locations, tabs, view modes, sorting and split layouts. Changes are remembered automatically.
+- Projects with separate favourites, tabs, view modes, sorting and split layouts. Changes are remembered automatically.
 - A preview panel and footer with item counts, current path and appearance control.
 - The clickable path ends at the current folder. Long paths clip from the left,
   and hovering shows the complete path.
@@ -107,27 +107,37 @@ The map starts below the path and filter bars. Selecting outside it closes it;
 navigation from inside its graphic keeps it open.
 
 Click **New project** or press **⌘⇧S** to create a project from the current tabs.
-Click a project in the sidebar to switch to its own tagged items, locations, cloud folders, servers and last layout.
-**Locations** is the single place for project shortcuts. Use its **+** to add a
-folder, or right-click a file/folder and choose **Add to Locations**. The separate
-Favorites section and its code are removed; existing favorites move into Locations
-without duplicates, including files and currently unavailable paths.
-Drop folders onto **Locations** to add them without moving the originals. While
-hovering, **Drop to add to favourites** identifies the target. Duplicate shortcuts
-are kept once.
-**Personal** keeps its own browsing tabs and locations.
-New projects start with empty **Locations**, **Cloud**, **Servers**
-and **Tagged Items**. Add folders with **+**; servers can also include explicit
-network-folder shortcuts. **Recents** has been removed, including history tracking.
-The little **Tag** toolbar button adds/removes selected local files and folders
-from the current project's **Tagged Items**. Click a tagged file to reveal it in
-its folder. Right-click a sidebar folder and choose **View in… → All projects** or
-an individual project; checkmarks indicate membership, and clicking again removes
-it there. This changes shortcuts only; source files stay in place. All projects
-means the projects that currently exist (including Personal); future projects
-still start empty. Tags are project membership, stored centrally rather than in
-Finder tags or file metadata. The file context menu **Tags** separately applies
-Finder colour labels, shown with real coloured dots in the native menu.
+Each project keeps its own **Favourites**, connection settings, Todoist link and
+last tabs/layout. **Personal** has its own profile. New projects start empty.
+
+The compact sidebar shows **Devices**, **Projects**, then **Favourites → Folders /
+Files**. Its width follows the visible names, with a cap for very long names and
+full paths in tooltips. Project rows no longer show tab counts. Cloud, Servers,
+Locations and Tagged Items are replaced by this single favourites list.
+
+Drop local or SSH folders/files anywhere in the expanded sidebar: Schnauz sorts
+them into **Folders** or **Files**, without moving, copying or downloading them.
+**Drop to add to Favourites** identifies the target. Duplicates are kept once,
+and identical paths on different servers stay separate. Escape or dropping
+outside cancels an SSH reference drag. Use **+** to choose local files/folders,
+or **Add to Favourites** in their context menu. Existing shortcuts migrate without
+dropping unavailable paths.
+
+The **Tag** button toggles project favourites for local and remote selections.
+Click a file favourite to reveal it; a folder opens in the browser. A small cloud
+badge identifies Nextcloud, iCloud, OneDrive and other File Provider folders;
+network/SSH items carry a globe. SSH favourites retain host/user/port and their
+path. Clicking one reuses the authenticated SSH connection when available, in a
+separate browser tab from its terminal; terminal sessions and commands stay intact.
+After restart a saved favourite can reconnect through the normal SSH settings.
+**Go → Connect to Server…** / **⌘K** remains available; saved connections stay in
+Settings. Cloud and network icons never initiate a connection.
+
+Right-click any favourite and choose **View in… → All projects** or an individual
+project. Checkmarks show membership. This changes references only; All includes
+current projects and Personal, while future projects still start empty. The file
+context menu **Tags** separately applies Finder colour labels, shown as coloured
+dots in the native menu.
 Existing saved workspaces are imported automatically;
 their original settings file is preserved. Legacy saved servers migrate once to
 **Personal**; passwords remain in the macOS Keychain. Removing a project connection
@@ -286,7 +296,7 @@ disposable test folders.
 
 - `src/theme.rs`: palette and live theming
 - `src/schnauz.rs`: custom toolbar, footer and project controls
-- `src/projects.rs`: project layouts, locations, migration and validation
+- `src/projects.rs`: project layouts, local/remote favourites, migration and validation
 - `src/volumes.rs`, `volumectl.swift`: global drive capacity and colour badges
 - `src/cloud_locations.rs`, `src/cloud_actions.rs`: cloud identity, paths and provider menus
 - `src/entry_filter.rs`: per-tab folder/file visibility
