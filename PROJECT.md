@@ -85,7 +85,7 @@ the server account/repository and current review status before proceeding.
 | Area | Source |
 |---|---|
 | Browser, navigation and file operations | `src/main.rs` |
-| Project persistence and switching | `src/projects.rs`, `src/schnauz.rs` |
+| Project persistence, shared windows and switching | `src/projects.rs`, `src/schnauz.rs`, `src/browser_windows.rs` |
 | Project folders, tags and connections | `src/project_sidebar.rs` |
 | Global drive capacity and cloud paths/menus | `src/volumes.rs`, `volumectl.swift`, `src/cloud_locations.rs`, `src/cloud_actions.rs` |
 | Direct Nextcloud accounts, links, sharing and locks | `src/nextcloud.rs`, `native/nextcloud/Core.swift`, `native/nextcloud/main.swift` |
@@ -101,7 +101,11 @@ Keep browsing fast: no automatic recursive size scans or home indexing. The
 collapsed sidebar contains only its reopen button; obsolete compact-rail controls
 are removed from the source. Devices stays above Projects with background capacity
 updates and adjustable 80/90%-used colour thresholds. The compact sidebar has
-Projects without count badges, then Favourites → Folders / Files. Empty
+Projects without count badges, then Favourites with a pinned local Home entry
+(blue Home badge) in every project, followed by Folders / Files. Drive capacity
+badges toggle saved GB / percent free without navigation. Folder menus open in
+place, a new tab or a new Schnauz window. Windows share the active project and
+view cache; project switches propagate while live tabs/PTYs stay per window. Empty
 subsections and their placeholder messages are hidden; Favourites has no +
 button or dedicated picker. Its width fits
 visible labels, capped for long names. Dropped local/SSH items and the Tag button

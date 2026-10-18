@@ -97,7 +97,17 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 
 - Projects replace workspaces. Each owns Favourites, saved connection settings,
   Todoist routing and autosaved local tabs/layout. Personal has its own profile;
-  new projects start with empty Favourites. Recents remains removed.
+  new projects start with only the built-in local Home favourite. Home is pinned
+  first under Favourites in every project, with a blue Home badge matching the
+  drive capacity badge. Never show it twice or offer removal / project visibility
+  actions; do not duplicate it in projects.json. Recents remains removed.
+  All Schnauz browser windows share one active project; switching in any window
+  switches every window. Within a project, each window browses independently.
+  Share project metadata and the folder-view cache in memory, preserve per-window
+  live tabs/PTYs on project switches, and skip autosaves for unchanged windows.
+  Folder context menus offer Open / Open in New Tab / Open in New Window,
+  including sidebar and SSH folders. New windows open only that folder without
+  cloning terminals, restoring the other window's tabs or startup reconnects.
   Successful project switching, creation and removal are silent: the toolbar
   project name, dialog and sidebar already show the result. Do not allocate
   success notices or their dismissal timers for these actions; retain errors.
@@ -138,7 +148,10 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   including Personal. Preserve live PTYs and imported workspace layouts.
 - Devices is a global fixed section above the scrolling Projects/Favourites area,
   independent of the selected project. Show mounted local startup/external drives
-  with compact free-space labels. Use filesystem capacity, refreshed off-thread
+  with compact free-space labels. Clicking only the capacity badge toggles free
+  GB / free percent for all drives without navigating; save the mode in central
+  prefs. Colours still reflect used capacity. Use cached totals for the toggle.
+  Use filesystem capacity, refreshed off-thread
   every 30 seconds; never calculate folder sizes. Default colours are green below
   80% used, yellow at 80–90%, red above 90%; thresholds are saved in Settings →
   General → Sidebar. A collapsed sidebar still contains only its reopen button.
@@ -298,7 +311,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Successful connection requests Tasks; Settings → Connections offers Show tasks.
   Opening a pane must not invalidate account/project caches. Keep Terminal and
   Preview labeled in the top toolbar; Preview toggles only the file preview.
-- Keep the footer on one line. The theme action is Dark Mode / Light Mode;
+- Keep the footer on one line. The theme label shows the current Light mode / Dark mode; clicking switches.
   Settings is a centered 14 pt gear in a fixed 26 pt button, with its label and
   Cmd+, shortcut in the tooltip only. New Folder has a closed folder outline
   and an inset plus; keep all strokes clear of the icon canvas edges.

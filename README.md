@@ -108,7 +108,14 @@ navigation from inside its graphic keeps it open.
 
 Click **+ beside Projects** or press **⌘⇧S** to create a project from the current tabs.
 Each project keeps its own **Favourites**, connection settings, Todoist link and
-last tabs/layout. **Personal** has its own profile. New projects start empty.
+last tabs/layout. **Personal** has its own profile. Every project includes your
+local home folder, pinned first under Favourites with a small blue **Home** badge.
+It stays visible once, cannot be removed, and needs no per-project saved copy.
+New projects otherwise start empty. All Schnauz windows share the active project;
+changing projects in one changes it everywhere. Each window can browse its own
+folder within that project. Folder context menus offer **Open**, **Open in New
+Tab** and **Open in New Window**, including SSH folders and sidebar favourites.
+New windows open the chosen folder without duplicating terminal sessions.
 
 The compact sidebar shows **Devices**, **Projects**, then **Favourites → Folders /
 Files**. Empty Folders / Files subsections are hidden, with no placeholder
@@ -136,7 +143,7 @@ Settings. Cloud and network icons never initiate a connection.
 
 Right-click any favourite and choose **View in… → All projects** or an individual
 project. Checkmarks show membership. This changes references only; All includes
-current projects and Personal, while future projects still start empty. The file
+current projects and Personal, while future projects still start with Home only. The file
 context menu **Tags** separately applies Finder colour labels, shown as coloured
 dots in the native menu.
 Existing saved workspaces are imported automatically;
@@ -145,7 +152,9 @@ their original settings file is preserved. Legacy saved servers migrate once to
 keeps shared host credentials available for other projects.
 
 **Devices** stays above the scrolling project sections and is shared by every
-project. Each mounted local drive shows a compact free-space label: green below
+project. Click a drive's compact free-space badge to switch all drives between
+**GB free** and **percent free**; the choice is saved. Clicking the badge keeps
+your current folder open. Its colour reflects used capacity: green below
 80% used, yellow at 80–90%, red above 90%. Change those thresholds in **Settings →
 General → Sidebar**. Capacity refreshes in the background every 30 seconds and
 never scans folders. Collapsing the sidebar leaves only its reopen button.

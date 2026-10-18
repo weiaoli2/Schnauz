@@ -74,6 +74,8 @@ use theme::*;
 mod projects;
 mod legacy;
 mod project_sidebar;
+mod browser_windows;
+use browser_windows::{FolderViewsGlobal, ProjectLibraryGlobal};
 mod text_preview;
 mod text_view;
 mod native_preview;
@@ -138,6 +140,8 @@ struct Prefs {
     /// Percentage used: yellow begins at warning, red above critical.
     drive_warning: u8,
     drive_critical: u8,
+    /// Show free drive capacity as a percentage instead of GB.
+    drive_free_percent: bool,
     /// How many Recents to show in the sidebar (0 hides the section).
     /// Give the command palette (Cmd+P) its own Up/Down query history.
     palette_history: bool,
@@ -174,6 +178,7 @@ impl Default for Prefs {
             sidebar_collapsed: false,
             drive_warning: 80,
             drive_critical: 90,
+            drive_free_percent: false,
             palette_history: false,
             groups_enabled: false,
             show_filter_button: true,
@@ -202,6 +207,7 @@ thread_local! {
         sidebar_collapsed: false,
         drive_warning: 80,
         drive_critical: 90,
+        drive_free_percent: false,
         palette_history: false,
         groups_enabled: false,
         show_filter_button: true,
@@ -1114,8 +1120,12 @@ impl Tab {
     }
 
     fn new(dir: PathBuf) -> Self {
-        // Fast first paint; full metadata is filled in from the background.
-        let entries = read_entries_fast(&dir);
+        Self::at_location(dir, None)
+    }
+
+    fn at_location(dir: PathBuf, remote: Option<SftpServer>) -> Self {
+        // Remote paths belong to the server, never read them on this Mac.
+        let entries = if remote.is_none() { read_entries_fast(&dir) } else { Vec::new() };
         let mut tab = Tab {
             current_dir: dir.clone(),
             terminal: None,
@@ -1151,7 +1161,7 @@ impl Tab {
             load_gen: 0,
             last_scroll: Instant::now(),
             scroll_epoch: 0,
-            remote: None,
+            remote,
         };
         tab.recompute_results();
         tab
@@ -1258,7 +1268,7 @@ struct Schnauz {
     group_dialog: Option<String>,
     /// Sidebar section titles the user has collapsed (hidden their items).
     collapsed_sections: HashSet<String>,
-    folder_views: folder_views::Library,
+    folder_views: Rc<RefCell<folder_views::Library>>,
     resize: Option<Resize>,
     scroll_drag: Option<ScrollDrag>,
     /// In-progress drag of a List view's horizontal scrollbar thumb:
@@ -1384,15 +1394,16 @@ enum CloudKind {
 }
 
 impl Schnauz {
-    fn new(dir: PathBuf, cx: &mut Context<Self>) -> Self {
+    fn new(location: projects::Shortcut, cx: &mut Context<Self>) -> Self {
         // A background snapshot, independent of project switching.
         Self::watch_volumes_start(cx);
-        cx.on_app_quit(|this, _| {
-            this.save_session();
-            let job = this.folder_views.write_job();
+        cx.on_app_quit(|this, cx| {
+            this.save_session(cx);
+            let job = this.folder_views.borrow().write_job();
             async move { if let Some(job) = job { let _ = job.run(); } }
         }).detach();
         ensure_base_icons(); // real folder/file icons ready before first render
+        cx.observe_global::<ProjectLibraryGlobal>(|this, cx| this.observe_project_library(cx)).detach();
         // Sync + repaint whenever the theme changes (e.g. from Settings).
         cx.observe_global::<ThemeGlobal>(|_, cx| {
             set_active_theme(cx.global::<ThemeGlobal>().0);
@@ -1428,10 +1439,10 @@ impl Schnauz {
         cx.observe_global::<SftpServersGlobal>(|this, cx| {
             let servers = cx.global::<SftpServersGlobal>().0.clone();
             set_active_sftp_servers(servers.clone());
-            if this.projects.sidebar().servers != servers {
+            if this.projects.active == cx.global::<SftpServersGlobal>().1 && this.projects.sidebar().servers != servers {
                 let mut candidate = this.projects.clone();
                 candidate.sidebar_mut().servers = servers;
-                if let Err(error) = this.persist_library(candidate) { this.set_notice(error, cx); }
+                if let Err(error) = this.persist_library(candidate, cx) { this.set_notice(error, cx); }
             }
             cx.notify();
         })
@@ -1478,7 +1489,7 @@ impl Schnauz {
                     }
                     if maintenance.elapsed() >= Duration::from_secs(1) {
                         this.refresh_waterfall(cx);
-                        this.save_session();
+                        this.save_session(cx);
                         maintenance = Instant::now();
                     }
                 }).is_err() {break;}
@@ -1532,11 +1543,13 @@ impl Schnauz {
             })
             .detach();
         }
-        let project_result = config_dir()
+        let project_result = if let Some(shared) = cx.try_global::<ProjectLibraryGlobal>() {
+            match &shared.1 { Some(error) => Err(error.clone()), None => Ok(shared.0.clone()) }
+        } else { config_dir()
             .ok_or_else(|| "Cannot find the settings folder.".to_string())
             .and_then(|dir| projects::Library::load_migrating(
                 &dir.join("projects.json"), &dir.join("workspaces.json"), read_path_list("bookmarks.txt")
-            ).map_err(|error| format!("Couldn't read projects: {error}. The existing file has been preserved.")));
+            ).map_err(|error| format!("Couldn't read projects: {error}. The existing file has been preserved."))) };
         let (mut projects, mut project_load_error) = match project_result {
             Ok(library) => (library, None),
             Err(error) => (projects::Library::default(), Some(error)),
@@ -1546,11 +1559,11 @@ impl Schnauz {
                 if let Err(error) = projects.save(&path) { project_load_error = Some(format!("Couldn't migrate project sidebar: {error}")); }
             }
         }
-        let servers = projects.sidebar().servers.clone();
-        set_active_sftp_servers(servers.clone());
-        cx.set_global(SftpServersGlobal(servers));
+        if cx.try_global::<ProjectLibraryGlobal>().is_none() {
+            cx.set_global(ProjectLibraryGlobal(projects.clone(), project_load_error.clone()));
+        }
         Self {
-            panes: vec![Pane::new(dir)],
+            panes: vec![Pane { tabs: vec![Tab::at_location(location.path, location.server)], active: 0 }],
             volumes: Vec::new(),
             active_pane: 0,
             split_ratio: 0.5,
@@ -1562,7 +1575,7 @@ impl Schnauz {
             sidebar_menu: None,
             group_dialog: None,
             collapsed_sections: read_string_list("collapsed_sections.txt").into_iter().collect(),
-            folder_views: folder_views::Library::open(config_file("folder-views.json")),
+            folder_views: cx.global::<FolderViewsGlobal>().0.clone(),
             resize: None,
             scroll_drag: None,
             hbar_drag: None,
@@ -2265,14 +2278,16 @@ impl Schnauz {
         serde_json::to_string(&self.capture_layout()).unwrap_or_default()
     }
 
-    fn save_session(&mut self) {
+    fn save_session(&mut self, cx: &mut Context<Self>) {
+        let session = self.session_string();
+        // Each window remembers what it last saved; another window's layout
+        // updates must not trigger a competing autosave in an idle window.
+        if session.is_empty() || session == self.saved_session { return; }
         let mut candidate = self.projects.clone();
         candidate.remember_layout(self.capture_layout());
         if candidate != self.projects {
-            if let Err(error) = self.persist_library(candidate) { eprintln!("{error}"); }
+            if let Err(error) = self.persist_library(candidate, cx) { eprintln!("{error}"); return; }
         }
-        let session = self.session_string();
-        if session.is_empty() { return; }
         if session != self.saved_session {
             if let Some(path) = config_file("session.json") {
                 if projects::atomic_write(&path, session.as_bytes()).is_ok() {
@@ -3611,6 +3626,10 @@ impl Schnauz {
         let mut nodes: Vec<MenuNode> = Vec::new();
         let paste_n = pasteboard_file_paths().len();
         let on_background = target.is_none();
+        if on_background {
+            nodes.extend(self.folder_open_nodes(pane, projects::Shortcut::local(self.tab(pane).current_dir.clone(), projects::Section::Folders), false));
+            push_menu_sep(&mut nodes);
+        }
         let inspect = target.as_ref().and_then(|(path,is_dir)| is_dir.then_some(path.clone()))
             .or_else(|| on_background.then(|| self.tab(pane).current_dir.clone()));
         if let Some(folder) = inspect {
@@ -3634,7 +3653,9 @@ impl Schnauz {
             let many = n > 1;
 
             // --- open / preview ---
-            {
+            if !many && is_browsable_folder(&path, is_dir) {
+                nodes.extend(self.folder_open_nodes(pane, projects::Shortcut { path: path.clone(), kind: projects::Section::Folders, server: self.tab(pane).remote.clone() }, true));
+            } else {
                 let ts = targets.clone();
                 let label = if many { format!("Open {n} Items") } else { "Open".to_string() };
                 nodes.push(mi(label, move |this, _, cx| {
@@ -3826,12 +3847,14 @@ impl Schnauz {
                     let _ = Command::new("open").arg("-R").arg(&p).spawn();
                 }));
                 let shortcut = self.shortcut_for_path(pane, path.clone());
-                let already = self.projects.sidebar().contains(&shortcut);
-                let label = if already { "Remove from Favourites" } else { "Add to Favourites" };
-                nodes.push(mi(label, move |this, _, cx| {
-                    this.close_context_menu(cx);
-                    this.set_project_shortcut(shortcut.clone(), !already, cx);
-                }));
+                if !shortcut.is_home() {
+                    let already = self.projects.sidebar().contains(&shortcut);
+                    let label = if already { "Remove from Favourites" } else { "Add to Favourites" };
+                    nodes.push(mi(label, move |this, _, cx| {
+                        this.close_context_menu(cx);
+                        this.set_project_shortcut(shortcut.clone(), !already, cx);
+                    }));
+                }
                 // "Add to Group ▸" (only when groups are enabled and exist).
                 if prefs().groups_enabled && !self.groups.is_empty() {
                     nodes.push(MenuNode::Sub {
@@ -3911,13 +3934,20 @@ impl Schnauz {
             this.set_project_shortcut(shortcut.clone(), !already, cx);
         }));
         nodes.push(MenuNode::Sep);
+        if target.is_none() {
+            nodes.extend(self.folder_open_nodes(pane, self.shortcut_for_path(pane, self.tab(pane).current_dir.clone()), false));
+            nodes.push(MenuNode::Sep);
+        }
         if let Some((path, is_dir)) = target {
-            let p = path.clone();
-            let label = if is_dir { "Open" } else { "Open (Download)" };
-            nodes.push(mi(label, move |this, _, cx| {
-                this.close_context_menu(cx);
-                this.open_path(pane, p.clone(), is_dir, cx);
-            }));
+            if is_dir {
+                nodes.extend(self.folder_open_nodes(pane, projects::Shortcut { path: path.clone(), kind: projects::Section::Folders, server: self.tab(pane).remote.clone() }, true));
+            } else {
+                let p = path.clone();
+                nodes.push(mi("Open (Download)", move |this, _, cx| {
+                    this.close_context_menu(cx);
+                    this.open_path(pane, p.clone(), false, cx);
+                }));
+            }
             if !is_dir {
                 let p = path.clone();
                 nodes.push(mi("Download to Downloads", move |this, _, cx| {
@@ -4870,6 +4900,18 @@ impl Schnauz {
     fn sidebar_menu_nodes(&self, target: SidebarTarget, cx: &Context<Self>) -> Vec<MenuNode> {
         let groups_on = prefs().groups_enabled;
         let mut items: Vec<MenuNode> = Vec::new();
+        let open_folder = match &target {
+            SidebarTarget::Favourite(s) if s.kind == projects::Section::Folders => Some(s.clone()),
+            SidebarTarget::GroupMember(_, p) if cached_is_dir(p) => Some(projects::Shortcut::local(p.clone(), projects::Section::Folders)),
+            SidebarTarget::Tab(p, t) => self.panes.get(*p).and_then(|pane| pane.tabs.get(*t)).map(|tab| projects::Shortcut { path: tab.current_dir.clone(), kind: projects::Section::Folders, server: tab.remote.clone() }),
+            SidebarTarget::NavBar(p) => Some(self.shortcut_for_path(*p, self.tab(*p).current_dir.clone())),
+            SidebarTarget::Empty => Some(self.shortcut_for_path(self.active_pane, self.active_tab().current_dir.clone())),
+            _ => None,
+        };
+        if let Some(folder) = open_folder {
+            items.extend(self.folder_open_nodes(self.active_pane, folder, true));
+            items.push(MenuNode::Sep);
+        }
         let folder = match &target {
             SidebarTarget::Favourite(s) => s.server.is_none().then(|| s.path.clone()),
             SidebarTarget::GroupMember(_,p) => Some(p.clone()),
@@ -4884,7 +4926,7 @@ impl Schnauz {
             }
         }
         if let Some(folder) = folder.filter(|p|p.is_dir()) {
-            if !matches!(target, SidebarTarget::Favourite(_)) { items.push(self.project_visibility_menu(projects::Shortcut::local(folder.clone(), projects::Section::Folders))); }
+            if !matches!(target, SidebarTarget::Favourite(_)) && folder != home_dir() { items.push(self.project_visibility_menu(projects::Shortcut::local(folder.clone(), projects::Section::Folders))); }
             items.push(MenuNode::Sep);
             let view_folder = folder.clone();
             let view_pane = match &target { SidebarTarget::NavBar(p) | SidebarTarget::Tab(p, _) => *p, _ => self.active_pane };
@@ -4896,8 +4938,10 @@ impl Schnauz {
         }
         match target {
             SidebarTarget::Favourite(shortcut) => {
-                items.push(self.project_visibility_menu(shortcut.clone()));
-                items.push(mi("Remove from Favourites", move |this, _, cx| this.set_project_shortcut(shortcut.clone(), false, cx)));
+                if !shortcut.is_home() {
+                    items.push(self.project_visibility_menu(shortcut.clone()));
+                    items.push(mi("Remove from Favourites", move |this, _, cx| this.set_project_shortcut(shortcut.clone(), false, cx)));
+                }
             },
             SidebarTarget::Project(id) => {
                 items.push(mi("Open project", move |this, window, cx| { window.focus(&this.focus); this.restore_project(id, cx); }));
@@ -8848,7 +8892,7 @@ impl Schnauz {
                     if ev.click_count >= 2 {
                         this.divider_drag = None;
                         this.split_ratio = 0.5;
-                        this.save_session();
+                        this.save_session(cx);
                         cx.notify();
                         return;
                     }
@@ -9888,6 +9932,7 @@ fn push_group_member(
         label,
         tooltip,
         icon_element(&target, is_dir),
+        None,
         *key,
         active,
         cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -10898,10 +10943,22 @@ fn trash_path(path: &Path) -> Option<PathBuf> {
     Some(out.and_then(|u| u.path()).map(|p| PathBuf::from(p.to_string())).unwrap_or_default())
 }
 
+fn sidebar_badge(label: String, color: u32) -> gpui::Div {
+    div()
+        .flex_none()
+        .px_1()
+        .rounded_sm()
+        .text_size(px(10.))
+        .bg(rgb(color))
+        .text_color(rgb(0xffffff))
+        .child(label)
+}
+
 fn nav_item(
     label: String,
     tooltip: String,
     icon: AnyElement,
+    badge: Option<AnyElement>,
     key: usize,
     active: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -10924,6 +10981,7 @@ fn nav_item(
     };
     base.child(icon)
         .child(div().min_w_0().truncate().child(label))
+        .children(badge)
         .tooltip(tip(tooltip))
         .on_click(on_click)
         .on_mouse_down(MouseButton::Right, on_right)
@@ -11776,7 +11834,7 @@ fn parse_sftp_url(s: &str) -> Option<SftpServer> {
 }
 
 #[derive(Clone)]
-struct SftpServersGlobal(Vec<SftpServer>);
+struct SftpServersGlobal(Vec<SftpServer>, Option<u64>);
 impl gpui::Global for SftpServersGlobal {}
 
 thread_local! {
@@ -11795,7 +11853,8 @@ fn set_active_sftp_servers(list: Vec<SftpServer>) {
 /// Persist + broadcast a new server list to every window.
 fn apply_sftp_servers(list: Vec<SftpServer>, cx: &mut App) {
     set_active_sftp_servers(list.clone());
-    cx.set_global(SftpServersGlobal(list));
+    let project = cx.global::<SftpServersGlobal>().1;
+    cx.set_global(SftpServersGlobal(list, project));
     cx.refresh_windows();
 }
 
@@ -13093,7 +13152,7 @@ fn save_prefs(p: &Prefs) {
             p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.palette_history, p.groups_enabled, p.show_filter_button, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured, p.waterfall, p.palette_opacity
         );
         body.push_str(&format!("preview_width={}\ntools_width={}\n",p.preview_width,p.tools_width));
-        body.push_str(&format!("drive_warning={}\ndrive_critical={}\n", p.drive_warning, p.drive_critical));
+        body.push_str(&format!("drive_warning={}\ndrive_critical={}\ndrive_free_percent={}\n", p.drive_warning, p.drive_critical, p.drive_free_percent));
         let _ = fs::write(&file, body);
     }
 }
@@ -13149,6 +13208,7 @@ fn load_prefs() -> Prefs {
                     "info" => p.info = on,
                     "show_parent" => p.show_parent = on,
                     "sidebar_collapsed" => p.sidebar_collapsed = on,
+                    "drive_free_percent" => p.drive_free_percent = on,
                     "drive_warning" => if let Ok(value) = v.trim().parse::<u8>() { p.drive_warning = value.clamp(1,98); },
                     "drive_critical" => if let Ok(value) = v.trim().parse::<u8>() { p.drive_critical = value.clamp(2,99); },
 
@@ -13500,7 +13560,10 @@ fn main() {
         // Load saved SFTP servers.
         let saved_servers = load_sftp_servers();
         set_active_sftp_servers(saved_servers.clone());
-        cx.set_global(SftpServersGlobal(saved_servers));
+        cx.set_global(SftpServersGlobal(saved_servers, None));
+        cx.set_global(FolderViewsGlobal(Rc::new(RefCell::new(
+            folder_views::Library::open(config_file("folder-views.json"))
+        ))));
 
         // Menu bar: app menu with Settings + Quit, plus their shortcuts.
         cx.bind_keys([
@@ -13570,47 +13633,29 @@ fn main() {
 
 /// Open the main explorer window.
 fn open_main_window(cx: &mut App) {
-    let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
-    let _ = cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(980.0), px(600.0))),
-            titlebar: Some(TitlebarOptions {
-                // No title text; transparent so our own colored bar shows.
-                title: None,
-                appears_transparent: true,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        |window, cx| {
-            let view = cx.new(|cx| {
-                let mut finder = Schnauz::new(load_last_dir(), cx);
-                finder.prewarm_icons(cx);
-                // Reopen last run's tabs + split (else the last folder), then
-                // fill each pane's metadata in the background.
-                finder.restore_session();
-                finder.activate_project_sidebar(cx);
-                finder.apply_all_folder_views();
-                for pane in 0..finder.panes.len() {
-                    finder.reload_pane(pane, cx);
-                }
-                // Reconnect any SFTP servers marked "reconnect on launch".
-                for server in sftp_servers().into_iter().filter(|s| s.auto_reopen) {
-                    finder.connect_sftp(server, cx);
-                }
-                finder
-            });
-            // Focus the root so it receives keystrokes (Cmd+P) immediately.
-            window.focus(&view.read(cx).focus);
-            view
-        },
-    );
+    if let Err(error) = browser_windows::open(None, cx) { eprintln!("{error}"); }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_browser_tabs_do_not_read_local_names_or_clone_terminal_state() {
+        let dir = scratch("remote-window");
+        fs::write(dir.join("local-only.txt"), "local file").unwrap();
+        let server = SftpServer { host: "example.test".into(), user: "test".into(), ..Default::default() };
+        let mut tab = Tab::at_location(dir.clone(), Some(server.clone()));
+        assert_eq!(tab.current_dir, dir);
+        assert_eq!(tab.remote.as_ref(), Some(&server));
+        assert!(tab.entries.is_empty(), "A remote namespace must not read a matching local path");
+        assert!(tab.terminal.is_none() && !tab.terminal_open);
+        tab.current_dir = PathBuf::from("/other-remote-folder");
+        let second = Tab::at_location(dir.clone(), Some(server));
+        assert_eq!(second.current_dir, dir);
+        assert_eq!(second.history, vec![dir.clone()]);
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn application_bundles_keep_distinct_icons_and_file_visibility() {

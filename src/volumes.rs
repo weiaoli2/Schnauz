@@ -37,6 +37,20 @@ fn usage(total: Option<u64>, free: Option<u64>, warning: u8, critical: u8) -> Us
     }
 }
 
+fn free_space_label(total: Option<u64>, free: Option<u64>, percent: bool) -> String {
+    let Some(free) = free else {
+        return "—".into();
+    };
+    if percent {
+        match total.filter(|total| *total > 0) {
+            Some(total) => format!("{:.1}%", free.min(total) as f64 * 100. / total as f64),
+            None => "—".into(),
+        }
+    } else {
+        format!("{:.1} GB", free as f64 / 1_000_000_000.)
+    }
+}
+
 impl Schnauz {
     pub(super) fn network_volume_path(&self, path: &Path) -> bool {
         self.volumes
@@ -49,10 +63,7 @@ impl Schnauz {
             .iter()
             .filter(|v| v.local)
             .map(|volume| {
-                let free = volume
-                    .free
-                    .map(|n| format_size(false, n))
-                    .unwrap_or_else(|| "—".into());
+                let free = free_space_label(volume.total, volume.free, prefs().drive_free_percent);
                 project_sidebar::text_width(window, &volume.name, UI_FONT_SIZE)
                     + project_sidebar::text_width(window, &free, 10.)
                     + 65.
@@ -94,7 +105,7 @@ impl Schnauz {
     }
 
     pub(super) fn push_volumes(&self, items: &mut Vec<AnyElement>, cx: &Context<Self>) {
-        // Global devices stay above every project's own Locations.
+        // Global devices stay above every project's Favourites.
         items.push(
             div()
                 .px_3()
@@ -113,10 +124,7 @@ impl Schnauz {
                 Usage::Critical => 0xc23a35,
                 Usage::Unknown => theme().text_dim,
             };
-            let free = volume
-                .free
-                .map(|size| format_size(false, size))
-                .unwrap_or_else(|| "—".into());
+            let free = free_space_label(volume.total, volume.free, p.drive_free_percent);
             let used = match (volume.total, volume.free) {
                 (Some(total), Some(free)) if total > 0 => format!(
                     " · {:.0}% used",
@@ -153,14 +161,20 @@ impl Schnauz {
                             .child(volume.name.clone()),
                     )
                     .child(
-                        div()
-                            .flex_none()
-                            .px_1()
-                            .rounded_sm()
-                            .text_size(px(10.))
-                            .bg(rgb(color))
-                            .text_color(rgb(0xffffff))
-                            .child(free.clone()),
+                        sidebar_badge(free.clone(), color)
+                            .id(("device-free", index))
+                            .cursor_pointer()
+                            .tooltip(tip(if p.drive_free_percent {
+                                "Free space · Click to show GB"
+                            } else {
+                                "Free space · Click to show percent"
+                            }))
+                            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                let mut p = prefs();
+                                p.drive_free_percent = !p.drive_free_percent;
+                                apply_prefs(p, cx);
+                            })),
                     )
                     .tooltip(tip(format!(
                         "{}\n{} free{}",
@@ -192,6 +206,25 @@ impl Schnauz {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn free_capacity_formats_gb_and_percent_without_inventing_unknown_values() {
+        assert_eq!(
+            free_space_label(Some(1_000_000_000_000), Some(250_000_000_000), false),
+            "250.0 GB"
+        );
+        assert_eq!(
+            free_space_label(Some(1_000_000_000_000), Some(250_000_000_000), true),
+            "25.0%"
+        );
+        assert_eq!(free_space_label(Some(100), Some(0), true), "0.0%");
+        assert_eq!(free_space_label(Some(100), Some(150), true), "100.0%");
+        assert_eq!(free_space_label(Some(0), Some(0), true), "—");
+        assert_eq!(free_space_label(None, Some(1_000_000_000), false), "1.0 GB");
+        assert_eq!(free_space_label(None, Some(1_000_000_000), true), "—");
+        assert_eq!(free_space_label(Some(100), None, true), "—");
+        assert_eq!(free_space_label(Some(100), None, false), "—");
+    }
+
     #[test]
     fn thresholds_use_used_space_and_unknown_capacity_is_not_reported_full() {
         assert_eq!(usage(Some(100), Some(21), 80, 90), Usage::Healthy);

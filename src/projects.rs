@@ -110,6 +110,10 @@ impl Shortcut {
         }
     }
 
+    pub fn is_home(&self) -> bool {
+        self.server.is_none() && self.kind == Section::Folders && self.path == crate::home_dir()
+    }
+
     pub fn same_place(&self, other: &Self) -> bool {
         self.path == other.path
             && match (&self.server, &other.server) {
@@ -138,10 +142,14 @@ pub(crate) struct Sidebar {
 }
 impl Sidebar {
     pub fn contains(&self, shortcut: &Shortcut) -> bool {
-        self.shortcuts.iter().any(|s| s.same_place(shortcut))
+        shortcut.is_home() || self.shortcuts.iter().any(|s| s.same_place(shortcut))
     }
 
     pub fn set_shortcut(&mut self, mut shortcut: Shortcut, add: bool) {
+        // Home is shown once in every project without storing a duplicate shortcut.
+        if shortcut.is_home() {
+            return;
+        }
         // Favourites describe destinations, never ownership of a live SSH session.
         if let Some(server) = &mut shortcut.server {
             server.control_path = None;
@@ -483,6 +491,27 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn home_is_always_a_favourite_without_project_records() {
+        let home = super::Shortcut::local(crate::home_dir(), super::Section::Folders);
+        let mut sidebar = super::Sidebar::default();
+        assert!(sidebar.contains(&home));
+        sidebar.set_shortcut(home.clone(), true);
+        sidebar.set_shortcut(home.clone(), false);
+        assert!(sidebar.contains(&home));
+        assert!(sidebar.shortcuts.is_empty());
+        let restored: super::Sidebar =
+            serde_json::from_str(&serde_json::to_string(&sidebar).unwrap()).unwrap();
+        assert!(restored.contains(&home));
+        let mut remote = home;
+        remote.server = Some(crate::SftpServer {
+            host: "example.test".into(),
+            user: "test".into(),
+            ..Default::default()
+        });
+        assert!(!restored.contains(&remote));
+    }
+
     fn local_paths(sidebar: &super::Sidebar, kind: super::Section) -> Vec<std::path::PathBuf> {
         sidebar
             .shortcuts

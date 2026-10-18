@@ -90,7 +90,7 @@ impl Schnauz {
                     self.load_dir_in(pane, folder, cx);
                     self.reveal_in_pane(pane, path, cx);
                 }
-                self.save_session();
+                self.save_session(cx);
                 cx.notify();
             }
             Err(error) => {

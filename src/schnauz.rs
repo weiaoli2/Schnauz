@@ -167,7 +167,7 @@ impl Schnauz {
                 .scroll_handle
                 .scroll_to_item(0, ScrollStrategy::Top);
         }
-        self.save_session();
+        self.save_session(cx);
         cx.notify();
     }
 
@@ -187,7 +187,7 @@ impl Schnauz {
         self.hovered = None;
         self.drop_hover = None;
         self.preview_page = 0;
-        self.save_session();
+        self.save_session(cx);
         self.prewarm_icons(cx);
         cx.notify();
     }
@@ -370,7 +370,7 @@ impl Schnauz {
         cx.notify();
     }
 
-    pub(super) fn persist_library(&mut self, candidate: Library) -> Result<(), String> {
+    pub(super) fn persist_library(&mut self, candidate: Library, cx: &mut Context<Self>) -> Result<(), String> {
         if let Some(error) = &self.project_load_error {
             return Err(error.clone());
         }
@@ -378,6 +378,7 @@ impl Schnauz {
         candidate
             .save(&path)
             .map_err(|error| format!("Couldn't save the project: {error}"))?;
+        cx.set_global(ProjectLibraryGlobal(candidate.clone(), None));
         self.projects = candidate;
         Ok(())
     }
@@ -393,7 +394,7 @@ impl Schnauz {
             .create(&name, layout)
             .and_then(|id| {
                 library.sidebar_for_mut(Some(id)).unwrap().todoist_create_request = Some(todoist::request_id());
-                self.persist_library(library).map(|_| id)
+                self.persist_library(library, cx).map(|_| id)
             })
             .and_then(|id| self.switch_project(Some(id), cx));
         match result {
@@ -437,10 +438,16 @@ impl Schnauz {
             .ok_or("This project's folders are unavailable. Reconnect the drive and try again.")?;
         let old = self.projects.active;
         library.active = id;
+        // Persist the outgoing layout and destination together before switching.
+        self.persist_library(library, cx)?;
+        self.apply_project_switch(old, &available, cx);
+        Ok(())
+    }
+
+    pub(super) fn apply_project_switch(&mut self, old: Option<u64>, available: &Layout, cx: &mut Context<Self>) {
+        let id = self.projects.active;
         self.close_palette(cx);
         self.space_map = None;
-        // Persist the outgoing layout and destination together before switching.
-        self.persist_library(library)?;
         self.activate_project_sidebar(cx);
         self.server_dialog = None;
         self.ssh_ask = false;
@@ -450,7 +457,7 @@ impl Schnauz {
             split_ratio: self.split_ratio,
         };
         self.project_sessions.insert(old, current);
-        self.apply_layout(&available);
+        self.apply_layout(available);
         if let Some(live) = self.project_sessions.remove(&id) {
             self.panes = live.panes;
             self.active_pane = live.active_pane;
@@ -461,11 +468,10 @@ impl Schnauz {
             self.reload_pane(pane, cx);
             self.sync_terminal_directory(pane);
         }
-        self.save_session();
+        self.saved_session = self.session_string();
         self.todoist.scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.ensure_todoist(false, cx);
         cx.notify();
-        Ok(())
     }
 
     pub(super) fn restore_project(&mut self, id: u64, cx: &mut Context<Self>) {
@@ -490,7 +496,7 @@ impl Schnauz {
         }
         let mut library = self.projects.clone();
         library.items.retain(|project| project.id != id);
-        match self.persist_library(library) {
+        match self.persist_library(library, cx) {
             Ok(()) => {
                 self.project_sessions.remove(&Some(id));
                 cx.notify();
@@ -571,7 +577,7 @@ impl Schnauz {
         self.hovered = None;
         self.drop_hover = None;
         self.marquee = None;
-        self.save_session();
+        self.save_session(cx);
         cx.notify();
     }
 
@@ -934,13 +940,13 @@ impl Schnauz {
                     .whitespace_nowrap()
                     .cursor_pointer()
                     .hover(|s| s.text_color(rgb(t.accent)))
-                    .child(if t.bg == PRESETS[0].1.bg {
-                        "Dark Mode"
+                    .child(if t.is_light() {
+                        "Light mode"
                     } else {
-                        "Light Mode"
+                        "Dark mode"
                     })
                     .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
-                        let next = if theme().bg == PRESETS[0].1.bg {
+                        let next = if theme().is_light() {
                             PRESETS[1].1
                         } else {
                             PRESETS[0].1

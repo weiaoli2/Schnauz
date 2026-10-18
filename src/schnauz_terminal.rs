@@ -448,7 +448,7 @@ impl Schnauz {
                                     tab.anchor = None;
 
                                     tab.recompute_results();
-                                    let style = self.folder_views.resolve(&tab.current_dir).cloned().unwrap_or_default();
+                                    let style = self.folder_views.borrow().resolve(&tab.current_dir).cloned().unwrap_or_default();
                                     list_ui::apply_style(tab, &style);
                                 }
                             }
@@ -462,7 +462,7 @@ impl Schnauz {
                                 tab.current_dir = session.cwd.clone();
                                 tab.entries = read_entries_fast(&tab.current_dir);
                                 tab.recompute_results();
-                                let style = self.folder_views.resolve(&tab.current_dir).cloned().unwrap_or_default();
+                                let style = self.folder_views.borrow().resolve(&tab.current_dir).cloned().unwrap_or_default();
                                 list_ui::apply_style(tab, &style);
                             }
                         }
@@ -549,7 +549,7 @@ impl Schnauz {
             tab.recompute_results();
             tab.selection.clear();
             tab.anchor = None;
-            let style = self.folder_views.resolve(&tab.current_dir).cloned().unwrap_or_default();
+            let style = self.folder_views.borrow().resolve(&tab.current_dir).cloned().unwrap_or_default();
             list_ui::apply_style(tab, &style);
         }
     }

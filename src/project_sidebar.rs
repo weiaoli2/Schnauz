@@ -35,7 +35,7 @@ impl Schnauz {
     pub(super) fn activate_project_sidebar(&mut self, cx: &mut Context<Self>) {
         let servers = self.projects.sidebar().servers.clone();
         set_active_sftp_servers(servers.clone());
-        cx.set_global(SftpServersGlobal(servers));
+        cx.set_global(SftpServersGlobal(servers, self.projects.active));
     }
 
     pub(super) fn set_project_shortcut(
@@ -46,7 +46,7 @@ impl Schnauz {
     ) {
         let mut candidate = self.projects.clone();
         candidate.sidebar_mut().set_shortcut(shortcut, add);
-        match self.persist_library(candidate) {
+        match self.persist_library(candidate, cx) {
             Ok(()) if add => self.expand_favourites(),
             Err(error) => self.set_notice(error, cx),
             _ => {}
@@ -67,7 +67,7 @@ impl Schnauz {
                 sidebar.set_shortcut(shortcut.clone(), add);
             }
         }
-        if let Err(error) = self.persist_library(candidate) {
+        if let Err(error) = self.persist_library(candidate, cx) {
             self.set_notice(error, cx);
         }
         cx.notify();
@@ -147,6 +147,7 @@ impl Schnauz {
             .action_targets(pane)
             .into_iter()
             .map(|p| self.shortcut_for_path(pane, p))
+            .filter(|s| !s.is_home())
             .collect();
         if shortcuts.is_empty() {
             return;
@@ -159,7 +160,7 @@ impl Schnauz {
         for shortcut in shortcuts {
             candidate.sidebar_mut().set_shortcut(shortcut, add);
         }
-        match self.persist_library(candidate) {
+        match self.persist_library(candidate, cx) {
             Ok(()) => {
                 self.expand_favourites();
                 self.set_notice(
@@ -227,7 +228,7 @@ impl Schnauz {
         let added = sidebar.shortcuts.len() - before;
         if candidate == self.projects {
             self.set_notice("No new favourites to add.".into(), cx);
-        } else if let Err(error) = self.persist_library(candidate) {
+        } else if let Err(error) = self.persist_library(candidate, cx) {
             self.set_notice(error, cx);
         } else {
             if self.projects.active == project {
@@ -314,6 +315,8 @@ impl Schnauz {
         if self.collapsed_sections.contains("FAVOURITES") {
             return;
         }
+        let home = Shortcut::local(home_dir(), Section::Folders);
+        self.project_shortcut_row(items, key, &home, cx);
         for (kind, key_name, label) in [
             (Section::Folders, "FOLDERS", "Folders"),
             (Section::Files, "FILES", "Files"),
@@ -323,7 +326,7 @@ impl Schnauz {
                 .sidebar()
                 .shortcuts
                 .iter()
-                .any(|s| s.kind == kind)
+                .any(|s| s.kind == kind && !s.is_home())
             {
                 continue;
             }
@@ -351,7 +354,7 @@ impl Schnauz {
                 .sidebar()
                 .shortcuts
                 .iter()
-                .filter(|s| s.kind == kind)
+                .filter(|s| s.kind == kind && !s.is_home())
             {
                 self.project_shortcut_row(items, key, shortcut, cx);
             }
@@ -421,6 +424,9 @@ impl Schnauz {
                 path_label(&shortcut.path),
                 tooltip,
                 self.favourite_icon(shortcut, cx),
+                shortcut
+                    .is_home()
+                    .then(|| sidebar_badge("Home".into(), 0x3478c5).into_any_element()),
                 *key,
                 active,
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -441,6 +447,33 @@ impl Schnauz {
         );
     }
 
+    pub(super) fn favourite_server(&self, server: SftpServer) -> SftpServer {
+        self.panes
+            .iter()
+            .flat_map(|p| p.tabs.iter())
+            .filter_map(|t| t.terminal.as_ref()?.ssh.as_ref().map(|link| &link.server))
+            .find(|s| projects::same_server(s, &server))
+            .cloned()
+            .or_else(|| {
+                self.panes
+                    .iter()
+                    .flat_map(|p| p.tabs.iter())
+                    .filter_map(|t| t.remote.as_ref())
+                    .find(|s| s.control_path.is_some() && projects::same_server(s, &server))
+                    .cloned()
+            })
+            .or_else(|| server.control_path.is_some().then(|| server.clone()))
+            .or_else(|| {
+                self.projects
+                    .sidebar()
+                    .servers
+                    .iter()
+                    .find(|s| projects::same_server(s, &server))
+                    .cloned()
+            })
+            .unwrap_or(server)
+    }
+
     pub(super) fn open_favourite(&mut self, shortcut: Shortcut, cx: &mut Context<Self>) {
         let pane = self.active_pane;
         let folder = if shortcut.kind == Section::Folders {
@@ -453,22 +486,7 @@ impl Schnauz {
                 .to_path_buf()
         };
         if let Some(server) = shortcut.server {
-            let live = self
-                .panes
-                .iter()
-                .flat_map(|p| p.tabs.iter())
-                .filter_map(|t| t.terminal.as_ref()?.ssh.as_ref().map(|link| &link.server))
-                .find(|s| projects::same_server(s, &server))
-                .cloned()
-                .or_else(|| {
-                    self.projects
-                        .sidebar()
-                        .servers
-                        .iter()
-                        .find(|s| projects::same_server(s, &server))
-                        .cloned()
-                })
-                .unwrap_or(server);
+            let live = self.favourite_server(server);
             // Keep a live terminal tab intact. Browser-only remote tabs can be
             // reused, with no commands or directory changes sent to any terminal.
             let reuse = self.tab(pane).terminal.is_none()
@@ -485,10 +503,7 @@ impl Schnauz {
                     self.navigate_in(pane, folder, cx);
                 }
             } else {
-                let mut tab = Tab::new(folder.clone());
-                tab.remote = Some(live);
-                tab.current_dir = folder.clone();
-                tab.history = vec![folder];
+                let tab = Tab::at_location(folder, Some(live));
                 self.panes[pane].tabs.push(tab);
                 self.panes[pane].active = self.panes[pane].tabs.len() - 1;
                 self.reload_pane(pane, cx);
@@ -553,7 +568,18 @@ impl Schnauz {
             }
         }
         if !self.collapsed_sections.contains("FAVOURITES") {
-            for shortcut in &self.projects.sidebar().shortcuts {
+            width = width.max(
+                text_width(window, &path_label(&home_dir()), UI_FONT_SIZE)
+                    + text_width(window, "Home", 10.)
+                    + 65.,
+            );
+            for shortcut in self
+                .projects
+                .sidebar()
+                .shortcuts
+                .iter()
+                .filter(|s| !s.is_home())
+            {
                 let section = if shortcut.kind == Section::Folders {
                     "FOLDERS"
                 } else {

@@ -468,7 +468,7 @@ impl Schnauz {
                         let result = ids
                             .into_iter()
                             .try_for_each(|id| candidate.set_name(id, &remote_name))
-                            .and_then(|_| this.persist_library(candidate));
+                            .and_then(|_| this.persist_library(candidate, cx));
                         if let Err(error) = result {
                             this.set_notice(
                                 format!("Todoist name could not be matched: {error}"),
@@ -506,7 +506,7 @@ impl Schnauz {
         }
         let intent = sidebar.todoist_create_request.clone();
         if create {
-            if let Err(error) = self.persist_library(candidate) {
+            if let Err(error) = self.persist_library(candidate, cx) {
                 self.todoist.pending.remove(&busy);
                 self.set_notice(error, cx);
                 return;
@@ -551,7 +551,7 @@ impl Schnauz {
                             project_name: project.name,
                         });
                         sidebar.todoist_create_request = None;
-                        if let Err(error) = this.persist_library(candidate) {
+                        if let Err(error) = this.persist_library(candidate, cx) {
                             this.set_notice(error, cx);
                         } else if this.projects.active == origin {
                             this.ensure_todoist(true, cx);

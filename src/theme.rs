@@ -19,6 +19,13 @@ pub(super) struct Theme {
 }
 
 impl Theme {
+    pub(super) fn is_light(self) -> bool {
+        let r = (self.bg >> 16) & 0xff;
+        let g = (self.bg >> 8) & 0xff;
+        let b = self.bg & 0xff;
+        r * 299 + g * 587 + b * 114 >= 128_000
+    }
+
     /// A translucent variant of a base color, for floating panels. `a` is 0..=255.
     pub(super) fn alpha(color: u32, a: u32) -> Rgba {
         rgba((color << 8) | (a & 0xff))

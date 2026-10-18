@@ -37,6 +37,7 @@ impl Schnauz {
         }
         let style = self
             .folder_views
+            .borrow()
             .resolve(&tab.current_dir)
             .cloned()
             .or_else(|| (!only_saved).then(folder_views::FolderView::default));
@@ -50,21 +51,22 @@ impl Schnauz {
                 if tab.remote.is_some() {
                     continue;
                 }
-                if let Some(style) = self.folder_views.resolve(&tab.current_dir) {
+                if let Some(style) = self.folder_views.borrow().resolve(&tab.current_dir) {
                     apply_style(tab, style);
                 }
             }
         }
     }
     fn schedule_view_save(&mut self, cx: &mut Context<Self>) {
-        if let Some(error) = &self.folder_views.error {
+        let error = self.folder_views.borrow().error.clone();
+        if let Some(error) = error {
             self.set_notice(
                 format!("Couldn't read saved views: {error}. Existing settings preserved."),
                 cx,
             );
             return;
         }
-        let Some(job) = self.folder_views.write_job() else {
+        let Some(job) = self.folder_views.borrow().write_job() else {
             return;
         };
         cx.spawn(async move |this, cx| {
@@ -86,7 +88,7 @@ impl Schnauz {
             return;
         }
         let (path, style) = (tab.current_dir.clone(), style_of(tab));
-        self.folder_views.remember(path, style, false);
+        self.folder_views.borrow_mut().remember(path, style, false);
         self.apply_all_folder_views();
         self.schedule_view_save(cx);
     }
@@ -97,7 +99,7 @@ impl Schnauz {
         cx: &mut Context<Self>,
     ) {
         let style = style_of(self.tab(pane));
-        self.folder_views.remember(root.clone(), style, true);
+        self.folder_views.borrow_mut().remember(root.clone(), style, true);
         self.apply_all_folder_views();
         self.schedule_view_save(cx);
         self.close_context_menu(cx);
@@ -110,7 +112,7 @@ impl Schnauz {
     }
     fn reset_folder_view(&mut self, pane: usize, cx: &mut Context<Self>) {
         let path = self.tab(pane).current_dir.clone();
-        self.folder_views.reset(&path);
+        self.folder_views.borrow_mut().reset(&path);
         self.apply_folder_view(pane, false);
         self.apply_all_folder_views();
         self.schedule_view_save(cx);
@@ -175,7 +177,7 @@ impl Schnauz {
             self.refresh_file_search_preserving_selection(cx);
         }
         self.scroll_selected_in_pane(pane);
-        self.save_session();
+        self.save_session(cx);
         self.prewarm_icons(cx);
         cx.notify();
     }
