@@ -115,7 +115,7 @@ continue without it, with some folders restricted. The guide remains under
 Click **+ beside Projects** or press **⌘⇧S** to create a project from the current tabs.
 Each project keeps its own **Favourites**, connection settings, Todoist link and
 last tabs/layout. **Personal** has its own profile. Every project includes your
-local home folder, pinned first under Favourites with a small blue **Home** badge.
+local home folder, pinned first inside **Favourites → Folders** with a small blue **Home** badge.
 It stays visible once, cannot be removed, and needs no per-project saved copy.
 New projects otherwise start empty. All Schnauz windows share the active project;
 changing projects in one changes it everywhere. Each window can browse its own
@@ -231,9 +231,14 @@ outer right edge. Panels remain side by side at screen edges or in full screen.
 Selecting another Schnauz project switches Tasks with it. Existing unlinked
 projects first search by name; **Find or create matching project** can create a
 missing counterpart. Tasks show sections/subtasks and due dates. Click the circle
-to complete, the task text to open Todoist, or **Add task…** to enter a task and
-optional due date. A task is sent to the project where its dialog was opened,
-even if you switch projects. Failed forms keep their text for an explicit retry.
+to complete, the task text to open Todoist, or **Add task…** for a compact native
+composer with Schnauz colours and the little toolbar dog. The fixed project cannot
+be changed. Add a title, description, date, deadline, priority and labels; optional
+time/location reminders depend on the Todoist account. Location search uses Apple
+Maps only after an explicit address search. A task is sent to the project where
+its dialog was opened, even if you switch projects. Failed forms keep their text;
+retrying an optional reminder after a task was saved cannot create a second task.
+**Open in Todoist** and task links prefer the native app, falling back to the browser.
 Cached tasks remain visible during connection errors. Only visible rows render,
 and refresh runs in the background while Tasks is open. **Preview** toggles only
 file previews. Todoist is connected and working in Oliver's personal build;
@@ -369,3 +374,13 @@ by Leonard Seibold (MIT or Apache 2.0), [Alacritty's terminal engine](https://gi
 and [portable-pty](https://github.com/wezterm/wezterm/tree/main/pty). Its local component
 adds scrollback, selection, clipboard handling, terminal query responses and shell
 integration; original license files are retained under `vendor/gpui-terminal`.
+
+### Folder access and path editing
+
+Folder changes reset scroll positions and refresh the visible entries. A denied
+or failed read shows an explicit error with **Retry**, rather than an empty folder;
+**File Access Settings** is available for denied reads. macOS still controls access.
+Click the current breadcrumb or press **⌘L** to edit the full path. Mouse/Shift
+selection, double-clicking components, select-all, cut/copy/paste and deletion are
+supported. **Enter** opens the path; invalid text stays editable. **Escape** or an
+outside click dismisses editing. Ancestor breadcrumbs continue to navigate.

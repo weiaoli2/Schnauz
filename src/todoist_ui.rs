@@ -5,6 +5,8 @@ use todoist::{Global, Row};
 fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
+        .flex_none()
+        .whitespace_nowrap()
         .px_2()
         .py_1()
         .rounded_md()
@@ -45,9 +47,10 @@ pub(super) fn settings_rows<T: 'static>(cx: &Context<T>) -> Vec<AnyElement> {
             ),
         );
     if state.account.is_some() {
-        row = row.child(button("todoist-show-tasks", "Show tasks").on_click(
-            cx.listener(|_, _: &ClickEvent, _, cx| todoist::show_tasks(cx)),
-        ));
+        row = row.child(
+            button("todoist-show-tasks", "Show tasks")
+                .on_click(cx.listener(|_, _: &ClickEvent, _, cx| todoist::show_tasks(cx))),
+        );
         row = row.child(button("todoist-disconnect", "Disconnect…").on_click(
             cx.listener(|_, _: &ClickEvent, _, cx| todoist::account_action("disconnect", cx)),
         ));
@@ -88,6 +91,8 @@ impl Schnauz {
             .or_else(|| link.as_ref().map(|l| l.project_name.as_str()))
             .unwrap_or(local_name);
         let mut header = div()
+            .w_full()
+            .min_w_0()
             .flex_none()
             .flex()
             .items_center()
@@ -136,6 +141,7 @@ impl Schnauz {
         );
         let mut panel = div()
             .id("todoist-pane")
+            .min_w_0()
             .flex()
             .flex_col()
             .h_full()
@@ -146,14 +152,21 @@ impl Schnauz {
             .child(header);
         let global = cx.global::<Global>();
         if global.account.is_none() {
-            panel = panel.child(div().p_4().flex().flex_col().gap_3()
+            panel = panel.child(div().w_full().min_w_0().flex_none().p_4().flex().flex_col().gap_3()
                 .child("Connect Todoist to see this project's tasks here.")
                 .child(button("todoist-panel-connect", if global.busy { "Connecting…" } else { "Connect Todoist…" })
                     .on_click(cx.listener(|_, _: &ClickEvent, _, cx| todoist::account_action("connect", cx))))
                 .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted))
                     .child("Your API token is entered in a secure macOS dialog and stored in Keychain.")));
             if let Some(message) = &global.notice {
-                panel = panel.child(div().px_4().child(message.clone()));
+                panel = panel.child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .flex_none()
+                        .px_4()
+                        .child(message.clone()),
+                );
             }
             return panel.into_any_element();
         }
@@ -165,6 +178,9 @@ impl Schnauz {
             return panel
                 .child(
                     div()
+                        .w_full()
+                        .min_w_0()
+                        .flex_none()
                         .p_4()
                         .flex()
                         .flex_col()
@@ -228,21 +244,23 @@ impl Schnauz {
                         this.todoist_mutation("add", None, cx)
                     })),
                 )
-                .child(button("todoist-project-web", "Open in Todoist").on_click(
-                    move |_, _, _| {
-                        let _ = Command::new("open")
-                            .arg(format!(
-                                "https://app.todoist.com/app/project/{}",
-                                url_component(&link.project_id)
-                            ))
-                            .spawn();
-                    },
-                )),
+                .child(
+                    button("todoist-project-web", "Open in Todoist").on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            if let Err(error) = open_target("project", &link.project_id) {
+                                this.set_notice(error, cx);
+                            }
+                        },
+                    )),
+                ),
         );
         let Some(cache) = self.todoist.caches.get(&key) else {
             return panel
                 .child(
                     div()
+                        .w_full()
+                        .min_w_0()
+                        .flex_none()
                         .p_4()
                         .text_color(rgb(t.text_muted))
                         .child("Loading tasks…"),
@@ -252,6 +270,8 @@ impl Schnauz {
         if let Some(error) = &cache.error {
             panel = panel.child(
                 div()
+                    .w_full()
+                    .min_w_0()
                     .flex_none()
                     .px_3()
                     .py_2()
@@ -269,6 +289,8 @@ impl Schnauz {
         } else if cache.busy {
             panel = panel.child(
                 div()
+                    .w_full()
+                    .min_w_0()
                     .flex_none()
                     .px_3()
                     .text_size(px(UI_SMALL_FONT_SIZE))
@@ -280,6 +302,9 @@ impl Schnauz {
             return panel
                 .child(
                     div()
+                        .w_full()
+                        .min_w_0()
+                        .flex_none()
                         .p_4()
                         .text_color(rgb(t.text_muted))
                         .child("Tasks will appear here when Todoist is available."),
@@ -287,12 +312,17 @@ impl Schnauz {
                 .into_any_element();
         };
         if data.tasks.is_empty() {
-            panel = panel.child(
-                div()
-                    .p_4()
-                    .text_color(rgb(t.text_muted))
-                    .child("No open tasks in this project."),
-            );
+            return panel
+                .child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .flex_none()
+                        .p_4()
+                        .text_color(rgb(t.text_muted))
+                        .child("No open tasks in this project."),
+                )
+                .into_any_element();
         }
         let scroll = self.todoist.scroll.clone();
         let base = scroll.0.borrow().base_handle.clone();
@@ -301,6 +331,8 @@ impl Schnauz {
             .child(
                 div()
                     .relative()
+                    .w_full()
+                    .min_w_0()
                     .flex_1()
                     .min_h_0()
                     .child(
@@ -337,6 +369,8 @@ impl Schnauz {
                 Some(match item {
                     Row::Section(name) => div()
                         .id(("todoist-section", row))
+                        .w_full()
+                        .min_w_0()
                         .h(px(48.))
                         .flex()
                         .items_end()
@@ -379,6 +413,8 @@ impl Schnauz {
                         };
                         div()
                             .id(SharedString::from(format!("todoist-task:{}", task.id)))
+                            .w_full()
+                            .min_w_0()
                             .h(px(48.))
                             .flex()
                             .items_start()
@@ -431,14 +467,11 @@ impl Schnauz {
                                         .filter(|s| !s.is_empty())
                                         .cloned()
                                         .unwrap_or_else(|| "Open task in Todoist".into())))
-                                    .on_click(move |_, _, _| {
-                                        let _ = Command::new("open")
-                                            .arg(format!(
-                                                "https://app.todoist.com/app/task/{}",
-                                                url_component(&web_id)
-                                            ))
-                                            .spawn();
-                                    }),
+                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        if let Err(error) = open_target("task", &web_id) {
+                                            this.set_notice(error, cx);
+                                        }
+                                    })),
                             )
                             .into_any_element()
                     }
@@ -458,4 +491,43 @@ fn url_component(value: &str) -> String {
         }
     }
     result
+}
+
+fn target_urls(kind: &str, id: &str) -> (String, String) {
+    let id = url_component(id);
+    (
+        format!("todoist://{kind}?id={id}"),
+        format!("https://app.todoist.com/app/{kind}/{id}"),
+    )
+}
+
+fn open_target(kind: &str, id: &str) -> Result<(), String> {
+    let (native, web) = target_urls(kind, id);
+    let workspace = NSWorkspace::sharedWorkspace();
+    if let Some(url) = NSURL::URLWithString(&NSString::from_str(&native)) {
+        if workspace.URLForApplicationToOpenURL(&url).is_some() && workspace.openURL(&url) {
+            return Ok(());
+        }
+    }
+    if let Some(url) = NSURL::URLWithString(&NSString::from_str(&web)) {
+        if workspace.openURL(&url) {
+            return Ok(());
+        }
+    }
+    Err("Couldn't open Todoist. Check that Todoist or a browser is installed.".into())
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+    #[test]
+    fn native_and_browser_links_keep_opaque_ids_in_the_same_destination() {
+        let (native, web) = target_urls("project", "6XGgm6PHrGgMpCFX");
+        assert_eq!(native, "todoist://project?id=6XGgm6PHrGgMpCFX");
+        assert_eq!(web, "https://app.todoist.com/app/project/6XGgm6PHrGgMpCFX");
+        assert_eq!(
+            target_urls("task", "id&other=value").0,
+            "todoist://task?id=id%26other%3Dvalue"
+        );
+    }
 }

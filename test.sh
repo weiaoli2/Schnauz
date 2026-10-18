@@ -14,3 +14,9 @@ mkdir -p "$TODOIST_TEST_DIR"
 xcrun swiftc -parse-as-library -module-cache-path "$TODOIST_TEST_DIR/modules" \
     native/todoist/Core.swift native/todoist/Tests.swift -o "$TODOIST_TEST_DIR/run"
 "$TODOIST_TEST_DIR/run"
+
+COMPOSER_TEST_DIR="${CARGO_TARGET_DIR:-target}/todoist-composer-tests"
+mkdir -p "$COMPOSER_TEST_DIR"
+xcrun swiftc -parse-as-library -module-cache-path "$COMPOSER_TEST_DIR/modules" \
+    native/todoist/Core.swift native/todoist/Composer.swift native/todoist/ComposerTests.swift -o "$COMPOSER_TEST_DIR/run"
+"$COMPOSER_TEST_DIR/run"

@@ -64,6 +64,30 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   a grant. The central file_access_intro_seen preference records acknowledgement
   only. Do not force a restart or block normal browsing without Full Disk Access.
   Hide native previews while the introduction is open.
+- Folder navigation resets its vertical/horizontal scroll state and recomputes
+  visible results. Local listing functions return Result; permission/read failures
+  must show an in-pane error with Retry, never an empty-folder view. Offer File
+  Access Settings only for a real permission error from a user-requested read.
+  Do not infer Full Disk Access from shell access or change macOS privacy settings.
+- Clicking the current breadcrumb or Cmd+L edits the full path; ancestors still
+  navigate. The single-line editor supports mouse/Shift selection, double-click
+  path components, select-all, cut/copy/paste, deletion and caret scrolling.
+  Escape/outside clicks dismiss it; invalid Enter retains the text. The old
+  current-folder command overlay is removed.
+- Todoist empty/loading/error text and rows keep an explicit width, never a
+  one-letter column. Open in Todoist uses the native desktop scheme when the
+  app is installed, otherwise the browser. Oliver confirmed added tasks reach
+  the correct project; preserve that routing rather than recreating projects.
+- Add Task uses native/todoist/Composer.swift: an 800×380 pt themed window with
+  the same little vector dog as the toolbar, not the app icon. Project is fixed
+  to the captured Todoist ID/name; native title/description fields sit beside
+  compact Date, Deadline, Priority, Labels, Reminder and Location controls.
+  Optional location lookup uses Apple Maps only after a user address search,
+  never current-device location. Credentials stay exclusively in Keychain.
+  Time/location reminders are real API writes after task creation; plan failures
+  preserve the created task and retry only pending options with the same IDs.
+  A partial-save retry locks the saved task fields and never posts another task.
+  Offline tests cover field payloads and light/dark layout without showing windows.
 - User feedback: no automatic recursive folder-size calculations while browsing.
   Main text is 12 logical px/pt, small labels 11, file rows 26 px. Keep it compact.
 - Tabs have visible outlines and rounded top corners. Folder names use the same
@@ -116,7 +140,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - Projects replace workspaces. Each owns Favourites, saved connection settings,
   Todoist routing and autosaved local tabs/layout. Personal has its own profile;
   new projects start with only the built-in local Home favourite. Home is pinned
-  first under Favourites in every project, with a blue Home badge matching the
+  first inside Favourites → Folders in every project, with a blue Home badge matching the
   drive capacity badge. Never show it twice or offer removal / project visibility
   actions; do not duplicate it in projects.json. Recents remains removed.
   All Schnauz browser windows share one active project; switching in any window

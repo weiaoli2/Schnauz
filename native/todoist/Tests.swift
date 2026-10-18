@@ -264,6 +264,46 @@ func page(_ rows: [[String: Any]], cursor: String? = nil) -> Data {
     } catch is DecodingError {}
     try check(try Data(contentsOf: file) == bad, "Invalid settings preserved")
   }
+  static func composerOptions() async throws {
+    var created = 0, reminders = 0, locations = 0
+    let client = try mocked { request in
+      let json = try payload(request)
+      switch request.url!.path {
+      case "/api/v1/tasks":
+        created += 1
+        try check(json["project_id"] as? String == "project-A", "Composer keeps the captured project")
+        try check(json["description"] as? String == "Details", "Description submitted")
+        try check(json["deadline_date"] as? String == "2030-01-02", "Deadline submitted")
+        try check(json["priority"] as? Int == 4, "Urgent priority submitted")
+        try check(json["labels"] as? [String] == ["work"], "Labels deduplicated")
+        return (200, encode(task()), [:])
+      case "/api/v1/reminders":
+        reminders += 1
+        try check(json["task_id"] as? String == "task-A", "Reminder attached to created task")
+        try check(json["reminder_type"] as? String == "absolute", "Explicit reminder type")
+        try check((json["due"] as? [String: Any])?["date"] is String, "Reminder time submitted")
+        return (200, encode(["id":"reminder-A", "item_id":"task-A"]), [:])
+      case "/api/v1/location_reminders":
+        locations += 1
+        try check(json["task_id"] as? String == "task-A", "Location attached to same task")
+        try check(json["loc_trigger"] as? String == "on_enter", "Arrival trigger preserved")
+        return (200, encode(["id":"location-A", "item_id":"task-A", "project_id":"project-A"]), [:])
+      default: throw TDFixtureFailure.failed("Unexpected composer request")
+      }
+    }
+    let options = TDTaskOptions(description: "Details", deadline: "2030-01-02", priority: 4, labels: ["work", "work"])
+    let result = try await client.add(projectID: "project-A", content: "Task", due: "tomorrow 09:00",
+      section: nil, requestID: "create", options: options)
+    try await client.reminder(taskID: result.id, date: Date().addingTimeInterval(3600), requestID: "reminder")
+    try await client.locationReminder(taskID: result.id, projectID: "project-A",
+      location: TDLocation(name: "Office", latitude: "37.7", longitude: "-122.4", trigger: "on_enter", radius: 100), requestID: "location")
+    try check(created == 1 && reminders == 1 && locations == 1, "Each operation targets the same created task")
+    _ = try await failure {
+      _ = try await client.add(projectID: "project-A", content: "Bad deadline", due: "", section: nil,
+        requestID: "bad", options: TDTaskOptions(deadline: "2030-02-31"))
+    }
+    try check(created == 1, "Invalid dates do not create tasks")
+  }
   static func main() async {
     do {
       try await matching()
@@ -274,6 +314,8 @@ func page(_ rows: [[String: Any]], cursor: String? = nil) -> Data {
       print("PASS Todoist captured destinations, idempotent writes and moved-task protection")
       try await safeFailures()
       print("PASS Todoist safe errors, rate limits and endpoint boundaries")
+      try await composerOptions()
+      print("PASS Todoist composer fields and correctly scoped time/location reminders")
       try storage()
       print("PASS Todoist metadata and corrupt-config preservation")
     } catch {

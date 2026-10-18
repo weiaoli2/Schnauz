@@ -442,7 +442,7 @@ impl Schnauz {
                                     && session.pending.is_none()
                                 {
                                     tab.current_dir = folder;
-                                    tab.entries = read_entries_fast(&tab.current_dir);
+                                    tab.install_listing(read_entries_fast(&tab.current_dir));
                                     tab.find_query = None;
                                     tab.selection.clear();
                                     tab.anchor = None;
@@ -460,7 +460,7 @@ impl Schnauz {
                                 && session.pending.is_none();
                             if follow {
                                 tab.current_dir = session.cwd.clone();
-                                tab.entries = read_entries_fast(&tab.current_dir);
+                                tab.install_listing(read_entries_fast(&tab.current_dir));
                                 tab.recompute_results();
                                 let style = self.folder_views.borrow().resolve(&tab.current_dir).cloned().unwrap_or_default();
                                 list_ui::apply_style(tab, &style);
@@ -543,7 +543,7 @@ impl Schnauz {
         } else {
             let tab = &mut self.panes[pane].tabs[index];
             tab.current_dir = folder.clone();
-            tab.entries = read_entries_fast(&folder);
+            tab.install_listing(read_entries_fast(&folder));
             sort_entries(&mut tab.entries, tab.sort_key, tab.sort_asc);
             tab.find_query = None;
             tab.recompute_results();

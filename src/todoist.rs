@@ -183,6 +183,7 @@ pub(super) struct Request {
     request_id: Option<String>,
     expected_updated: Option<String>,
     allow_create: bool,
+    palette: HashMap<String, u32>,
 }
 impl Request {
     fn account(operation: &str, account: Option<String>) -> Self {
@@ -196,6 +197,8 @@ impl Request {
             request_id: None,
             expected_updated: None,
             allow_create: false,
+            palette: [("bg", theme().bg), ("sidebar", theme().sidebar), ("text", theme().text), ("accent", theme().accent), ("border", theme().border)]
+                .into_iter().map(|(name, color)| (name.to_string(), color)).collect(),
         }
     }
     fn linked(operation: &str, link: &projects::TodoistLink) -> Self {
@@ -216,6 +219,7 @@ pub(super) struct Response {
     pub cancelled: bool,
     pub project: Option<Project>,
     pub snapshot: Option<Snapshot>,
+    pub task: Option<TaskItem>,
     pub retry_after: Option<u64>,
 }
 pub(super) fn request_id() -> String {
@@ -621,7 +625,15 @@ impl Schnauz {
                     if let Some(completion) = completion {
                         this.todoist.completions.remove(&completion);
                     }
-                    let cache = this.todoist.caches.entry(key).or_default();
+                    let cache = this.todoist.caches.entry(key.clone()).or_default();
+                    // A confirmed creation is visible immediately, before refresh.
+                    if let Some(task) = response.task.filter(|task| task.project_id == key.1) {
+                        if let Some(data) = &mut cache.data {
+                            data.tasks.retain(|old| old.id != task.id);
+                            data.tasks.push(task);
+                            cache.rows = outline(data);
+                        }
+                    }
                     cache.refresh_after = cache.busy;
                     cache.good_at = None;
                     cache.retry_at = None;

@@ -76,6 +76,9 @@ mod legacy;
 mod project_sidebar;
 mod browser_windows;
 mod file_access;
+mod path_editor;
+mod directory_listing;
+use directory_listing::{read_entries, read_entries_fast};
 use browser_windows::{FolderViewsGlobal, ProjectLibraryGlobal};
 mod text_preview;
 mod text_view;
@@ -962,6 +965,7 @@ struct Tab {
     terminal_open: bool,
     terminal_height: f32,
     entries: Vec<Entry>,
+    listing_error: Option<directory_listing::ListingError>,
     /// Back/forward navigation history and our position within it.
     history: Vec<PathBuf>,
     hist_pos: usize,
@@ -972,6 +976,8 @@ struct Tab {
     /// Selection anchor (char index) within `editing_path`; `Some` and different
     /// from `path_cursor` means a range is selected (Option+Shift+Arrow, Cmd+A).
     path_anchor: Option<usize>,
+    path_dragging: bool,
+    path_layout: Rc<RefCell<Option<path_editor::Layout>>>,
     /// When `Some`, an in-directory "find" filter is active (opened by `/`).
     /// `find_results` holds the matching `entries` indices, best match first.
     find_query: Option<String>,
@@ -1020,6 +1026,30 @@ struct Tab {
 }
 
 impl Tab {
+    fn install_listing(&mut self, result: std::io::Result<Vec<Entry>>) {
+        (self.entries, self.listing_error) = directory_listing::unpack(result);
+        sort_entries(&mut self.entries, self.sort_key, self.sort_asc);
+        self.recompute_results();
+    }
+
+    fn change_directory(&mut self, dir: PathBuf) {
+        self.current_dir = dir;
+        self.editing_path = None;
+        self.path_anchor = None;
+        self.path_dragging = false;
+        *self.path_layout.borrow_mut() = None;
+        self.find_query = None;
+        self.find_results.clear();
+        self.content_hits = None;
+        self.content_for = None;
+        self.selection.clear();
+        self.anchor = None;
+        self.listing_error = None;
+        // A shorter parent folder must not inherit an off-screen row/column.
+        self.scroll_handle = UniformListScrollHandle::new();
+        self.h_scroll = ScrollHandle::new();
+    }
+
     fn retain_visible_selection(&mut self) {
         let kept: HashSet<PathBuf> = self.visible_entries().map(|e| self.current_dir.join(&e.name))
             .filter(|p| self.selection.contains(p)).collect();
@@ -1130,18 +1160,22 @@ impl Tab {
 
     fn at_location(dir: PathBuf, remote: Option<SftpServer>) -> Self {
         // Remote paths belong to the server, never read them on this Mac.
-        let entries = if remote.is_none() { read_entries_fast(&dir) } else { Vec::new() };
+        let listing = if remote.is_none() { read_entries_fast(&dir) } else { Ok(Vec::new()) };
+        let (entries, listing_error) = directory_listing::unpack(listing);
         let mut tab = Tab {
             current_dir: dir.clone(),
             terminal: None,
             terminal_open: false,
             terminal_height: 290.0,
             entries,
+            listing_error,
             history: vec![dir.clone()],
             hist_pos: 0,
             editing_path: None,
             path_cursor: 0,
             path_anchor: None,
+            path_dragging: false,
+            path_layout: Rc::new(RefCell::new(None)),
             find_query: None,
             entry_filter: EntryFilter::All,
             show_hidden: false,
@@ -1744,7 +1778,7 @@ impl Schnauz {
             return;
         }
         let dir = self.tab(pane).current_dir.clone();
-        self.tab_mut(pane).entries = read_entries_fast(&dir);
+        self.tab_mut(pane).install_listing(read_entries_fast(&dir));
         self.next_load_gen += 1;
         let gen = self.next_load_gen;
         self.tab_mut(pane).load_gen = gen;
@@ -1754,6 +1788,7 @@ impl Schnauz {
         }
         cx.notify();
         self.prewarm_icons(cx);
+        if self.tab(pane).listing_error.is_some() { return; }
 
         // Fill full metadata in the background, then swap it in if still current.
         cx.spawn(async move |this, cx| {
@@ -1764,7 +1799,7 @@ impl Schnauz {
                     && this.tab(pane).load_gen == gen
                     && this.tab(pane).current_dir == dir
                 {
-                    this.tab_mut(pane).entries = full;
+                    this.tab_mut(pane).install_listing(full);
                     this.sort_tab(pane);
                     if this.tab(pane).is_filtered() {
                         this.recompute_find(pane);
@@ -1789,6 +1824,7 @@ impl Schnauz {
         let gen = self.next_load_gen;
         self.tab_mut(pane).load_gen = gen;
         // Show a placeholder (empty) immediately; the listing arrives async.
+        self.tab_mut(pane).listing_error = None;
         self.tab_mut(pane).entries.clear();
         self.recompute_find(pane);
         cx.notify();
@@ -5149,40 +5185,6 @@ impl Schnauz {
         cx.notify();
     }
 
-    /// Open the actions popup targeted at `path`: a single selected item
-    /// for that folder with the ⌘K actions dropdown already open (Copy path,
-    /// Reveal in Finder, Open in new tab, …). Reached by clicking the
-    /// breadcrumb's current-location crumb, which previously just re-navigated
-    /// to where you already were.
-    fn open_palette_for_path(
-        &mut self,
-        pane: usize,
-        path: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.active_pane = pane;
-        self.file_search.cancel();
-        self.file_search.inline = false;
-        self.palette_open = true;
-        self.query.clear();
-        self.query_cursor = 0;
-        self.query_anchor = None;
-        self.palette_hist_pos = None;
-        self.selected = 0;
-        self.search_gen = self.search_gen.wrapping_add(1); // drop in-flight results
-        self.palette_scroll.set_offset(point(px(0.0), px(0.0)));
-        self.palette_items = vec![PaletteItem {
-            title: path_label(&path),
-            subtitle: path.to_string_lossy().into_owned(),
-            action: Action::Open(path, true),
-            is_dir: true,
-        }];
-        self.palette_actions = Some(0); // land straight on the actions list
-        window.focus(&self.focus);
-        cx.notify();
-    }
-
     fn refresh_palette(&mut self, cx: &mut Context<Self>) {
         self.refresh_file_search(cx);
     }
@@ -5504,9 +5506,15 @@ impl Schnauz {
             return;
         }
 
-        // While editing the path bar, keys feed the text field.
+        if cmd && key == "l" {
+            self.begin_path_edit(self.active_pane, window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        // Path editing consumes file shortcuts such as Cut and Paste.
         if self.active_tab().editing_path.is_some() {
             self.handle_path_edit_key(ev, cx);
+            cx.stop_propagation();
             return;
         }
 
@@ -6182,18 +6190,7 @@ impl Schnauz {
         if self.search_in_pane(pane) { self.close_palette(cx); }
         self.rename = None;
 
-        {
-            let tab = self.tab_mut(pane);
-            tab.current_dir = dir.clone();
-            tab.editing_path = None;
-            tab.find_query = None;
-            tab.find_results.clear();
-            tab.content_hits = None;
-            tab.content_for = None;
-            tab.selection.clear();
-            tab.anchor = None;
-
-        }
+        self.tab_mut(pane).change_directory(dir.clone());
         // Recents / last-dir are for local browsing only — a remote path would
         // be treated as a (missing) local folder on next launch.
         if self.tab(pane).remote.is_none() {
@@ -6213,6 +6210,7 @@ impl Schnauz {
         self.pending_click_rename = None;
         if self.search_in_pane(pane) { self.close_palette(cx); }
         if dir == self.tab(pane).current_dir {
+            self.reload_pane(pane, cx);
             return;
         }
         // Local dirs are validated with a stat; remote dirs come from a listing
@@ -6255,218 +6253,6 @@ impl Schnauz {
         tab.hist_pos += 1;
         let dir = tab.history[tab.hist_pos].clone();
         self.load_dir_in(pane, dir, cx);
-    }
-
-    /// Enter path-edit mode for a pane: the bar becomes an editable text field.
-    fn begin_path_edit(&mut self, pane: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.active_pane = pane;
-        let text = self.tab(pane).current_dir.display().to_string();
-        let end = text.chars().count();
-        let tab = self.tab_mut(pane);
-        tab.editing_path = Some(text);
-        tab.path_cursor = end;
-        tab.path_anchor = None;
-        window.focus(&self.focus);
-        cx.notify();
-    }
-
-    /// The path editor's selection as a sorted `(start, end)` char range.
-    fn path_sel(&self, pane: usize) -> Option<(usize, usize)> {
-        let tab = self.tab(pane);
-        match tab.path_anchor {
-            Some(a) if a != tab.path_cursor => {
-                Some((a.min(tab.path_cursor), a.max(tab.path_cursor)))
-            }
-            _ => None,
-        }
-    }
-
-    /// Delete the path editor's selected range (if any), placing the cursor at
-    /// its start. Returns true when something was removed. Clears the anchor.
-    fn path_delete_sel(&mut self, pane: usize) -> bool {
-        if let Some((lo, hi)) = self.path_sel(pane) {
-            let tab = self.tab_mut(pane);
-            if let Some(s) = tab.editing_path.as_mut() {
-                let (bl, bh) = (char_byte(s, lo), char_byte(s, hi));
-                s.replace_range(bl..bh, "");
-            }
-            tab.path_cursor = lo;
-            tab.path_anchor = None;
-            true
-        } else {
-            self.tab_mut(pane).path_anchor = None;
-            false
-        }
-    }
-
-    /// Insert `s` at the path cursor, replacing any selection first.
-    fn path_insert(&mut self, pane: usize, s: &str) {
-        self.path_delete_sel(pane);
-        let tab = self.tab_mut(pane);
-        if let Some(buf) = tab.editing_path.as_mut() {
-            let b = char_byte(buf, tab.path_cursor);
-            buf.insert_str(b, s);
-            tab.path_cursor += s.chars().count();
-        }
-    }
-
-    /// Move (or extend) the path text cursor. `word` jumps by word, `select`
-    /// extends the selection (Option+Shift selects a word at a time).
-    fn path_move_h(&mut self, pane: usize, left: bool, word: bool, select: bool) {
-        let tab = self.tab(pane);
-        let Some(s) = tab.editing_path.clone() else {
-            return;
-        };
-        let end = s.chars().count();
-        let cursor = tab.path_cursor.min(end);
-        let target = match (left, word) {
-            (true, true) => prev_word_boundary(&s, cursor),
-            (true, false) => cursor.saturating_sub(1),
-            (false, true) => next_word_boundary(&s, cursor),
-            (false, false) => (cursor + 1).min(end),
-        };
-        let sel = self.path_sel(pane);
-        let tab = self.tab_mut(pane);
-        if select {
-            if tab.path_anchor.is_none() {
-                tab.path_anchor = Some(cursor);
-            }
-            tab.path_cursor = target;
-            if tab.path_anchor == Some(target) {
-                tab.path_anchor = None;
-            }
-        } else if let Some((lo, hi)) = sel {
-            tab.path_cursor = if word {
-                target
-            } else if left {
-                lo
-            } else {
-                hi
-            };
-            tab.path_anchor = None;
-        } else {
-            tab.path_cursor = target;
-            tab.path_anchor = None;
-        }
-    }
-
-    /// Keystrokes while the path bar is being edited (acts on the active pane).
-    fn handle_path_edit_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
-        let ks = &ev.keystroke;
-        let cmd = ks.modifiers.platform;
-        let alt = ks.modifiers.alt;
-        let shift = ks.modifiers.shift;
-        let pane = self.active_pane;
-        match ks.key.as_str() {
-            "escape" => {
-                self.tab_mut(pane).editing_path = None;
-                cx.notify();
-            }
-            "enter" => {
-                if let Some(text) = self.tab_mut(pane).editing_path.take() {
-                    let path = expand_path(text.trim());
-                    if path.is_dir() {
-                        self.navigate_in(pane, path, cx);
-                    }
-                }
-                cx.notify();
-            }
-            // Cmd+Left/Right jump to start/end (extending with Shift); otherwise
-            // Left/Right move by char, Option by word, Shift extends selection.
-            "left" => {
-                if cmd {
-                    let tab = self.tab_mut(pane);
-                    if shift && tab.path_anchor.is_none() {
-                        tab.path_anchor = Some(tab.path_cursor);
-                    }
-                    tab.path_cursor = 0;
-                    if !shift {
-                        tab.path_anchor = None;
-                    }
-                } else {
-                    self.path_move_h(pane, true, alt, shift);
-                }
-                cx.notify();
-            }
-            "right" => {
-                if cmd {
-                    let end = self
-                        .tab(pane)
-                        .editing_path
-                        .as_ref()
-                        .map_or(0, |s| s.chars().count());
-                    let tab = self.tab_mut(pane);
-                    if shift && tab.path_anchor.is_none() {
-                        tab.path_anchor = Some(tab.path_cursor);
-                    }
-                    tab.path_cursor = end;
-                    if !shift {
-                        tab.path_anchor = None;
-                    }
-                } else {
-                    self.path_move_h(pane, false, alt, shift);
-                }
-                cx.notify();
-            }
-            "a" if cmd => {
-                let end = self
-                    .tab(pane)
-                    .editing_path
-                    .as_ref()
-                    .map_or(0, |s| s.chars().count());
-                let tab = self.tab_mut(pane);
-                if end == 0 {
-                    tab.path_anchor = None;
-                } else {
-                    tab.path_anchor = Some(0);
-                    tab.path_cursor = end;
-                }
-                cx.notify();
-            }
-            "backspace" => {
-                if !self.path_delete_sel(pane) {
-                    let tab = self.tab_mut(pane);
-                    if tab.path_cursor > 0 {
-                        if let Some(s) = tab.editing_path.as_mut() {
-                            let start = char_byte(s, tab.path_cursor - 1);
-                            let stop = char_byte(s, tab.path_cursor);
-                            s.replace_range(start..stop, "");
-                        }
-                        tab.path_cursor -= 1;
-                    }
-                }
-                cx.notify();
-            }
-            "c" if cmd => {
-                // Copy the selection if there is one, else the whole path.
-                let text = match self.path_sel(pane) {
-                    Some((lo, hi)) => self.tab(pane).editing_path.as_ref().map(|s| {
-                        s[char_byte(s, lo)..char_byte(s, hi)].to_string()
-                    }),
-                    None => self.tab(pane).editing_path.clone(),
-                };
-                if let Some(text) = text {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                }
-            }
-            "v" if cmd => {
-                if let Some(t) = cx.read_from_clipboard().and_then(|i| i.text()) {
-                    self.path_insert(pane, t.trim());
-                    cx.notify();
-                }
-            }
-            _ => {
-                if cmd {
-                    return; // leave other Cmd-combos alone
-                }
-                if let Some(ch) = ks.key_char.as_ref() {
-                    if !ch.is_empty() && !ch.chars().any(char::is_control) {
-                        self.path_insert(pane, ch);
-                        cx.notify();
-                    }
-                }
-            }
-        }
     }
 
     // ----- in-directory find (the "/" filter) -----
@@ -8561,7 +8347,7 @@ impl Schnauz {
         let can_fwd = tab.hist_pos + 1 < tab.history.len();
 
         let content: AnyElement = if tab.editing_path.is_some() {
-            self.render_path_editor(pane).into_any_element()
+            self.render_path_editor(pane, cx).into_any_element()
         } else {
             self.render_breadcrumb(pane, cx).into_any_element()
         };
@@ -8684,10 +8470,8 @@ impl Schnauz {
                 if idx > 0 {
                     segs.push(breadcrumb_sep());
                 }
-                // Palette-on-click only for the crumb of the CURRENT dir, and only
-                // on local tabs (Reveal in Finder etc. make no sense for a remote
-                // path — there the crumb keeps its refresh/navigate behavior).
-                let is_current = full == current_dir && tab.remote.is_none();
+                // Ancestors navigate; the current crumb opens the full path editor.
+                let is_current = full == current_dir;
                 segs.push(breadcrumb_seg(
                     pane * 4096 + idx,
                     pane,
@@ -8746,57 +8530,6 @@ impl Schnauz {
                             ),
                     ),
             )
-    }
-
-    /// The editable address-bar field shown in edit mode.
-    fn render_path_editor(&self, pane: usize) -> impl IntoElement {
-        let t = theme();
-        let tab = self.tab(pane);
-        let text = tab.editing_path.clone().unwrap_or_default();
-
-        // The editable text: either a highlighted selection span, or the text
-        // split around a static caret at the cursor.
-        let field = if let Some((lo, hi)) = self.path_sel(pane) {
-            let (bl, bh) = (char_byte(&text, lo), char_byte(&text, hi));
-            div()
-                .flex()
-                .items_center()
-                .min_w_0()
-                .child(div().flex_none().child(text[..bl].to_string()))
-                .child(
-                    div()
-                        .flex_none()
-                        .bg(Theme::alpha(t.accent, 0x66))
-                        .rounded_sm()
-                        .child(text[bl..bh].to_string()),
-                )
-                .child(div().flex_none().child(text[bh..].to_string()))
-        } else {
-            let cursor = tab.path_cursor.min(text.chars().count());
-            let b = char_byte(&text, cursor);
-            div()
-                .flex()
-                .items_center()
-                .min_w_0()
-                .child(div().flex_none().child(text[..b].to_string()))
-                // Blinking would need a timer; a static caret reads clearly.
-                .child(div().flex_none().w(px(1.5)).h(px(14.0)).bg(rgb(t.text)))
-                .child(div().flex_none().child(text[b..].to_string()))
-        };
-
-        div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .items_center()
-            .px_2()
-            .h(px(22.0))
-            .rounded_md()
-            .bg(rgb(t.surface))
-            .border_1()
-            .border_color(rgb(t.accent))
-            .text_color(rgb(t.text))
-            .child(field)
     }
 
     /// The canvas: one full-width pane, or two panes split by a draggable
@@ -9084,7 +8817,10 @@ impl Schnauz {
         let split = self.panes.len() > 1;
         let active = pane == self.active_pane;
         let searching = self.search_in_pane(pane);
-        let body: AnyElement = if searching { self.render_file_results(cx) } else { match view {
+        let body: AnyElement = if searching { self.render_file_results(cx) }
+        else if let Some(error) = &self.tab(pane).listing_error {
+            directory_listing::error_panel(error, pane, cx)
+        } else { match view {
             ViewMode::List => self.render_list_body(pane, cx),
             ViewMode::Icons => self.render_icons_body(pane, cx),
         }};
@@ -9736,7 +9472,17 @@ impl Render for Schnauz {
             .text_size(px(UI_FONT_SIZE))
             // Focusable so it receives key events (Cmd+P, palette typing).
             .track_focus(&self.focus)
-            .capture_any_mouse_down(cx.listener(|this, _, _, _| {
+            .capture_any_mouse_down(cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                for pane in &mut this.panes {
+                    for tab in &mut pane.tabs {
+                        let outside = tab.path_layout.borrow().as_ref().is_some_and(|layout| !layout.bounds.dilate(px(8.)).contains(&ev.position));
+                        if tab.editing_path.is_some() && outside {
+                            tab.editing_path = None;
+                            tab.path_dragging = false;
+                            cx.notify();
+                        }
+                    }
+                }
                 if let Some(text) = &this.text_view { text.release_focus(); }
                 this.pending_click_rename = None;
                 this.suppress_entry_click = false;
@@ -9810,6 +9556,7 @@ impl Render for Schnauz {
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 let x = f64::from(ev.position.x) as f32;
                 let y = f64::from(ev.position.y) as f32;
+                this.path_drag(ev.position, cx);
                 this.resize_preview(x, cx);
                 // A press-then-move on a file row becomes a native OS drag (so
                 // files can be dropped into Finder or any other app).
@@ -9831,6 +9578,7 @@ impl Render for Schnauz {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, ev: &gpui::MouseUpEvent, _, cx| {
+                    for pane in &mut this.panes { for tab in &mut pane.tabs { tab.path_dragging = false; } }
                     this.finish_favourite_drag(ev.position, cx);
                     this.finish_preview_resize(cx);
                     this.drag_candidate = None;
@@ -10043,9 +9791,7 @@ fn breadcrumb_seg(
     label: String,
     full: PathBuf,
     active: bool,
-    // The crumb for the pane's CURRENT directory: clicking it would only
-    // re-navigate to where you already are, so it opens the command palette
-    // targeted at that folder instead (Copy path / Reveal / new tab / …).
+    // Clicking the current directory edits its complete path.
     is_current: bool,
     cx: &Context<Schnauz>,
 ) -> AnyElement {
@@ -10062,10 +9808,10 @@ fn breadcrumb_seg(
         .text_color(if active { rgb(t.text) } else { rgb(t.text_dim) })
         .hover(|s| s.bg(rgb(t.hover)).text_color(rgb(t.text)))
         .child(label)
-        .when(is_current, |d| d.tooltip(tip("Actions for this folder…")))
+        .when(is_current, |d| d.tooltip(tip("Edit full path · ⌘L")))
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             if is_current {
-                this.open_palette_for_path(pane, full.clone(), window, cx);
+                this.begin_path_edit(pane, window, cx);
             } else {
                 this.navigate_in(pane, full.clone(), cx);
             }
@@ -12412,69 +12158,6 @@ fn format_size(is_dir: bool, size: u64) -> String {
     }
 }
 
-/// Read a directory's entries with full metadata (one `stat` per entry), sorted
-/// directories-first then case-insensitive by name. This is the slow path; the
-/// UI shows `read_entries_fast` first and swaps this in from the background.
-fn read_entries(dir: &Path) -> Vec<Entry> {
-    let mut entries: Vec<Entry> = Vec::new();
-    if let Ok(read_dir) = fs::read_dir(dir) {
-        for entry in read_dir.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            // One stat, following symlinks: gives is_dir, size, and mtime.
-            let md = fs::metadata(entry.path()).ok();
-            let is_dir = md.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-            let size = md.as_ref().map(|m| m.len()).unwrap_or(0);
-            let modified = md.as_ref().and_then(|m| m.modified().ok());
-            let created = md.as_ref().and_then(|m| m.created().ok());
-            entries.push(Entry {
-                name,
-                is_dir,
-                size,
-                modified,
-                created,
-                mode: md.as_ref().map(|m| { use std::os::unix::fs::PermissionsExt; m.permissions().mode() }),
-                loaded: true,
-                hidden_flag: md.as_ref().is_some_and(|m| {
-                    use std::os::macos::fs::MetadataExt;
-                    m.st_flags() & libc::UF_HIDDEN != 0
-                }),
-            });
-        }
-    }
-    sort_default(&mut entries);
-    entries
-}
-
-/// Read a directory's entries cheaply — names + folder/file from the readdir
-/// `d_type`, with **no** per-file `stat` (only symlinks are resolved). This is
-/// near-instant even for very large folders; size/dates fill in later.
-fn read_entries_fast(dir: &Path) -> Vec<Entry> {
-    let mut entries: Vec<Entry> = Vec::new();
-    if let Ok(read_dir) = fs::read_dir(dir) {
-        for entry in read_dir.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let is_dir = match entry.file_type() {
-                Ok(t) if t.is_dir() => true,
-                // Resolving a symlink needs a stat, but symlinks are rare.
-                Ok(t) if t.is_symlink() => entry.path().is_dir(),
-                _ => false,
-            };
-            entries.push(Entry {
-                name,
-                is_dir,
-                size: 0,
-                modified: None,
-                created: None,
-                mode: None,
-                loaded: false,
-                hidden_flag: false,
-            });
-        }
-    }
-    sort_default(&mut entries);
-    entries
-}
-
 /// The default ordering (folders first, then case-insensitive by name). Uses
 /// `sort_by_cached_key` so each name is lowercased once, not on every compare.
 fn sort_default(entries: &mut [Entry]) {
@@ -13482,7 +13165,7 @@ fn main() {
         let p = PathBuf::from(&args[2]);
 
         let t = std::time::Instant::now();
-        let fast = read_entries_fast(&p);
+        let fast = read_entries_fast(&p).expect("Cannot read benchmark directory");
         eprintln!(
             "read_entries_fast: {} entries in {} ms",
             fast.len(),
@@ -13490,7 +13173,7 @@ fn main() {
         );
 
         let t = std::time::Instant::now();
-        let full = read_entries(&p);
+        let full = read_entries(&p).expect("Cannot read benchmark directory");
         eprintln!(
             "read_entries (stat each): {} entries in {} ms",
             full.len(),
@@ -13692,7 +13375,7 @@ mod tests {
         let mut tab = Tab::new(dir.clone());
         let names = |tab: &Tab| tab.visible_entries().map(|e| e.name.clone()).collect::<Vec<_>>();
         assert_eq!(names(&tab), ["Utilities", "Alpha.app", "Beta.APP", "notes.txt"]);
-        for entries in [read_entries_fast(&dir), read_entries(&dir)] {
+        for entries in [read_entries_fast(&dir).unwrap(), read_entries(&dir).unwrap()] {
             for entry in entries.iter().filter(|e| has_app_extension(Path::new(&e.name))) {
                 assert!(entry.is_dir, "copy and move must retain the whole bundle");
                 assert!(!entry.is_folder());
@@ -13757,7 +13440,7 @@ mod tests {
         tab.recompute_results();
         assert_eq!(names(&tab), ["report.txt", "photo.jpg"]);
         fs::write(dir.join("z.txt"), "new").unwrap();
-        tab.entries = read_entries_fast(&dir);
+        tab.install_listing(read_entries_fast(&dir));
         sort_entries(&mut tab.entries, tab.sort_key, tab.sort_asc);
         tab.recompute_results();
         assert_eq!(names(&tab), ["z.txt", "report.txt", "photo.jpg"]);
@@ -13784,7 +13467,7 @@ mod tests {
         let flagged = std::ffi::CString::new(dir.join("Finder hidden.txt").as_os_str().as_encoded_bytes()).unwrap();
         assert_eq!(unsafe { libc::chflags(flagged.as_ptr(), libc::UF_HIDDEN) }, 0);
         let mut tab = Tab::new(dir.clone());
-        tab.entries = read_entries(&dir);
+        tab.install_listing(read_entries(&dir));
         tab.recompute_results();
         let names = |t: &Tab| t.visible_entries().map(|e| e.name.clone()).collect::<Vec<_>>();
         assert!(!tab.show_hidden);

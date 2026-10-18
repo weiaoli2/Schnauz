@@ -316,17 +316,17 @@ impl Schnauz {
             return;
         }
         let home = Shortcut::local(home_dir(), Section::Folders);
-        self.project_shortcut_row(items, key, &home, cx);
         for (kind, key_name, label) in [
             (Section::Folders, "FOLDERS", "Folders"),
             (Section::Files, "FILES", "Files"),
         ] {
-            if !self
-                .projects
-                .sidebar()
-                .shortcuts
-                .iter()
-                .any(|s| s.kind == kind && !s.is_home())
+            if kind != Section::Folders
+                && !self
+                    .projects
+                    .sidebar()
+                    .shortcuts
+                    .iter()
+                    .any(|s| s.kind == kind && !s.is_home())
             {
                 continue;
             }
@@ -348,6 +348,9 @@ impl Schnauz {
             );
             if self.collapsed_sections.contains(key_name) {
                 continue;
+            }
+            if kind == Section::Folders {
+                self.project_shortcut_row(items, key, &home, cx);
             }
             for shortcut in self
                 .projects

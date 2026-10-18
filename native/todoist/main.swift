@@ -11,6 +11,7 @@ struct TDRequest: Decodable {
   let request_id: String?
   let expected_updated: String?
   let allow_create: Bool?
+  let palette: [String: UInt32]?
 }
 struct TDResult: Encodable {
   var success = true
@@ -77,12 +78,13 @@ struct TDResult: Encodable {
     finish(TDResult(success: false, message: "Todoist action cancelled.", cancelled: true))
   }
   func windowWillClose(_ notification: Notification) { cancel() }
-  func progress(_ message: String) {
+  func progress(_ message: String, cancellable: Bool = true) {
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 430, height: 125), styleMask: [.titled, .closable],
       backing: .buffered, defer: false)
     window.title = "Todoist — Schnauz"
     window.delegate = self
+    window.standardWindowButton(.closeButton)?.isEnabled = cancellable
     let stack = NSStackView()
     stack.orientation = .vertical
     stack.spacing = 14
@@ -91,7 +93,7 @@ struct TDResult: Encodable {
     spinner.style = .spinning
     spinner.startAnimation(nil)
     stack.addArrangedSubview(spinner)
-    stack.addArrangedSubview(NSButton(title: "Cancel", target: self, action: #selector(cancel)))
+    if cancellable { stack.addArrangedSubview(NSButton(title: "Cancel", target: self, action: #selector(cancel))) }
     window.contentView!.addSubview(stack)
     stack.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
@@ -219,9 +221,12 @@ struct TDResult: Encodable {
       let choice = alert.runModal()
       if choice == .alertFirstButtonReturn { return projects[picker.indexOfSelectedItem] }
       if choice == .alertThirdButtonReturn {
-        let url = URL(string: "https://app.todoist.com/app/project")!.appendingPathComponent(
-          projects[picker.indexOfSelectedItem].id)
-        NSWorkspace.shared.open(url)
+        let id = projects[picker.indexOfSelectedItem].id
+        var native = URLComponents(string: "todoist://project")!
+        native.queryItems = [URLQueryItem(name: "id", value: id)]
+        if NSWorkspace.shared.urlForApplication(toOpen: native.url!) == nil || !NSWorkspace.shared.open(native.url!) {
+          NSWorkspace.shared.open(URL(string: "https://app.todoist.com/app/project")!.appendingPathComponent(id))
+        }
       } else {
         cancel()
         return nil
@@ -229,39 +234,57 @@ struct TDResult: Encodable {
     }
   }
   func addTask(client: TDClient, project: String) async -> Never {
-    var content = ""
-    var due = ""
-    var id = request.request_id ?? UUID().uuidString
-    var previous: [String]? = nil
+    // Read the captured destination first; the composer never offers a project picker.
+    let destination: TDProject
+    do { destination = try await client.project(project) } catch { fail(error) }
+    var draft = TDDraft()
+    let creationID = request.request_id ?? UUID().uuidString
+    let reminderID = UUID().uuidString, locationID = UUID().uuidString
+    var previous = ""
+    var currentID = creationID
+    var savedTask: TDTask? = nil
+    var reminderSaved = false, locationSaved = false
+    var message = ""
     while true {
-      guard
-        let values = prompt(
-          "Add task to \(request.project_name ?? "Todoist")",
-          detail:
-            "This task will be added to the Todoist project shown above, even if you switch Schnauz projects.",
-          values: [("Task", content, false), ("Due (optional, e.g. tomorrow)", due, false)],
-          confirm: "Add task")
-      else {
+      let composer = TDComposer(project: destination.name, draft: draft, palette: request.palette,
+        message: message, saved: savedTask != nil)
+      guard let entered = composer.present() else {
+        if let task = savedTask {
+          finish(TDResult(message: "Task saved in \(destination.name). Optional reminders were not completed.", task: task))
+        }
         cancel()
         continue
       }
-      content = values[0]
-      due = values[1]
-      if let previous, previous != values { id = UUID().uuidString }
-      previous = values
+      draft = entered
+      let signature = "\(draft.content)\u{0}\(draft.description)\u{0}\(draft.due)\u{0}\(draft.labels)\u{0}\(draft.priority)\u{0}\(String(describing: draft.deadline))"
+      if !previous.isEmpty && signature != previous { currentID = UUID().uuidString }
+      previous = signature
       do {
-        let task = try await client.add(
-          projectID: project, content: content, due: due, section: nil, requestID: id)
-        finish(TDResult(message: "Task added to Todoist.", task: task))
+        progress(savedTask == nil ? "Saving task to \(destination.name)…" : "Saving reminder options…", cancellable: false)
+        if savedTask == nil {
+          if let date = draft.reminder, date <= Date() { throw TDProblem(text: "Choose a reminder time in the future.") }
+          savedTask = try await client.add(projectID: project, content: draft.content,
+            due: draft.due, section: nil, requestID: currentID, options: draft.options)
+        }
+        let task = savedTask!
+        if let date = draft.reminder, !reminderSaved {
+          try await client.reminder(taskID: task.id, date: date, requestID: reminderID)
+          reminderSaved = true
+        }
+        if let location = draft.location, !locationSaved {
+          try await client.locationReminder(taskID: task.id, projectID: project, location: location, requestID: locationID)
+          locationSaved = true
+        }
+        finish(TDResult(message: "Task added to \(destination.name).", task: task))
       } catch {
-        // Keep the form and request ID for an explicit retry, including
-        // after an unknown network outcome. No automatic write retries.
-        problemAlert(error)
-        if let delay = (error as? TDProblem)?.retryAfter {
-          progress("Waiting \(delay)s before another Todoist request…")
+        window?.orderOut(nil); window = nil
+        let problem = error as? TDProblem
+        let detail = problem?.text ?? "Todoist did not confirm the change. Retry the same request to avoid duplicates."
+        message = savedTask == nil ? detail : "Task saved. Reminder options failed: \(detail) Retry options will not create another task."
+        if let delay = problem?.retryAfter {
+          progress("Waiting \(delay)s before retrying Todoist…")
           do { try await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000) } catch { cancel() }
-          window?.orderOut(nil)
-          window = nil
+          window?.orderOut(nil); window = nil
         }
       }
     }

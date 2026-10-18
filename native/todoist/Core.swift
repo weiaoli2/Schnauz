@@ -57,6 +57,19 @@ struct TDSnapshot: Codable {
   let tasks: [TDTask]
   let sections: [TDSection]
 }
+struct TDTaskOptions {
+  var description = ""
+  var deadline: String? = nil
+  var priority = 1
+  var labels: [String] = []
+}
+struct TDLocation {
+  let name: String
+  let latitude: String
+  let longitude: String
+  let trigger: String
+  let radius: Int
+}
 private struct TDPage<T: Decodable>: Decodable {
   let results: [T]
   let next_cursor: String?
@@ -150,7 +163,9 @@ final class TDClient: NSObject, URLSessionTaskDelegate {
         case 401:
           message = "Todoist access has expired or was revoked. Reconnect Todoist in Settings."
         case 403:
-          message = "Todoist does not permit this action. Check your access to this project."
+          message = ["reminders", "location_reminders"].contains(parts.first ?? "")
+            ? "Your Todoist account or plan does not permit this reminder."
+            : "Todoist does not permit this action. Check your access to this project."
         case 404:
           message =
             "This Todoist project or task is no longer available. Refresh or link another project."
@@ -282,7 +297,8 @@ final class TDClient: NSObject, URLSessionTaskDelegate {
       },
       sections: sections.filter { $0.project_id == id && sectionIDs.insert($0.id).inserted })
   }
-  func add(projectID: String, content: String, due: String, section: String?, requestID: String)
+  func add(projectID: String, content: String, due: String, section: String?, requestID: String,
+    options: TDTaskOptions = TDTaskOptions())
     async throws -> TDTask
   {
     let project = try Self.identifier(projectID)
@@ -290,7 +306,22 @@ final class TDClient: NSObject, URLSessionTaskDelegate {
     guard !text.isEmpty, text.count <= 500 else {
       throw TDProblem(text: "Enter a task name of up to 500 characters.")
     }
-    var fields: [String: Any] = ["content": text, "project_id": project]
+    guard options.description.count <= 16_000, (1...4).contains(options.priority), options.labels.count <= 50,
+      options.labels.allSatisfy({ !$0.isEmpty && $0.count <= 60 }) else {
+      throw TDProblem(text: "Check the description, priority and labels.")
+    }
+    if let deadline = options.deadline {
+      let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX")
+      formatter.calendar = Calendar(identifier: .gregorian); formatter.dateFormat = "yyyy-MM-dd"
+      formatter.isLenient = false
+      guard let date = formatter.date(from: deadline), formatter.string(from: date) == deadline else {
+        throw TDProblem(text: "Choose a valid deadline date.")
+      }
+    }
+    var fields: [String: Any] = ["content": text, "project_id": project, "priority": options.priority]
+    if !options.description.isEmpty { fields["description"] = options.description }
+    if !options.labels.isEmpty { fields["labels"] = Array(Set(options.labels)).sorted() }
+    if let deadline = options.deadline { fields["deadline_date"] = deadline }
     if !due.isEmpty { fields["due_string"] = due }
     if let section, !section.isEmpty { fields["section_id"] = try Self.identifier(section) }
     let data = try await request(["tasks"], method: "POST", json: fields, requestID: requestID)
@@ -300,6 +331,41 @@ final class TDClient: NSObject, URLSessionTaskDelegate {
         text: "Todoist did not confirm the destination project. Check the task in Todoist.")
     }
     return task
+  }
+  func project(_ projectID: String) async throws -> TDProject {
+    let id = try Self.identifier(projectID)
+    let project = try await decoded(TDProject.self, parts: ["projects", id])
+    guard project.id == id else { throw TDProblem(text: "Todoist returned the wrong project.") }
+    return project
+  }
+  func reminder(taskID: String, date: Date, requestID: String) async throws {
+    let id = try Self.identifier(taskID)
+    guard date > Date() else { throw TDProblem(text: "Choose a reminder time in the future.") }
+    let when = ISO8601DateFormatter().string(from: date)
+    let data = try await request(["reminders"], method: "POST", json: [
+      "task_id": id, "reminder_type": "absolute", "due": ["date": when], "service": "push"
+    ], requestID: requestID)
+    guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+      value["item_id"] as? String == id else {
+      throw TDProblem(text: "Todoist did not confirm the reminder for this task.")
+    }
+  }
+  func locationReminder(taskID: String, projectID: String, location: TDLocation, requestID: String) async throws {
+    let id = try Self.identifier(taskID)
+    guard !location.name.isEmpty, location.name.count <= 255,
+      let lat = Double(location.latitude), (-90...90).contains(lat),
+      let lon = Double(location.longitude), (-180...180).contains(lon),
+      ["on_enter", "on_leave"].contains(location.trigger), (1...255).contains(location.radius) else {
+      throw TDProblem(text: "Choose a valid reminder location.")
+    }
+    let data = try await request(["location_reminders"], method: "POST", json: [
+      "task_id": id, "name": location.name, "loc_lat": location.latitude,
+      "loc_long": location.longitude, "loc_trigger": location.trigger, "radius": location.radius
+    ], requestID: requestID)
+    guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+      value["item_id"] as? String == id, value["project_id"] as? String == projectID else {
+      throw TDProblem(text: "Todoist did not confirm the location reminder for this project.")
+    }
   }
   func complete(
     projectID: String, taskID: String, requestID: String, expectedUpdated: String? = nil

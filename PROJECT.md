@@ -115,11 +115,42 @@ Release packaging uses separate output paths and must preserve the running app.
 See docs/RELEASING.md for signing, source notices and publication checks.
 Apple Development signing is available; Developer ID/notarization is not yet set up.
 
+## Latest reported fixes — 2026-10-18
+
+- Ancestor navigation starts at the top of the new folder and rebuilds filters.
+- Failed local reads show Folder access denied/unavailable, Retry and an explicit
+  File Access Settings button for denied reads; they no longer look like empty
+  folders. Actual Documents access is still controlled by macOS and tested by Oliver.
+- Current breadcrumb / Cmd+L opens an editable path with mouse selection,
+  Cut/Copy/Paste, select-all, delete and scrolling. Invalid paths remain editable.
+- The pinned Home favourite now belongs in Favourites → Folders.
+- Todoist status/empty text and task rows keep their width. Native Todoist links
+  fall back to the browser if the app is absent. Oliver confirmed task creation
+  reaches the correct Todoist project.
+- The compact native task composer uses Schnauz colours and the small toolbar
+  dog. Project stays locked; description, date, deadline, priority, labels,
+  absolute-time reminders and location reminders are implemented. Location search
+  uses Apple Maps on the user's search action. Optional reminders depend on the
+  Todoist account/plan; failed optional writes cannot create a second task on retry.
+
+Validation passed: 66 Rust tests, six Nextcloud and six Todoist offline fixture
+groups, and native light/dark composer layout plus partial-save retry checks.
+The normal local bundle was rebuilt and its deep/strict signature verified.
+No live account or Keychain reads were used for testing. Oliver performs manual
+UI and account checks. Release publication and new web-kit images remain on hold.
+Never restart his live app or sessions.
+
+At the last read-only process check, only the older Schnauz-Demo was running.
+The normal updated bundle is ready to reopen; do not assume that demo results
+reflect the new build, or infer macOS access from terminal reads.
+
 ## Where changes belong
 
 | Area | Source |
 |---|---|
 | Browser, navigation and file operations | `src/main.rs` |
+| Fallible local listings and access errors | `src/directory_listing.rs` |
+| Editable path and pointer/keyboard selection | `src/path_editor.rs` |
 | Optional macOS file-access guide | `src/file_access.rs`, General → File Access settings |
 | Stable signing and staged app packaging | `build-signing.sh`, `make_app.sh`, `test-signing.sh` |
 | Project persistence, shared windows and switching | `src/projects.rs`, `src/schnauz.rs`, `src/browser_windows.rs` |
@@ -128,6 +159,7 @@ Apple Development signing is available; Developer ID/notarization is not yet set
 | Direct Nextcloud accounts, links, sharing and locks | `src/nextcloud.rs`, `native/nextcloud/Core.swift`, `native/nextcloud/main.swift` |
 | Saved folder views and list columns | `src/folder_views.rs`, `src/list_ui.rs` |
 | Todoist API bridge, cache and Tasks pane | `src/todoist.rs`, `src/todoist_ui.rs`, `native/todoist/` |
+| Compact native task composer and layout checks | `native/todoist/Composer.swift`, `native/todoist/ComposerTests.swift` |
 | Inline name editor and click-to-rename timing | `src/rename_ui.rs`, click dispatch in `src/main.rs` and `src/search_ui.rs` |
 | Preview layout, selectable text and media | `src/preview_panel.rs`, `src/previews.rs`, `src/text_view.rs`, `src/native_preview.rs`, `src/video_preview.rs` |
 | Terminal and SSH following | `src/schnauz_terminal.rs`, `src/ssh_sync.rs`, `src/terminal-shell/` |
@@ -139,7 +171,7 @@ collapsed sidebar contains only its reopen button; obsolete compact-rail control
 are removed from the source. Devices stays above Projects with background capacity
 updates and adjustable 80/90%-used colour thresholds. The compact sidebar has
 Projects without count badges, then Favourites with a pinned local Home entry
-(blue Home badge) in every project, followed by Folders / Files. Drive capacity
+(blue Home badge) first inside Favourites → Folders in every project. Drive capacity
 badges toggle saved GB / percent free without navigation. Folder menus open in
 place, a new tab or a new Schnauz window. Windows share the active project and
 view cache; project switches propagate while live tabs/PTYs stay per window. Empty
@@ -190,7 +222,7 @@ and has its own saved width; opening Disk Usage replaces Tasks in that tools pan
 Existing unlinked projects look for matching names; **Find or create matching
 project** can explicitly create one if absent. Open tasks show sections, subtasks,
 due dates and priority colours. Click a circle to complete, a task to open Todoist,
-or **Add task…** for a native entry dialog with an optional due date. Failed forms
+or **Add task…** for the compact, project-locked native task composer. Failed forms
 keep their content for retry. Writes retain the project captured when opened.
 
 Requests run through `native/todoist/` / `todoistctl` to Todoist API v1, with tokens

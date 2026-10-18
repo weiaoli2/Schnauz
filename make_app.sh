@@ -81,7 +81,7 @@ for helper in removebg cloudctl volumectl; do
 done
 xcrun swiftc "${SWIFT_ARGS[@]}" native/nextcloud/Core.swift native/nextcloud/main.swift -o "$APP/Contents/MacOS/nextcloudctl"
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/nextcloudctl"
-xcrun swiftc "${SWIFT_ARGS[@]}" native/todoist/Core.swift native/todoist/main.swift -o "$APP/Contents/MacOS/todoistctl"
+xcrun swiftc "${SWIFT_ARGS[@]}" native/todoist/Core.swift native/todoist/Composer.swift native/todoist/main.swift -o "$APP/Contents/MacOS/todoistctl"
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/todoistctl"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
