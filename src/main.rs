@@ -122,6 +122,8 @@ mod nextcloud;
 mod rename_ui;
 mod todoist;
 mod todoist_ui;
+#[cfg(feature = "ui-checks")]
+mod product_preview;
 mod ui_checks;
 use settings::*;
 use previews::*;
@@ -971,6 +973,7 @@ struct Tab {
     current_dir: PathBuf,
     terminal: Option<schnauz_terminal::Session>,
     terminal_open: bool,
+    terminal_starting: Option<u64>,
     terminal_height: f32,
     entries: Vec<Entry>,
     listing_error: Option<directory_listing::ListingError>,
@@ -1175,6 +1178,7 @@ impl Tab {
             current_dir: dir.clone(),
             terminal: None,
             terminal_open: false,
+            terminal_starting: None,
             terminal_height: 290.0,
             entries,
             listing_error,
@@ -12887,6 +12891,13 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).is_some_and(|s| s == "--version") {
         println!("Schnauz {}", env!("CARGO_PKG_VERSION")); return;
+    }
+    #[cfg(feature = "ui-checks")]
+    if args.get(1).is_some_and(|s| s == "--website-preview")
+        || std::env::current_exe().is_ok_and(|p|p.ancestors().any(|p|p.file_name().is_some_and(|n|n=="Schnauz Website Preview.app"))) {
+        // LaunchServices may reopen the preview without its original arguments.
+        // This bundle must never fall through to the user's real app profile.
+        product_preview::run(); return;
     }
     #[cfg(feature = "ui-checks")]
     if args.get(1).is_some_and(|s| s == "--check-layout") || std::env::var_os("SCHNAUZ_UI_CHECK_VISIBLE").is_some() { ui_checks::run(); return; }

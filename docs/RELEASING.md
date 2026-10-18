@@ -7,8 +7,9 @@ Planned first candidate: **v0.5.0-rc.1**, with public source and public download
 
 On 2026-10-18 Oliver asked to save and reuse this release workflow, fix the main
 bugs first, and publish the release only afterwards. Do not run the publishing
-steps until he explicitly resumes the release. Do not make new website screenshots
-or otherwise rebuild the website kit during this bug-fix phase.
+steps until he explicitly resumes the release. Oliver separately authorized a
+website product-info and screenshot refresh on 2026-10-18; that refresh does not
+authorize release publication, tags, installers or uploads.
 
 The public repository and source already exist at the URL above. No GitHub
 release/tag was published during preparation. Both architectures were built into

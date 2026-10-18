@@ -85,9 +85,12 @@ procedure in docs/RELEASING.md; do not redo account/repository/tooling setup.
 
 The separate website kit is at
 /Users/oliw/Documents/Codex/2026-10-17/what/outputs/Schnauz-Website-Kit.
-Keep its current copy, logo and pictures as they are; the requested GitHub link
-is included. No new captures or kit regeneration during debugging. Incomplete
-image-preview captures remain unfinished; do not represent them as final imagery.
+Oliver explicitly authorized a product-info and screenshot refresh on 2026-10-18,
+prioritizing projects, terminal, path paste and Todoist. That supersedes only the
+website-kit freeze; release publication remains on hold. The current kit includes
+four verified sample-data screenshots, the existing logo, complete English copy
+and a website-Codex brief. Older images are archived separately, not presented as
+the current captures.
 
 An isolated screenshot session exposed a blank/oversized picture preview; this
 has not been fixed. Suspected cause: percentage image width combined with GPUI's
@@ -143,7 +146,8 @@ verified before replacement. No live account or Keychain reads were used for tes
 separate app successfully received a native local-folder drop, kept Home first
 and displayed the blue notice in the fixed footer. Held-drag flicker and the SSH
 drag preview were not visually verified; live Todoist task listing remains
-Oliver's manual check. Release publication and new web-kit images remain on hold.
+Oliver's manual check. Release publication remains on hold; website imagery was
+subsequently refreshed at his explicit request.
 Never restart his live app or sessions.
 
 Further reported fixes: notices/SSH errors use the fixed footer's centered blue
@@ -159,7 +163,7 @@ separate visible fixture confirmed horizontal titles/dates, the Add task row,
 Common defaults, independent preview, left divider drag and native right-border
 resize. Its data is synthetic; live Todoist remains Oliver's verification.
 
-Only the compiled version (currently 0.5.3) appears beside the Schnauz title
+Only the compiled version (currently 0.5.4) appears beside the Schnauz title
 and in --version. Oliver removed date/build/source IDs; the app stays Schnauz.app. At inspection the user's process had
 started at 13:04, before the prior 13:06 build finished, so old observations did
 not verify the new binary. Do not restart his live sessions automatically.
@@ -215,7 +219,8 @@ visible labels, capped for long names. Dropped local/SSH items and the Tag butto
 use the same typed shortcuts. Legacy Locations, Cloud, network folders and Tagged
 Items merge without loss; their old sections are removed. Cloud/network badges
 identify providers without rendering-time I/O. SSH favourite navigation uses a
-browser-only tab and never sends terminal commands. Connections remain in Settings
+current tab if it already has a terminal, retaining its visible PTY and never
+sending terminal commands. Connections remain in Settings
 and Go → Connect to Server… (Cmd+K). Cloud paths have a persistent blue
 provider badge and relative breadcrumbs. The approved direct Nextcloud connection
 is implemented: Settings → General → Connections links a local folder through
@@ -295,7 +300,7 @@ QA copy at /private/tmp/schnauz-window-qa-gstoq1oa/Schnauz Window QA.app has its
 own profile and was seen browsing Downloads with its sidebar collapsed. Preserve
 that profile if it has become user state; do not terminate user sessions blindly.
 
-## Current test stand — 0.5.3
+## Previous test stand — 0.5.3
 
 Normal drag moves; holding Command copies with AppKit's green + and a fixed-footer
 Copy N items / Move N items label. The payload count survives tab switching. A
@@ -329,3 +334,44 @@ The optimized normal Schnauz.app 0.5.3 is built and stable-certificate signed.
 Deep/strict verification and --version passed. It was not launched or substituted
 for Oliver's running app. Logs: /private/tmp/schnauz-053-tests.log and
 /private/tmp/schnauz-053-build.log. No push, release, installer or website-kit update.
+
+## Current development preview — 0.5.4
+
+Terminal can now start directly in the current SSH folder. Preparation and
+saved-profile resolution run in the background; a new SSH PTY starts in the
+captured folder. Existing authenticated transports are reused through an owned
+private socket alias that never removes the original master. Initial folder
+quoting handles spaces, quotes, shell metacharacters, percent signs and newlines.
+Bash/Zsh initial prompts follow the requested folder even if startup files change
+cwd. Existing terminal sessions are never replaced for navigation. Plain local
+path paste in a remote tab also retains the visible terminal in that tab.
+
+Oliver additionally authorized a refresh of the website product kit and new
+sample screenshots, emphasizing projects, seamless terminal, path paste and
+Todoist. Publication remains on hold. The screenshot fixture is an opt-in
+ui-checks feature, launched in a separately named preview app. That bundle always
+uses isolated mode, including argument-free LaunchServices relaunches; never load
+live profiles. Its --website-preview-scene=N start option chooses real project
+views, path navigation, theme and the real Tasks view with synthetic tasks. The app logo,
+copy and handoff stay together in the existing website-kit output directory.
+
+Validation for 0.5.4 passed: 79 Rust tests, all Nextcloud/Todoist offline fixture
+groups, native composer checks and the hidden real GPUI layout/drag checks. A
+new actual-PTY fixture runs the remote startup bootstrap through Bash and Zsh,
+checks a literal difficult path, an interactive Vim session and clean exit. It
+contacts no real SSH server. The native UI test also verifies local-file path
+paste preserves an existing SSH terminal/tab and selects the intended file.
+The optimized normal Schnauz.app prints 0.5.4 and passes deep/strict certificate
+signature verification. It was not launched or substituted for Oliver's live app.
+Real-server interoperability remains his manual test. Logs are
+/private/tmp/schnauz-054-tests.log and /private/tmp/schnauz-054-build.log.
+
+The refreshed website handoff is outputs/Schnauz-Website-Kit, with START-HERE.md,
+WEBSITE-BRIEF.md, ASSETS.md, English description/SEO copy, original brand artwork
+and four 3200x1640 JPEG captures: light project/terminal/Todoist overview, Brand
+Refresh workspace, pasted README.md path/selection and dark overview. Todoist
+tasks/projects are synthetic; the real local terminal lists only fixture files.
+No live tokens, tasks, private file contents or user terminal sessions were used.
+The separate preview app was closed after capture. The 13-file ZIP and SHA-256
+manifest were verified; older screenshots are retained in a sibling archive.
+No pushes, tags, releases, installers or website deployment were performed.

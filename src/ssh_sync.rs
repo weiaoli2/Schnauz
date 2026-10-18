@@ -168,6 +168,22 @@ impl Link {
             },
         })
     }
+    pub(super) fn remote_start(
+        token: String,
+        server: SftpServer,
+        origin: PathBuf,
+        tab: &Tab,
+        following: bool,
+    ) -> Self {
+        Self {
+            token,
+            server,
+            local: LocalView::capture(tab, origin),
+            following,
+            unsupported: false,
+            folder: None,
+        }
+    }
     pub fn origin(&self) -> &Path {
         &self.local.folder
     }
@@ -296,6 +312,29 @@ fn receive(tab: &mut Tab, event: Event) -> (bool, bool) {
 }
 
 impl Schnauz {
+    pub(super) fn ssh_process_ended(&mut self, id: u64, cx: &mut Context<Self>) {
+        let token = self
+            .panes
+            .iter()
+            .flat_map(|p| &p.tabs)
+            .chain(
+                self.project_sessions
+                    .values()
+                    .flat_map(|live| live.panes.iter().flat_map(|p| &p.tabs)),
+            )
+            .find_map(|tab| {
+                tab.terminal
+                    .as_ref()
+                    .filter(|s| s.id == id)?
+                    .ssh
+                    .as_ref()
+                    .map(|link| link.token.clone())
+            });
+        if let Some(token) = token {
+            self.ssh_shell_event(id, &format!("end;{token}"), cx);
+        }
+        cx.notify();
+    }
     pub(super) fn ssh_shell_event(&mut self, id: u64, payload: &str, cx: &mut Context<Self>) {
         let Some(event) = parse(payload) else {
             return;

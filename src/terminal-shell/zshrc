@@ -51,3 +51,12 @@ if [[ "$SCHNAUZ_TEST_SHELL" == 1 ]]; then
 fi
 
 source "$SCHNAUZ_INTEGRATION_DIR/ssh.zsh"
+
+# The opt-in website fixture owns a fresh test shell; show real sample-folder
+# command output without using the user's dotfiles, history or terminal input.
+if [[ "$SCHNAUZ_TEST_SHELL" == 1 && "$SCHNAUZ_PREVIEW_SHELL" == 1 ]]; then
+  PROMPT='%F{cyan}studio%f %1~ %# '
+  printf '\nProject workspace ready.\n\n'
+  /bin/ls -1
+  printf '\n'
+fi

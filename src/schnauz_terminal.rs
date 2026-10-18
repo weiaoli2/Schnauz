@@ -6,6 +6,9 @@ use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, Pt
 use std::io::{Read, Write};
 
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
+#[path = "remote_terminal.rs"]
+mod remote;
+
 const CD_WIDGET: &[u8] = b"\x1b[99;1~";
 
 #[derive(Clone)]
@@ -27,6 +30,7 @@ struct Process {
     request_file: PathBuf,
     ssh_request: PathBuf,
     shell_pid: Option<u32>,
+    _ssh_socket: Option<Arc<remote::SocketLease>>,
 }
 impl Process {
     fn input(&self, bytes: &[u8]) -> std::io::Result<()> {
@@ -111,7 +115,10 @@ fn spawn_process(
         (".zprofile", include_str!("terminal-shell/zprofile")),
         (".zshrc", include_str!("terminal-shell/zshrc")),
         ("ssh.zsh", include_str!("terminal-shell/ssh.zsh")),
-        ("ssh-bootstrap.sh", include_str!("terminal-shell/ssh-bootstrap.sh")),
+        (
+            "ssh-bootstrap.sh",
+            include_str!("terminal-shell/ssh-bootstrap.sh"),
+        ),
     ] {
         crate::projects::atomic_write(&integration.join(name), source.as_bytes())
             .map_err(|e| e.to_string())?;
@@ -122,20 +129,9 @@ fn spawn_process(
     fs::set_permissions(&requests, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
     let request_file = requests.join(format!("{}-{id}.cwd", std::process::id()));
     let ssh_request = requests.join(format!("{}-{id}.ssh", std::process::id()));
-    let pair = native_pty_system()
-        .openpty(PtySize {
-            rows: 18,
-            cols: 100,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|e| e.to_string())?;
     let mut command = CommandBuilder::new("/bin/zsh");
     command.args(["-l", "-i"]);
     command.cwd(cwd);
-    command.env("TERM", "xterm-256color");
-    command.env("COLORTERM", "truecolor");
-    command.env("TERM_PROGRAM", "Schnauz");
     command.env("ZDOTDIR", &integration);
     command.env("SCHNAUZ_INTEGRATION_DIR", &integration);
     command.env(
@@ -144,10 +140,27 @@ fn spawn_process(
     );
     command.env("SCHNAUZ_CWD_REQUEST", &request_file);
     command.env("SCHNAUZ_SSH_REQUEST", &ssh_request);
-    command.env(
-        "SCHNAUZ_TEST_SHELL",
-        if test_shell { "1" } else { "0" },
-    );
+    command.env("SCHNAUZ_TEST_SHELL", if test_shell { "1" } else { "0" });
+    spawn_pty(command, request_file, ssh_request, None)
+}
+
+fn spawn_pty(
+    mut command: CommandBuilder,
+    request_file: PathBuf,
+    ssh_request: PathBuf,
+    socket: Option<Arc<remote::SocketLease>>,
+) -> Result<(Process, Box<dyn Read + Send>), String> {
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: 18,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| e.to_string())?;
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    command.env("TERM_PROGRAM", "Schnauz");
     if std::env::var_os("LANG").is_none() {
         command.env("LANG", "en_US.UTF-8");
     }
@@ -164,8 +177,12 @@ fn spawn_process(
     )));
     let exited = Arc::new(AtomicBool::new(false));
     let finished = exited.clone();
+    let socket_cleanup = socket.clone();
     std::thread::spawn(move || {
         let _ = child.wait();
+        if let Some(socket) = socket_cleanup {
+            socket.clean();
+        }
         finished.store(true, Ordering::Release);
     });
     Ok((
@@ -177,6 +194,7 @@ fn spawn_process(
             request_file,
             ssh_request,
             shell_pid,
+            _ssh_socket: socket,
         },
         reader,
     ))
@@ -215,8 +233,12 @@ pub(super) struct Session {
     pub ssh: Option<crate::ssh_sync::Link>,
 }
 impl Session {
-    pub(super) fn ssh_record(&self) -> &Path { &self.process.ssh_request }
-    pub(super) fn browser_moved_during_ssh(&mut self) { self.guard.browser_moved = true; }
+    pub(super) fn ssh_record(&self) -> &Path {
+        &self.process.ssh_request
+    }
+    pub(super) fn browser_moved_during_ssh(&mut self) {
+        self.guard.browser_moved = true;
+    }
     fn exited(&self) -> bool {
         self.process.exited.load(Ordering::Acquire)
     }
@@ -254,13 +276,13 @@ impl Session {
 impl Schnauz {
     pub(super) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pane = self.active_pane;
-        if self.tab(pane).remote.is_some() && self.tab(pane).terminal.is_none() {
-            self.set_notice(
-                "Open a local folder to start its terminal. You can run ssh inside the terminal."
-                    .into(),
-                cx,
-            );
-            return;
+        if self.tab_mut(pane).terminal_starting.take().is_some() {
+            if self.notice.as_deref() == Some("Opening SSH terminal…") {
+                self.notice = None;
+                self.notice_gen += 1;
+            }
+            cx.notify();
+            return; // A second click cancels only the pending new terminal.
         }
         let restart = self
             .tab(pane)
@@ -268,6 +290,10 @@ impl Schnauz {
             .as_ref()
             .is_none_or(|session| session.exited());
         if restart {
+            if self.tab(pane).remote.is_some() {
+                self.start_remote_terminal(pane, window, cx);
+                return;
+            }
             if !self.start_terminal(pane, cx) {
                 return;
             }
@@ -297,7 +323,12 @@ impl Schnauz {
     pub(super) fn start_fixture_terminal(&mut self, pane: usize, cx: &mut Context<Self>) -> bool {
         self.start_terminal_shell(pane, true, cx)
     }
-    fn start_terminal_shell(&mut self, pane: usize, test_shell: bool, cx: &mut Context<Self>) -> bool {
+    fn start_terminal_shell(
+        &mut self,
+        pane: usize,
+        test_shell: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let cwd = self.tab(pane).current_dir.clone();
         let settings = config_dir().unwrap_or_else(std::env::temp_dir);
         let (process, reader) = match spawn_process(&cwd, &settings, test_shell) {
@@ -307,6 +338,21 @@ impl Schnauz {
                 return false;
             }
         };
+        let index = self.panes[pane].active;
+        self.install_terminal(pane, index, cwd, process, reader, None, cx);
+        true
+    }
+
+    fn install_terminal(
+        &mut self,
+        pane: usize,
+        index: usize,
+        cwd: PathBuf,
+        process: Process,
+        reader: Box<dyn Read + Send>,
+        ssh: Option<crate::ssh_sync::Link>,
+        cx: &mut Context<Self>,
+    ) {
         let id = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
         let parent = cx.entity().downgrade();
         let parent_exit = parent.clone();
@@ -355,11 +401,11 @@ impl Schnauz {
                 .with_exit_callback(move |window, _| {
                     let parent = parent_exit.clone();
                     window.on_next_frame(move |_, cx| {
-                        let _ = parent.update(cx, |_, cx| cx.notify());
+                        let _ = parent.update(cx, |this, cx| this.ssh_process_ended(id, cx));
                     });
                 })
         });
-        self.tab_mut(pane).terminal = Some(Session {
+        self.panes[pane].tabs[index].terminal = Some(Session {
             id,
             view,
             cwd,
@@ -367,10 +413,10 @@ impl Schnauz {
             guard: ForegroundSync::default(),
             pending: None,
             process,
-            ssh: None,
+            ssh,
         });
-        self.tab_mut(pane).terminal_open = true;
-        true
+        self.panes[pane].tabs[index].terminal_open = true;
+        cx.notify();
     }
 
     fn recover_terminal(&mut self, pane: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -403,7 +449,9 @@ impl Schnauz {
 
     pub(super) fn sync_terminal_directory(&mut self, pane: usize) {
         let tab = self.tab_mut(pane);
-        if tab.terminal.as_ref().is_some_and(|s| s.ssh.is_some()) { return; }
+        if tab.terminal.as_ref().is_some_and(|s| s.ssh.is_some()) {
+            return;
+        }
         if tab.terminal_open && tab.remote.is_none() {
             if let Some(session) = tab.terminal.as_mut() {
                 session.request_directory(tab.current_dir.clone());
@@ -432,7 +480,9 @@ impl Schnauz {
                     let Some(session) = tab.terminal.as_mut().filter(|s| s.id == id) else {
                         continue;
                     };
-                    if session.ssh.is_some() { return; }
+                    if session.ssh.is_some() {
+                        return;
+                    }
                     match event {
                         ShellEvent::SshIntegration(_) => unreachable!(),
                         ShellEvent::WorkingDirectory(url) => {
@@ -455,7 +505,12 @@ impl Schnauz {
                                     tab.anchor = None;
 
                                     tab.recompute_results();
-                                    let style = self.folder_views.borrow().resolve(&tab.current_dir).cloned().unwrap_or_default();
+                                    let style = self
+                                        .folder_views
+                                        .borrow()
+                                        .resolve(&tab.current_dir)
+                                        .cloned()
+                                        .unwrap_or_default();
                                     list_ui::apply_style(tab, &style);
                                 }
                             }
@@ -469,7 +524,12 @@ impl Schnauz {
                                 tab.current_dir = session.cwd.clone();
                                 tab.install_listing(read_entries_fast(&tab.current_dir));
                                 tab.recompute_results();
-                                let style = self.folder_views.borrow().resolve(&tab.current_dir).cloned().unwrap_or_default();
+                                let style = self
+                                    .folder_views
+                                    .borrow()
+                                    .resolve(&tab.current_dir)
+                                    .cloned()
+                                    .unwrap_or_default();
                                 list_ui::apply_style(tab, &style);
                             }
                         }
@@ -489,8 +549,11 @@ impl Schnauz {
         let tab = &mut self.panes[pane].tabs[tab_index];
         let session = tab.terminal.as_mut().unwrap();
         if session.ssh.is_some() {
-            if matches!(event, ShellEvent::Focused) { self.active_pane = pane; }
-            cx.notify(); return;
+            if matches!(event, ShellEvent::Focused) {
+                self.active_pane = pane;
+            }
+            cx.notify();
+            return;
         }
         match event {
             ShellEvent::SshIntegration(_) => unreachable!(),
@@ -556,7 +619,12 @@ impl Schnauz {
             tab.recompute_results();
             tab.selection.clear();
             tab.anchor = None;
-            let style = self.folder_views.borrow().resolve(&tab.current_dir).cloned().unwrap_or_default();
+            let style = self
+                .folder_views
+                .borrow()
+                .resolve(&tab.current_dir)
+                .cloned()
+                .unwrap_or_default();
             list_ui::apply_style(tab, &style);
         }
     }
@@ -574,12 +642,28 @@ impl Schnauz {
         let t = theme();
         let ssh = session.ssh.as_ref();
         let synced = if let Some(link) = ssh {
-            link.following && link.folder.as_ref() == Some(&tab.current_dir) && tab.remote.as_ref() == Some(&link.server)
-        } else { session.cwd == tab.current_dir && session.pending.is_none() };
+            link.following
+                && link.folder.as_ref() == Some(&tab.current_dir)
+                && tab.remote.as_ref() == Some(&link.server)
+        } else {
+            session.cwd == tab.current_dir && session.pending.is_none()
+        };
         let sync_tip = if ssh.is_some() {
             "Click to toggle SSH folder following. Unsync shows your original local folder; SSH keeps running."
-        } else { "Restart in this folder when idle. Clears scrollback, shell variables and unfinished input." };
-        let terminal_path = ssh.map(|link| format!("{}:{}", link.server.name, link.folder.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "connecting…".into())))
+        } else {
+            "Restart in this folder when idle. Clears scrollback, shell variables and unfinished input."
+        };
+        let terminal_path = ssh
+            .map(|link| {
+                format!(
+                    "{}:{}",
+                    link.server.name,
+                    link.folder
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "connecting…".into())
+                )
+            })
             .unwrap_or_else(|| display_path(&session.cwd));
         let label = if session.exited() {
             "Session ended"
@@ -627,13 +711,7 @@ impl Schnauz {
                         .text_size(px(11.0))
                         .text_color(rgb(0xaab4cb))
                         .child(div().font_weight(FontWeight::SEMIBOLD).child("Terminal"))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(terminal_path),
-                        )
+                        .child(div().flex_1().min_w_0().truncate().child(terminal_path))
                         .child(
                             div()
                                 .id(("terminal-sync", pane))
@@ -643,15 +721,26 @@ impl Schnauz {
                                     d.cursor_pointer()
                                         .hover(|s| s.text_color(rgb(0xffffff)))
                                         .tooltip(tip(sync_tip))
-                                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                            cx.stop_propagation();
-                                            if this.tab(pane).terminal.as_ref().is_some_and(|s| s.ssh.is_some()) {
-                                                this.toggle_ssh_follow(pane, cx);
-                                            } else { this.recover_terminal(pane, window, cx); }
-                                        }))
+                                        .on_click(cx.listener(
+                                            move |this, _: &ClickEvent, window, cx| {
+                                                cx.stop_propagation();
+                                                if this
+                                                    .tab(pane)
+                                                    .terminal
+                                                    .as_ref()
+                                                    .is_some_and(|s| s.ssh.is_some())
+                                                {
+                                                    this.toggle_ssh_follow(pane, cx);
+                                                } else {
+                                                    this.recover_terminal(pane, window, cx);
+                                                }
+                                            },
+                                        ))
                                 }),
                         )
-                        .when(ssh.is_none() && session.guard.running, |d| d.child("· Folder sync paused"))
+                        .when(ssh.is_none() && session.guard.running, |d| {
+                            d.child("· Folder sync paused")
+                        })
                         .when(ssh.is_some(), |d| d.child("· SSH → browser"))
                         .child(
                             div()
@@ -694,7 +783,10 @@ mod tests {
     }
     impl Probe {
         fn start(folder: &Path, settings: &Path) -> Self {
-            let (process, mut reader) = spawn_process(folder, settings, true).unwrap();
+            let (process, reader) = spawn_process(folder, settings, true).unwrap();
+            Self::from_pair(process, reader)
+        }
+        fn from_pair(process: Process, mut reader: Box<dyn Read + Send>) -> Self {
             let (tx, rx) = mpsc::channel();
             std::thread::spawn(move || {
                 let mut buffer = [0; 4096];
@@ -720,7 +812,12 @@ mod tests {
                 let bytes = self
                     .rx
                     .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                    .unwrap_or_else(|error| panic!("terminal did not reach the expected state: {error}; output: {}", String::from_utf8_lossy(&self.output)));
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "terminal did not reach the expected state: {error}; output: {}",
+                            String::from_utf8_lossy(&self.output)
+                        )
+                    });
                 let received = self.parser.feed(&bytes);
                 for event in &received {
                     if let ShellEvent::WorkingDirectory(url) = event {
@@ -769,7 +866,9 @@ mod tests {
         let bin = root.join("bin");
         fs::create_dir(&bin).unwrap();
         let fake_ssh = bin.join("ssh");
-        fs::write(&fake_ssh, r#"#!/bin/sh
+        fs::write(
+            &fake_ssh,
+            r#"#!/bin/sh
 if [ "$1" = -G ]; then
   printf 'hostname test.invalid\nuser tester\nport 2222\nremotecommand none\nsessiontype default\n'
   exit 0
@@ -782,44 +881,156 @@ if [ -z "$remote" ]; then printf 'NORMAL_SSH_PASSTHROUGH\n'; exit 0; fi
 # Simulate OpenSSH's documented %% expansion without making a network connection.
 remote=$(printf '%s' "$remote" | sed 's/%%/%/g')
 SNZ_SSH_TEST_SHELL=1 SHELL="$SNZ_SSH_TEST_REMOTE_SHELL" /bin/sh -c "$remote"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         fs::set_permissions(&fake_ssh, fs::Permissions::from_mode(0o755)).unwrap();
         let destination = root.join("Remote 'quoted' $name 素材 #?%;folder");
         fs::create_dir(&destination).unwrap();
         for shell in ["/bin/bash", "/bin/zsh"] {
-            let mut probe = Probe::start(&root, &root.join(if shell.ends_with("bash") {"bash-profile"} else {"zsh-profile"}));
+            let mut probe = Probe::start(
+                &root,
+                &root.join(if shell.ends_with("bash") {
+                    "bash-profile"
+                } else {
+                    "zsh-profile"
+                }),
+            );
             probe.ready();
-            probe.command(&format!("export PATH={}:$PATH SNZ_SSH_TEST_REMOTE_SHELL={shell}", shell_quote(&bin.to_string_lossy())));
+            probe.command(&format!(
+                "export PATH={}:$PATH SNZ_SSH_TEST_REMOTE_SHELL={shell}",
+                shell_quote(&bin.to_string_lossy())
+            ));
             probe.events.clear();
             probe.output.clear();
             probe.process.input(b"ssh -p 2222 test-alias\r").unwrap();
             probe.wait(|events, _| events.iter().any(|e| matches!(e, ShellEvent::SshIntegration(p) if matches!(crate::ssh_sync::parse(p), Some(crate::ssh_sync::Event::Ready(_, _))))));
             assert!(probe.process.has_foreground_app());
-            assert!(probe.events.iter().any(|e| matches!(e, ShellEvent::SshIntegration(p) if p.starts_with("start;"))));
+            assert!(probe
+                .events
+                .iter()
+                .any(|e| matches!(e, ShellEvent::SshIntegration(p) if p.starts_with("start;"))));
             assert!(probe.process.ssh_request.is_file());
             probe.output.clear();
             probe.events.clear();
-            probe.process.input(format!("cd -- {}\r", shell_quote(&destination.to_string_lossy())).as_bytes()).unwrap();
+            probe
+                .process
+                .input(
+                    format!("cd -- {}\r", shell_quote(&destination.to_string_lossy())).as_bytes(),
+                )
+                .unwrap();
             probe.wait(|events, _| events.iter().any(|e| matches!(e, ShellEvent::SshIntegration(p) if matches!(crate::ssh_sync::parse(p), Some(crate::ssh_sync::Event::Ready(_, folder)) if folder == destination))));
             // A live remote CLI still owns the terminal; browsing must never
             // inject the local directory-change widget into it.
-            probe.process.input(b"/usr/bin/vim -Nu NONE -n -i NONE ssh-test.txt\r").unwrap();
+            probe
+                .process
+                .input(b"/usr/bin/vim -Nu NONE -n -i NONE ssh-test.txt\r")
+                .unwrap();
             probe.wait(|_, text| text.contains("\x1b[?1049h"));
-            assert_eq!(probe.process.change_directory(&root).unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
-            probe.process.input(b"iSSH editor survived\x1b:wq\r").unwrap();
-            probe.wait(|events, _| events.iter().any(|e| matches!(e, ShellEvent::SshIntegration(p) if p.starts_with("ready;"))));
-            assert_eq!(fs::read_to_string(destination.join("ssh-test.txt")).unwrap(), "SSH editor survived\n");
+            assert_eq!(
+                probe.process.change_directory(&root).unwrap_err().kind(),
+                std::io::ErrorKind::WouldBlock
+            );
+            probe
+                .process
+                .input(b"iSSH editor survived\x1b:wq\r")
+                .unwrap();
+            probe.wait(|events, _| {
+                events
+                    .iter()
+                    .any(|e| matches!(e, ShellEvent::SshIntegration(p) if p.starts_with("ready;")))
+            });
+            assert_eq!(
+                fs::read_to_string(destination.join("ssh-test.txt")).unwrap(),
+                "SSH editor survived\n"
+            );
             fs::remove_file(destination.join("ssh-test.txt")).unwrap();
             probe.events.clear();
             probe.output.clear();
             probe.process.input(b"exit\r").unwrap();
             probe.wait(|events, _| events.contains(&ShellEvent::PromptReady));
-            assert!(probe.events.iter().any(|e| matches!(e, ShellEvent::SshIntegration(p) if p.starts_with("end;"))));
+            assert!(probe
+                .events
+                .iter()
+                .any(|e| matches!(e, ShellEvent::SshIntegration(p) if p.starts_with("end;"))));
             assert!(!probe.process.ssh_request.exists());
             assert!(probe.process.is_idle_shell());
             probe.command("ssh test-alias printf hello");
             assert!(String::from_utf8_lossy(&probe.output).contains("NORMAL_SSH_PASSTHROUGH"));
             drop(probe);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn remote_terminal_starts_at_the_selected_folder_and_preserves_interactive_tools() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = crate::tests::scratch("remote-terminal-start");
+        let fake = root.join("fixture-ssh");
+        fs::write(
+            &fake,
+            r#"#!/bin/sh
+remote=''
+for arg in "$@"; do case "$arg" in RemoteCommand=*) remote=${arg#RemoteCommand=} ;; esac; done
+remote=$(printf '%s' "$remote" | sed 's/%%/%/g')
+SNZ_SSH_TEST_SHELL=1 SHELL="$SNZ_SSH_TEST_REMOTE_SHELL" /bin/sh -c "$remote"
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+        let folder = root.join("Remote 'quotes' $(no-command) 素材 %folder\nlast");
+        fs::create_dir(&folder).unwrap();
+        let server = SftpServer {
+            host: "192.0.2.1".into(),
+            user: "fixture".into(),
+            ..Default::default()
+        };
+        for shell in ["/bin/bash", "/bin/zsh"] {
+            let socket = remote::SocketLease::new(None).unwrap();
+            let token = socket.token();
+            let args =
+                remote::arguments(&server, &folder, &socket.socket(), &token, false, true).unwrap();
+            let mut command = CommandBuilder::new(&fake);
+            command.args(args);
+            command.cwd(&root);
+            command.env("SNZ_SSH_TEST_REMOTE_SHELL", shell);
+            let (process, reader) = spawn_pty(
+                command,
+                root.join("request"),
+                root.join("record"),
+                Some(socket),
+            )
+            .unwrap();
+            let mut probe = Probe::from_pair(process, reader);
+            probe.wait(|events,_|events.iter().any(|e|matches!(e,ShellEvent::SshIntegration(p) if matches!(ssh_sync::parse(p),Some(ssh_sync::Event::Ready(_,ref p)) if p==&folder))));
+            assert!(!root.join("no-command").exists());
+            probe.events.clear();
+            probe.output.clear();
+            probe
+                .process
+                .input(b"/usr/bin/vim -Nu NONE -n -i NONE terminal-proof.txt\r")
+                .unwrap();
+            probe.wait(|_, text| text.contains("\x1b[?1049h"));
+            probe
+                .process
+                .input(b"iRemote terminal works\x1b:wq\r")
+                .unwrap();
+            probe.wait(|events, _| {
+                events
+                    .iter()
+                    .any(|e| matches!(e,ShellEvent::SshIntegration(p) if p.starts_with("ready;")))
+            });
+            assert_eq!(
+                fs::read_to_string(folder.join("terminal-proof.txt")).unwrap(),
+                "Remote terminal works\n"
+            );
+            fs::remove_file(folder.join("terminal-proof.txt")).unwrap();
+            probe.process.input(b"exit\r").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !probe.process.exited.load(Ordering::Acquire) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(probe.process.exited.load(Ordering::Acquire));
         }
         fs::remove_dir_all(root).unwrap();
     }

@@ -1,6 +1,14 @@
 # Run only for this interactive SSH session. The remote user's startup files are
 # read normally; integration lives in a private temporary folder and is removed.
 SNZ_SSH_TOKEN=$1
+if [ "$#" -ge 2 ]; then
+  if ! CDPATH= cd -- "$2"; then
+    printf 'Schnauz could not open the remote folder.\n' >&2
+    exit 1
+  fi
+  SNZ_SSH_START_DIR=$PWD
+  export SNZ_SSH_START_DIR
+fi
 export SNZ_SSH_TOKEN
 case ${SHELL##*/} in bash|zsh) ;; *)
   printf '\033]777;schnauz-ssh;unsupported;%s\007' "$SNZ_SSH_TOKEN"
@@ -31,6 +39,12 @@ if [[ ${SNZ_SSH_TEST_SHELL:-0} != 1 ]]; then
   fi
 fi
 [[ ${SNZ_SSH_TEST_SHELL:-0} == 1 ]] && HISTFILE=/dev/null
+# User startup files may change cwd; apply the explicitly requested start folder
+# once, before this new shell's first prompt. Never change later commands/input.
+if [[ -n ${SNZ_SSH_START_DIR-} ]]; then
+  builtin cd -- "$SNZ_SSH_START_DIR" || exit 1
+  unset SNZ_SSH_START_DIR
+fi
 source "$SNZ_SSH_INTEGRATION/hooks"
 # Keep existing prompt hooks, including array-valued PROMPT_COMMAND.
 if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == 'declare -a '* ]]; then
@@ -61,6 +75,12 @@ SNZ_PROFILE
 ZDOTDIR=$SNZ_SSH_USER_ZDOTDIR
 [[ ${SNZ_SSH_TEST_SHELL:-0} != 1 && -r $ZDOTDIR/.zshrc ]] && source "$ZDOTDIR/.zshrc"
 [[ ${SNZ_SSH_TEST_SHELL:-0} == 1 ]] && HISTFILE=/dev/null
+# User startup files may change cwd; apply the explicitly requested start folder
+# once, before this new shell's first prompt. Never change later commands/input.
+if [[ -n ${SNZ_SSH_START_DIR-} ]]; then
+  builtin cd -- "$SNZ_SSH_START_DIR" || exit 1
+  unset SNZ_SSH_START_DIR
+fi
 source "$SNZ_SSH_INTEGRATION/hooks"
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd _schnauz_remote_prompt

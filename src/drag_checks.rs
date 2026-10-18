@@ -234,6 +234,12 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
                 assert!(b.tab(0).terminal_open); assert_eq!(b.tab(0).terminal.as_ref().unwrap().id,id);
                 b.open_favourite(projects::Shortcut::local(source.clone(),projects::Section::Folders),cx);
                 assert!(b.tab(0).terminal_open && b.tab(0).remote.is_none());
+                b.tab_mut(0).remote=Some(b.tab(0).terminal.as_ref().unwrap().ssh.as_ref().unwrap().server.clone());
+                b.navigate_pasted_path(target.join("a.txt").to_str().unwrap(),cx);
+                assert!(b.tab(0).terminal_open && b.tab(0).remote.is_none());
+                assert_eq!(b.tab(0).terminal.as_ref().unwrap().id,id);
+                assert_eq!(b.panes[0].tabs.len(),count);
+                assert!(b.tab(0).selection.contains(&target.join("a.txt")));
                 // Drop only this owned fixture session, never a live user PTY.
                 b.tab_mut(0).terminal.take(); b.tab_mut(0).terminal_open=false;
             })).unwrap();

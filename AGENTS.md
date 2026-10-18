@@ -301,9 +301,9 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - Latest instruction, 2026-10-18: release publication is ON HOLD. Save and reuse
   release.sh plus docs/RELEASING.md, address Oliver's main bugs first, and resume
   publication only when he asks. Public source is already uploaded; do not create
-  tags, releases, uploads or further pushes during this hold. Keep the website kit
-  and its existing pictures as they are, apart from the requested GitHub link.
-  Do not regenerate screenshots or rebuild release installers for each bug fix;
+  tags, releases, uploads or further pushes during this hold. Refresh the website kit only when explicitly requested (the product-info and
+  screenshot refresh was authorized later on 2026-10-18). Do not regenerate
+  screenshots or rebuild release installers for each routine bug fix;
   build the normal development app as needed and rebuild both release targets
   only when release work resumes. Existing candidate artifacts predate bug fixes.
 - On 2026-10-18 Oliver authorized publication to his GitHub account, and explicitly
@@ -415,7 +415,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The current local testing version is 0.5.3.
+  no per-build app copies or releases. The current local testing version is 0.5.4.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -459,3 +459,31 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   real copy/move through drop handlers and terminal favourite roundtrips in a
   hidden disposable window with a private pasteboard and an owned test shell.
   No real servers/accounts/user sessions are accessed; ui-checks stays opt-in.
+
+- Oliver explicitly authorized refreshing the website product info and screenshots
+  on 2026-10-18, prioritizing project-specific work, seamless terminal use, pasted
+  file/folder paths and Todoist. This supersedes the screenshot/kit freeze only;
+  release publication, tags, pushes and installers remain on hold. Do not present
+  unpublished candidate asset URLs as working downloads. Retain the GitHub link.
+- Terminal in an SSH folder starts a NEW PTY and remote shell in that captured
+  directory, using remote_terminal.rs. Reuse authenticated masters via an owned
+  socket alias; never unlink/replace the original master or send input to another
+  session. Live-only transports fail closed. Initial cd is new-session startup
+  data, safely quoted including OpenSSH percent expansion, never later injection.
+  Background preparation attaches by stable tab/request/project IDs; duplicate
+  clicks cancel only a pending launch. Preserve all existing terminals.
+- Local path paste while a terminal is present in a remote tab detaches browsing
+  in that same tab, preserving the terminal visibly. navigate_pasted_path is shared
+  by the clipboard handler and the opt-in preview's path-navigation scene.
+- product_preview.rs is excluded from normal builds. Its separate bundle must
+  default to isolated fixture mode even without --website-preview; LaunchServices
+  can drop launch arguments. Never let that bundle load the normal profile. Preview start
+  scenes show synthetic tasks with refresh disabled, an owned test shell
+  and sample files; no live accounts or credential reads. CUA captures real UI
+  pixels; caption sample data accurately and do not invent UI or remote sessions.
+
+- Reproduce website captures with --website-preview --website-preview-scene=N
+  in the separate isolated preview bundle: 0 light overview, 1 Brand Refresh,
+  2 pasted file path, 3 dark overview. Only the preview's owned test shell may
+  be restarted for captures. The final four 3200x1640 JPEGs and handoff are in
+  outputs/Schnauz-Website-Kit; originals are raw CUA captures, not retouched UI.

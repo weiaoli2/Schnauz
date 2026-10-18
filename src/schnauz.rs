@@ -117,7 +117,12 @@ impl Schnauz {
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             return;
         };
-        let destination = match crate::clipboard_path::resolve(&text, &home_dir()) {
+        self.navigate_pasted_path(&text, cx);
+    }
+
+    pub(super) fn navigate_pasted_path(&mut self, text: &str, cx: &mut Context<Self>) {
+        let pane = self.active_pane;
+        let destination = match crate::clipboard_path::resolve(text, &home_dir()) {
             Ok(Some(destination)) => destination,
             Ok(None) => return,
             Err(error) => {
@@ -129,13 +134,21 @@ impl Schnauz {
             folder,
             selected_file,
         } = destination;
-        // A local path pasted while browsing SFTP opens a local tab.
+        // Retain a visible terminal when detaching from SFTP to a local path.
         if self.tab(pane).remote.is_some() {
-            let view = self.tab(pane).view;
-            let mut tab = Tab::new(folder.clone());
-            tab.view = view;
-            self.panes[pane].tabs.push(tab);
-            self.panes[pane].active = self.panes[pane].tabs.len() - 1;
+            if self.tab(pane).terminal.is_some() {
+                self.unsync_ssh_browser(pane, cx);
+                let tab = self.tab_mut(pane);
+                tab.remote = None;
+                tab.history = vec![folder.clone()];
+                tab.hist_pos = 0;
+            } else {
+                let view = self.tab(pane).view;
+                let mut tab = Tab::new(folder.clone());
+                tab.view = view;
+                self.panes[pane].tabs.push(tab);
+                self.panes[pane].active = self.panes[pane].tabs.len() - 1;
+            }
         }
         if selected_file.as_ref().is_some_and(|path| {
             use std::os::macos::fs::MetadataExt;
@@ -411,7 +424,7 @@ impl Schnauz {
         }
     }
 
-    fn switch_project(&mut self, id: Option<u64>, cx: &mut Context<Self>) -> Result<(), String> {
+    pub(super) fn switch_project(&mut self, id: Option<u64>, cx: &mut Context<Self>) -> Result<(), String> {
         self.sidebar_menu = None;
         if self.projects.active == id {
             cx.notify();

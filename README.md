@@ -4,12 +4,12 @@
   <p><strong>Your projects. Your files. Your terminal. One native Mac workspace.</strong></p>
   <p>A project-first Finder alternative, built for speed and made to feel at home on macOS.</p>
   <p>
-    <a href="https://github.com/weiaoli2/Schnauz/releases"><img alt="Download Schnauz" src="https://img.shields.io/github/v/release/weiaoli2/Schnauz?include_prereleases&label=download&color=5263ef"></a>
+    <a href="https://github.com/weiaoli2/Schnauz/releases"><img alt="Schnauz releases" src="https://img.shields.io/github/v/release/weiaoli2/Schnauz?include_prereleases&label=release&color=5263ef"></a>
     <img alt="macOS 14 or later" src="https://img.shields.io/badge/macOS-14%2B-black">
     <img alt="Apple Silicon and Intel" src="https://img.shields.io/badge/Mac-Apple%20Silicon%20%2B%20Intel-5263ef">
     <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue"></a>
   </p>
-  <p><a href="https://techguyzone.com/apps/">Website</a> · <a href="https://github.com/weiaoli2/Schnauz/releases">Download</a> · <a href="docs/FEATURES.md">Feature guide</a> · <a href="https://github.com/weiaoli2/Schnauz/issues">Feedback</a></p>
+  <p><a href="https://techguyzone.com/apps/">Website</a> · <a href="https://github.com/weiaoli2/Schnauz/releases">Releases</a> · <a href="docs/FEATURES.md">Feature guide</a> · <a href="https://github.com/weiaoli2/Schnauz/issues">Feedback</a></p>
 </div>
 
 ## A better home for every project
@@ -24,15 +24,16 @@ you need close at hand and expensive work started only when you ask for it.
 
 | What you need | What Schnauz brings |
 | --- | --- |
-| **Project workspaces** | Project-specific favourites, saved tabs and split layouts. One active project shared across windows. |
-| **A real terminal** | An interactive PTY with scrollback, selection and copying. Local folders sync at an idle prompt; running CLI apps keep control of their session. |
-| **SSH that stays connected** | Follow remote Bash/Zsh directories through your terminal's authenticated SSH connection. Browse local or remote favourites while your terminal stays visible. Saved SSH profiles survive reconnects. |
+| **Your project workspace** | Each project remembers its own favourites, pinned files, tabs and layout. Common stays available across projects, and all windows share the active project. |
+| **A seamless real terminal** | A persistent interactive PTY alongside your files. Local folders sync at an idle prompt; running CLI tools keep control. Folder navigation retains your terminal and its work. |
+| **Paste a path and get there** | Paste a folder path into the file browser to open it. Paste a file path to open its folder and select the file. Text inputs and the terminal keep ordinary paste. |
+| **Todoist in context** | See, add and complete tasks for the matching project. Reuse or create a same-named Todoist project; background updates keep browsing free. |
+| **SSH in the current folder** | Start an interactive terminal directly in an SSH folder, or follow directories from `ssh host`. Existing authenticated transports can be reused without replacing their running sessions. |
 | **Smooth file dragging** | Hover a tab or folder to open it during a drag. Move normally, or hold Command to copy with a green + and a clear item count. |
 | **Focused search** | Start in the current folder. Search filenames or text-file contents, combine words, and stop a scan whenever you want. Results stay in the file pane. |
-| **Useful previews** | Select and copy text, inspect photos, and play videos with sound muted by default. Resize the preview and remember it with the folder view. |
-| **Your own folder views** | List or Icons. Choose, resize and reorder list columns. Save per-folder layouts or apply one to a folder tree. |
-| **Cloud awareness** | Clear Nextcloud and iCloud breadcrumbs, cloud badges and optional direct Nextcloud sharing, links and supported file locks. |
-| **Todoist, in context** | Optionally connect your account to see, add and complete tasks for the matching project. New Schnauz projects can reuse or create a same-named Todoist project. |
+| **Useful previews** | Select and copy text, inspect photos, and play muted-by-default video. Resize the preview and remember it with the folder view. |
+| **Your own folder views** | List or Icons. Choose, resize and reorder columns. Save per-folder layouts or apply one to a folder tree. |
+| **Cloud awareness** | Nextcloud/iCloud identity, cloud badges and optional direct Nextcloud sharing, links and supported file locks. |
 | **Storage at a glance** | Drive free-space badges, configurable capacity colours and an on-demand Disk Usage map. |
 
 ## Built for speed, without the baggage
@@ -46,26 +47,20 @@ Folder preferences live in central settings, rather than scattering configuratio
 files through your projects. Todoist and Nextcloud are optional; their credentials
 stay in macOS Keychain.
 
-## Download for Mac
+## Availability for Mac
 
-**macOS 14 Sonoma or later.** Choose the build for your Mac:
+The current local development preview is **0.5.4**. Public release publication is
+on hold while testing continues. [Follow releases](https://github.com/weiaoli2/Schnauz/releases)
+for published downloads; the earlier candidate artifacts predate current fixes.
 
-| Mac | Download |
-| --- | --- |
-| Apple Silicon — M1, M2, M3, M4 and newer | [Apple Silicon release](https://github.com/weiaoli2/Schnauz/releases/download/v0.5.0-rc.1/Schnauz-0.5.0-rc.1-macos-arm64.dmg) |
-| Intel | [Intel release](https://github.com/weiaoli2/Schnauz/releases/download/v0.5.0-rc.1/Schnauz-0.5.0-rc.1-macos-x86_64.dmg) |
-
-Open the disk image and drag **Schnauz.app** to **Applications**.
-Release checksums are included alongside the downloads.
-
-**0.5.0-rc.1 is an early release candidate.** It is signed with the developer's
-Apple Development certificate and is **not Apple-notarized**. macOS may block the
-first launch; after trying to open it, use **System Settings → Privacy & Security →
-Open Anyway** if you trust this download. See [security and verification](SECURITY.md).
+Schnauz targets **macOS 14 Sonoma or later**, on Apple Silicon and Intel. Future
+release downloads will include architecture labels and checksums. Current local
+builds use an Apple Development signature and are **not Apple-notarized**;
+Developer ID signing/notarization is not yet set up. See [security and verification](SECURITY.md).
 
 The app explains macOS file-access permissions on first launch. Full Disk Access
 is optional for ordinary folders, but may be needed for protected locations.
-There is no automatic updater; new builds are published on the Releases page.
+There is no automatic updater. You can build the current source locally below.
 
 ## Build it yourself
 

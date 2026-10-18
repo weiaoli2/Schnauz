@@ -60,6 +60,15 @@ with a suggested USD 2.50 amount; the user completes any payment on PayPal.
   block recovery. A restart clears scrollback, shell variables and unfinished input.
 - The existing native file browser, file operations and Mac integrations.
 
+**Start a terminal in an SSH folder:** click Terminal while browsing a remote
+folder to open a new interactive SSH PTY in that directory. It uses the saved SSH
+profile and can open an additional channel over an already authenticated master.
+The original transport/session is not replaced; if a live-only mux is gone, the
+new channel fails closed instead of silently authenticating again. Fresh SSH
+connections can show their normal password/passphrase prompts inside the new
+terminal. Initial `cd` belongs only to this new session's startup; later browser
+navigation never sends input into it. A terminal already present is preserved.
+
 **SSH folder following:** start a new integrated terminal and use normal
 `ssh host` (including SSH aliases, keys, ports and jump hosts). On remote Bash or
 Zsh, the browser above follows the remote shell's folder, using SFTP over the same
@@ -406,3 +415,15 @@ Local breadcrumbs inside Home use **~/**. Click **~** for Home and its parent
 folders; the current folder or **⌘L** still edits the complete path. The footer
 shows item/selection counts, centered status and mode/settings, without repeating
 the path. File drags do not recolour the browser/sidebar background.
+
+## Website product handoff
+
+The website kit (separate from GitHub) prioritizes project-specific work,
+seamless terminal use, pasted-path navigation and Todoist. Its description,
+brief and new sample-data captures are in the existing outputs/Schnauz-Website-Kit.
+Public release publication remains on hold. The opt-in ui-checks build supports
+--website-preview; its separately named preview bundle always uses an isolated
+profile even when LaunchServices drops arguments. --website-preview-scene=N
+selects reproducible start scenes (0 light, 1 another project, 2 pasted path,
+3 dark); this fixture is excluded from the normal app. The current four captures
+are 3200x1640 JPEGs and are documented in the handoff ASSETS.md.
