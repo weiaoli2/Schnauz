@@ -8550,7 +8550,7 @@ impl Schnauz {
                 }))));
         }
         let tagged = self.selection_is_favourite(pane);
-        row = row.child(button("tb-project-tag", pane, Icon::Tag, tagged, has_selection, "Tag selection in this project's Favourites")
+        row = row.child(button("tb-project-tag", pane, Icon::Tag, tagged, has_selection, "Add to Favourites")
             .when(has_selection, |d| d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_project_tags(pane, cx)))));
         if local {
             row = row.child(button("tb-delete", pane, Icon::Trash, false, has_selection, "Move selection to Trash · ⌘⌫")
