@@ -545,3 +545,13 @@ Live appearance and live cloud login remain user QA; no screenshot verification
 is claimed. Existing windows, settings, terminals and SSH sessions are preserved.
 The optimized Schnauz.app 0.5.9 is built with the stable Apple Development
 certificate and passes --version and deep/strict signature verification.
+
+Oliver subsequently requested public release with both DMGs and descriptions of
+the bug fixes. Published https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.9
+from ba395fa98b044c7b6dc4506614b080df7851ac30. Both architectures and all helpers
+passed signature/architecture checks; ARM native and Intel Rosetta text-preview
+smoke tests passed. Both DMGs verified; exact MPL sources checked byte-for-byte.
+All four GitHub asset digests match local SHA-256. Receipt is saved under
+dist/0.5.9/RELEASE-VERIFICATION.json. English notes describe fixes and features,
+link TechGuyZone, and state Apple Development signing/no notarization. Published
+as an early prerelease. Live apps/terminals were untouched. This request is complete.
