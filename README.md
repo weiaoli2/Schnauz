@@ -106,7 +106,7 @@ limit show an explicit partial-map notice. Closing the panel cancels the scan.
 The map starts below the path and filter bars. Selecting outside it closes it;
 navigation from inside its graphic keeps it open.
 
-Click **New project** or press **⌘⇧S** to create a project from the current tabs.
+Click **+ beside Projects** or press **⌘⇧S** to create a project from the current tabs.
 Each project keeps its own **Favourites**, connection settings, Todoist link and
 last tabs/layout. **Personal** has its own profile. New projects start empty.
 

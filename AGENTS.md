@@ -98,10 +98,15 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - Projects replace workspaces. Each owns Favourites, saved connection settings,
   Todoist routing and autosaved local tabs/layout. Personal has its own profile;
   new projects start with empty Favourites. Recents remains removed.
+  Successful project switching, creation and removal are silent: the toolbar
+  project name, dialog and sidebar already show the result. Do not allocate
+  success notices or their dismissal timers for these actions; retain errors.
   The expanded sidebar is Devices → Projects → Favourites, with compact 24 pt
   rows and Folders / Files subsections shown only when they contain favourites.
   Remove empty-section drop messages and the Favourites + button/picker code.
   Keep the transient drag-hover hint and whole-sidebar drop target.
+  Create projects with the sidebar +, File menu or Cmd+Shift+S; the main toolbar
+  has no New project button or its obsolete icon mapping.
   Projects has no leading disclosure marker
   or tab-count badge. Cloud, Servers, Locations and Tagged Items sections and
   their controls are removed. Preserve spacing between the main groups.
@@ -293,5 +298,9 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Successful connection requests Tasks; Settings → Connections offers Show tasks.
   Opening a pane must not invalidate account/project caches. Keep Terminal and
   Preview labeled in the top toolbar; Preview toggles only the file preview.
+- Keep the footer on one line. The theme action is Dark Mode / Light Mode;
+  Settings is a centered 14 pt gear in a fixed 26 pt button, with its label and
+  Cmd+, shortcut in the tooltip only. New Folder has a closed folder outline
+  and an inset plus; keep all strokes clear of the icon canvas edges.
 - Settings uses the main app's transparent native titlebar and 56 pt themed
   header, with traffic-light clearance and independently scrolling content.

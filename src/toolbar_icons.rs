@@ -168,10 +168,11 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
                     line!(12.5,12.5;17,17);
                 }
                 Icon::FolderPlus => {
-                    line!(3,16;2,16;2,5;7,5;9,7;18,7;18,10);
-                    line!(8,16;18,16);
-                    line!(13,11;13,19);
-                    line!(9,15;17,15);
+                    // Closed folder silhouette; the plus stays within the body
+                    // and every stroke has clearance from the icon's bounds.
+                    line!(2.5,16.5;17.5,16.5;17.5,6.5;9,6.5;7,4.5;2.5,4.5;2.5,16.5);
+                    line!(10,8.75;10,14.25);
+                    line!(7.25,11.5;12.75,11.5);
                 }
                 Icon::Trash => {
                     line!(3,5;17,5);

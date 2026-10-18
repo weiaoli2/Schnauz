@@ -402,8 +402,8 @@ impl Schnauz {
                 self.project_dialog_error = None;
                 self.collapsed_sections.remove("PROJECTS");
                 for title in ["FAVOURITES", "FOLDERS", "FILES"] { self.collapsed_sections.remove(title); }
-                self.set_notice(format!("Created project ‘{}’", name.trim()), cx);
                 self.open_todoist(cx);
+                cx.notify();
             }
             Err(error) => {
                 self.project_dialog_error = Some(error);
@@ -469,19 +469,8 @@ impl Schnauz {
     }
 
     pub(super) fn restore_project(&mut self, id: u64, cx: &mut Context<Self>) {
-        match self.switch_project(Some(id), cx) {
-            Ok(()) => {
-                let name = self
-                    .projects
-                    .items
-                    .iter()
-                    .find(|p| p.id == id)
-                    .unwrap()
-                    .name
-                    .clone();
-                self.set_notice(format!("Opened project ‘{name}’"), cx);
-            }
-            Err(error) => self.set_notice(error, cx),
+        if let Err(error) = self.switch_project(Some(id), cx) {
+            self.set_notice(error, cx);
         }
     }
 
@@ -504,7 +493,7 @@ impl Schnauz {
         match self.persist_library(library) {
             Ok(()) => {
                 self.project_sessions.remove(&Some(id));
-                self.set_notice("Project removed. Your files are unchanged.".into(), cx);
+                cx.notify();
             }
             Err(error) => self.set_notice(error, cx),
         }
@@ -670,13 +659,6 @@ impl Schnauz {
                     if this.todoist.open { this.todoist.open = false; cx.notify(); }
                     else { this.open_todoist(cx); }
                 }))))
-            .child(
-                schnauz_button("schnauz-save", "New project", true)
-                    .tooltip(tip("Create a project from these tabs · ⌘⇧S"))
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.open_project_dialog(window, cx)
-                    })),
-            )
             .into_any_element()
     }
 
@@ -917,6 +899,7 @@ impl Schnauz {
             .h(px(30.0))
             .flex()
             .items_center()
+            .whitespace_nowrap()
             .gap_3()
             .px_4()
             .bg(rgb(t.sidebar))
@@ -924,8 +907,8 @@ impl Schnauz {
             .border_color(rgb(t.border))
             .text_size(px(11.0))
             .text_color(rgb(t.text_muted))
-            .child(div().size(px(6.0)).rounded_full().bg(rgb(t.accent)))
-            .child(label)
+            .child(div().flex_none().size(px(6.0)).rounded_full().bg(rgb(t.accent)))
+            .child(div().flex_none().child(label))
             .when(self.file_search.stopped, |bar| {
                 bar.child(
                     div()
@@ -944,12 +927,17 @@ impl Schnauz {
             .child(
                 div()
                     .id("schnauz-theme")
+                    .flex_none()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .whitespace_nowrap()
                     .cursor_pointer()
                     .hover(|s| s.text_color(rgb(t.accent)))
                     .child(if t.bg == PRESETS[0].1.bg {
-                        "Dark appearance"
+                        "Dark Mode"
                     } else {
-                        "Light appearance"
+                        "Light Mode"
                     })
                     .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
                         let next = if theme().bg == PRESETS[0].1.bg {
@@ -963,10 +951,17 @@ impl Schnauz {
             .child(
                 div()
                     .id("schnauz-settings")
+                    .flex_none()
+                    .w(px(26.))
+                    .h(px(26.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
                     .cursor_pointer()
-                    .hover(|s| s.text_color(rgb(t.accent)))
+                    .hover(|s| s.bg(rgb(t.hover)))
+                    .tooltip(tip("Settings · ⌘,"))
                     .child(ui_icon(Icon::Settings, 14., rgb(t.text_muted)))
-                    .child("Settings  ⌘,")
                     .on_click(|_: &ClickEvent, _, cx: &mut App| open_settings_window(cx)),
             )
             .into_any_element()
@@ -1014,7 +1009,7 @@ pub(super) fn schnauz_button(
         .children(match id {
             "schnauz-split" => Some(Icon::Split), "schnauz-terminal" => Some(Icon::Terminal),
             "schnauz-preview" => Some(Icon::Preview), "schnauz-todoist" => Some(Icon::Tasks),
-            "schnauz-save" => Some(Icon::Project), _ => None,
+            _ => None,
         }.map(|icon| ui_icon(icon, 15., rgb(if accented { 0xffffff } else { t.text_muted }))))
         .when(!compact, |d| d.child(label))
 }
