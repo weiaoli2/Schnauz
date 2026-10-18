@@ -298,9 +298,20 @@ macOS 14 or later and is built for the current Mac's processor.
 open "Schnauz.app"
 ```
 
-For development: `SCHNAUZ_BUILD_PROFILE=debug ./build.sh`. The app is locally
-ad-hoc signed; public distribution and Apple notarization are not configured.
-`./make_dmg.sh` packages an existing build without publishing it.
+For development: `SCHNAUZ_BUILD_PROFILE=debug ./build.sh`. Packaging uses a stable
+Apple Development or Developer ID signing identity from the local Keychain,
+preserving the previous signer when available. With several certificates, choose
+one using `SCHNAUZ_CODESIGN_IDENTITY="certificate name or SHA-1" ./build.sh`.
+Missing/ambiguous identities fail before replacing the existing app. Temporary
+ad-hoc signing requires explicit `SCHNAUZ_CODESIGN_IDENTITY=- ./build.sh`; such
+builds can lose macOS permission grants when their contents change.
+
+A change from earlier ad-hoc builds requires granting access to the newly signed
+app once: quit Schnauz when ready, remove its old Full Disk Access entry, add the
+current Schnauz.app and reopen. Subsequent builds keep the signing identity.
+Packaging compiles and verifies a staged bundle before replacing the existing
+app; it never restarts a live session. Public distribution and Apple notarization
+are not configured. `./make_dmg.sh` packages an existing build without publishing it.
 
 ```sh
 ./test.sh

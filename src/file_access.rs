@@ -2,7 +2,7 @@
 use super::*;
 
 pub(super) const HELP: &str = "To browse protected folders, enable Schnauz in System Settings → Privacy & Security → Full Disk Access. This allows access to files across your Mac.";
-pub(super) const STEPS: &str = "If Schnauz is missing, use the + button to add this Schnauz.app. After enabling access, restart Schnauz when convenient. You can continue without it; some folders will remain restricted.";
+pub(super) const STEPS: &str = "If Schnauz is missing, use + to add the current Schnauz.app. If macOS asks again after an update, remove its old entry and add the current app again. Restart Schnauz when convenient. You can continue without it; some folders will remain restricted.";
 
 #[derive(Default)]
 pub(super) struct Intro {

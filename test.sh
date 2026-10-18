@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 source ./dev-env.sh
+./test-signing.sh
 cargo test "$@"
 NATIVE_TEST_DIR="${CARGO_TARGET_DIR:-target}/nextcloud-tests"
 mkdir -p "$NATIVE_TEST_DIR"

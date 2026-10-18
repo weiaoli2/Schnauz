@@ -26,6 +26,17 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - Current debugging workflow: Oliver tests the live app and reports individual
   bugs. Wait for his reports; do not start unsolicited checks or change his live
   browsing session. Run relevant verification when implementing a reported fix.
+- Package with a stable Apple Development / Developer ID certificate, reusing
+  the existing app's signer. `SCHNAUZ_CODESIGN_IDENTITY` can select a certificate
+  name/SHA-1; missing/ambiguous identities fail before replacing the app. Ad-hoc
+  signing is explicit opt-in with `SCHNAUZ_CODESIGN_IDENTITY=-` only, since its
+  cdhash-based identity can invalidate TCC grants after rebuilds. Sign every
+  helper and the app with the same identity. Stage and verify before replacing
+  the bundle; never reset TCC, change trust settings or restart live sessions.
+  A one-time ad-hoc → certificate transition requires the user to re-add the
+  current app in Full Disk Access. Signing tests use certificate-name fixtures,
+  not real keys or TCC. The local Keychain already has Oliver's Apple Development
+  identity; use it through codesign without exporting keys or altering Keychain.
 - For a normal build run `./build.sh`; for a faster development build use
   `SCHNAUZ_BUILD_PROFILE=debug ./build.sh`. Rust stable and Xcode are required.
 - Run `./test.sh` after project or file-operation changes. Use disposable

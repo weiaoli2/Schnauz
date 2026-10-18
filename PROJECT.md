@@ -42,6 +42,15 @@ SCHNAUZ_BUILD_PROFILE=debug ./build.sh    # Faster development build
 
 The scripts source `dev-env.sh` and reuse the ignored `.build-cache/` directory
 inside the checkout for the local Cargo registry and build cache.
+App packaging now uses a stable Apple Development / Developer ID signing
+certificate from Keychain, preserving the existing signer. To choose explicitly,
+set `SCHNAUZ_CODESIGN_IDENTITY` to a certificate name or SHA-1. Missing or ambiguous
+certificates fail before replacing the app; `-` explicitly requests a temporary
+ad-hoc build whose permissions may not survive changes. After the one-time move
+from ad-hoc signing, the user needs to re-add the current app in Full Disk Access.
+Builds stage and verify the app before replacing it, without restarting sessions.
+`./test-signing.sh` checks selection using fixtures without signing or TCC access.
+
 That prepared cache defaults to offline mode. Use `CARGO_NET_OFFLINE=false` only
 when dependencies need fetching. Read `Cargo.toml` for the current package version.
 Use the normal build or tests for verification; avoid a separate expensive
@@ -89,6 +98,7 @@ the server account/repository and current review status before proceeding.
 |---|---|
 | Browser, navigation and file operations | `src/main.rs` |
 | Optional macOS file-access guide | `src/file_access.rs`, General → File Access settings |
+| Stable signing and staged app packaging | `build-signing.sh`, `make_app.sh`, `test-signing.sh` |
 | Project persistence, shared windows and switching | `src/projects.rs`, `src/schnauz.rs`, `src/browser_windows.rs` |
 | Project folders, tags and connections | `src/project_sidebar.rs` |
 | Global drive capacity and cloud paths/menus | `src/volumes.rs`, `volumectl.swift`, `src/cloud_locations.rs`, `src/cloud_actions.rs` |
