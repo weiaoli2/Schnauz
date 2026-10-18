@@ -45,7 +45,7 @@ with a suggested USD 2.50 amount; the user completes any payment on PayPal.
   per-folder settings files. **Use inherited / default view** removes that folder's
   rule. Applying a tree rule replaces existing child overrides.
 - Projects with separate favourites, tabs, view modes, sorting and split layouts. Changes are remembered automatically.
-- A preview panel and footer with item counts, current path and appearance control.
+- A preview panel and footer with item counts, centered status and appearance control.
 - The clickable path ends at the current folder. Long paths clip from the left,
   and hovering shows the complete path.
 - Paste a local folder path with **⌘V** to open it. Paste a file path to open its
@@ -401,3 +401,8 @@ Save. Confirmed new tasks appear even before the first complete list has loaded.
 
 The toolbar displays only the running app's version beside the Schnauz title;
 `schnauz --version` shows the same version. The app filename stays Schnauz.app. Reopening an already-running macOS app does not replace its process.
+
+Local breadcrumbs inside Home use **~/**. Click **~** for Home and its parent
+folders; the current folder or **⌘L** still edits the complete path. The footer
+shows item/selection counts, centered status and mode/settings, without repeating
+the path. File drags do not recolour the browser/sidebar background.

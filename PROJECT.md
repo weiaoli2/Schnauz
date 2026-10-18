@@ -135,7 +135,7 @@ Apple Development signing is available; Developer ID/notarization is not yet set
   uses Apple Maps on the user's search action. Optional reminders depend on the
   Todoist account/plan; failed optional writes cannot create a second task on retry.
 
-Validation passed: 71 Rust tests, six Nextcloud and six Todoist offline fixture
+Validation passed: 72 Rust tests, six Nextcloud and six Todoist offline fixture
 groups, native light/dark composer and partial-save retry checks, and the complete
 real GPUI window layout with synthetic empty/populated Todoist data. The normal
 local bundle is rebuilt after the current fixes with its deep/strict signature
@@ -159,7 +159,7 @@ separate visible fixture confirmed horizontal titles/dates, the Add task row,
 Common defaults, independent preview, left divider drag and native right-border
 resize. Its data is synthetic; live Todoist remains Oliver's verification.
 
-Only the compiled version (currently 0.5.1) appears beside the Schnauz title
+Only the compiled version (currently 0.5.2) appears beside the Schnauz title
 and in --version. Oliver removed date/build/source IDs; the app stays Schnauz.app. At inspection the user's process had
 started at 13:04, before the prior 13:06 build finished, so old observations did
 not verify the new binary. Do not restart his live sessions automatically.
@@ -276,3 +276,21 @@ UI verification remain Oliver's manual checks. The app has not been restarted.
 Future distribution work: OAuth browser connection, without an embedded client
 secret. File-to-task actions and advanced task editing remain separate ideas.
 API reference: [Todoist API v1](https://developer.todoist.com/api/v1/).
+
+Latest pointer refinements: file drags retain selection but no longer tint the
+whole file pane/sidebar or folder targets; the obsolete tint-tracking code was
+removed. Outer-window resizing stays native AppKit. Cursor-only one-point edge
+regions keep GPUI from replacing the resize cursor, with no painted border or
+mouse-event interception. Before this cursor-only refinement, a normal 0.5.1
+copy in a disposable profile successfully resized from all four edges and all
+four corners; a point farther inside correctly remained ordinary content.
+
+The footer's duplicate path is removed. Local paths beneath Home display ~/ plus
+relative crumbs; clicking ~ opens native choices for Home, Users and the disk
+root. Full-path editing remains available. Cloud badges and SSH roots are unchanged.
+
+The complete final local testing version is 0.5.2. Earlier 0.5.1 QA windows do
+not contain the last pointer/drag/breadcrumb refinements. The separate normal-app
+QA copy at /private/tmp/schnauz-window-qa-gstoq1oa/Schnauz Window QA.app has its
+own profile and was seen browsing Downloads with its sidebar collapsed. Preserve
+that profile if it has become user state; do not terminate user sessions blindly.

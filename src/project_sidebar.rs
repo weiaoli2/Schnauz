@@ -427,7 +427,6 @@ impl Schnauz {
                 .absolute()
                 .size_full(),
             )
-            .drag_over::<ExternalPaths>(|s, _, _, _| s.bg(Theme::alpha(theme().accent, 0x18)))
             .on_drop(cx.listener(|this, drag: &ExternalPaths, _, cx| {
                 this.favourites_drop_hover = false;
                 this.common_drop_hover = false;

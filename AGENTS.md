@@ -394,7 +394,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 
 - General notices, cloud progress and SSH errors belong in the existing fixed-height
   footer, centered in a rounded blue badge matching Home; never allocate a top
-  banner or shift browser content. Keep the path/count and mode/settings visible,
+  banner or shift browser content. Keep count and mode/settings visible; the footer has no duplicate path,
   truncate long messages with full tooltips and retain SSH error dismissal.
 - Todoist uses definite pixel widths from the actual framed tools allocation,
   including text/status rows and the virtual list. test-ui.sh checks the complete
@@ -414,8 +414,21 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The current local testing version is 0.5.1.
+  no per-build app copies or releases. The current local testing version is 0.5.2.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
   task-title/status-text bounds, not merely the enclosing panel width.
+
+- File/folder dragging never tints the full browser/sidebar or destination names.
+  Keep real selection unchanged and only the small sidebar drop hint. The former
+  drop_hover paint tracking/state and file-row highlight argument are removed.
+- Native outer resize uses AppKit exclusively. window_chrome.rs only stabilizes
+  resize cursors in the native inner one-point edge; no mouse handlers, animated
+  borders, backgrounds or custom resize loop. Verified all four native edges and
+  four corners with the normal 0.5.1 app in a disposable profile.
+
+- Local Home breadcrumbs start with ~/ and retain actual navigation targets.
+  Clicking ~ opens a native Home/parent-folders menu; cloud badges and remote
+  roots retain their existing identity. Cmd+L/current crumb still edits the full
+  physical path. The footer shows counts/status/mode/settings, never the path.

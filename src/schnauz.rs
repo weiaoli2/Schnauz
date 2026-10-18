@@ -185,7 +185,6 @@ impl Schnauz {
         self.marquee = None;
         self.drag_candidate = None;
         self.hovered = None;
-        self.drop_hover = None;
         self.preview_page = 0;
         self.save_session(cx);
         self.prewarm_icons(cx);
@@ -349,7 +348,6 @@ impl Schnauz {
         self.marquee = None;
         self.drag_candidate = None;
         self.hovered = None;
-        self.drop_hover = None;
         self.scroll_drag = None;
         self.resize = None;
         self.hbar_drag = None;
@@ -575,7 +573,6 @@ impl Schnauz {
         self.collapse_anim = None;
         self.divider_drag = None;
         self.hovered = None;
-        self.drop_hover = None;
         self.marquee = None;
         self.save_session(cx);
         cx.notify();
@@ -910,9 +907,7 @@ impl Schnauz {
         let left = div().flex_1().min_w_0().flex().items_center().gap_3().overflow_hidden()
             .child(div().flex_none().size(px(6.)).rounded_full().bg(rgb(t.accent)))
             .child(div().flex_none().child(label))
-            .child(div().id("footer-path").flex_1().min_w_0().truncate()
-                .tooltip(tip(display_path(&tab.current_dir)))
-                .child(display_path(&tab.current_dir)));
+            ;
         let middle = div().flex_1().min_w_0().flex().items_center().justify_center()
             .children(status.map(|(text, dismiss_remote)| {
                 div().id("footer-status").flex().items_center().min_w_0().max_w_full()

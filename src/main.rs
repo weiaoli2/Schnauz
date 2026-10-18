@@ -106,6 +106,7 @@ use folder_views::{Column, ListLayout, ViewMode};
 use toolbar_icons::{ui_icon, Icon};
 mod previews;
 mod preview_panel;
+mod window_chrome;
 mod mascot;
 mod settings;
 mod about;
@@ -680,8 +681,7 @@ const SPLIT_ANIM_MS: u64 = 220;
 /// Red used for an invalid rename (field border/text + the reason pill).
 const RENAME_ERR_COLOR: u32 = 0xef4444;
 
-/// True while a *tab* is being dragged (gpui only exposes "some drag is
-/// active", and the file-drop highlight must not appear during tab drags).
+/// True while a tab is being dragged, to show only tab split/reorder targets.
 /// Set by the chip's drag constructor; cleared on drop or when the drag ends.
 static TAB_DRAG_LIVE: AtomicBool = AtomicBool::new(false);
 
@@ -1386,12 +1386,7 @@ struct Schnauz {
     /// The row the mouse is currently over: (pane, path). Enter renames it
     /// even when nothing is selected (point-and-rename).
     hovered: Option<(usize, PathBuf)>,
-    /// Where a file drag would land right now: (pane, Some(display row)) for
-    /// a folder row, (pane, None) for the pane's own directory. Computed from
-    /// the drag position on every synthesized drag-move — one source of truth,
-    /// so the highlight can't flicker between panes.
-    drop_hover: Option<(usize, Option<usize>)>,
-    /// Last SFTP error (connection/listing), shown as a banner until cleared.
+    /// Last SFTP error, shown in the fixed footer until dismissed.
     remote_error: Option<String>,
     /// Waterfall sidebar tree: which folders are expanded, their cached child
     /// subfolders, and which are being loaded (to avoid duplicate reads).
@@ -1672,7 +1667,6 @@ impl Schnauz {
             terminal_resize: None,
             preview_page: 0,
             hovered: None,
-            drop_hover: None,
             remote_error: None,
             waterfall_expanded: HashSet::new(),
             waterfall_children: HashMap::new(),
@@ -7206,98 +7200,6 @@ impl Schnauz {
         }
     }
 
-    /// Recompute [`Self::drop_hover`] from the drag position. Runs on every
-    /// (synthesized) mouse move while a drag is in flight; notifies only when
-    /// the target actually changes.
-    fn update_drop_hover(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
-        if !cx.has_active_drag() {
-            TAB_DRAG_LIVE.store(false, Ordering::Relaxed);
-        }
-        let next = if cx.has_active_drag() && !TAB_DRAG_LIVE.load(Ordering::Relaxed) {
-            self.compute_drop_hover(x, y)
-        } else {
-            None
-        };
-        if self.drop_hover != next {
-            self.drop_hover = next;
-            cx.notify();
-        }
-    }
-
-    /// Which drop target is under (x, y): a folder row's name cell → that
-    /// folder, anywhere else in a pane → the pane's directory. Mirrors the
-    /// actual drop hitboxes (name cell = 12px row padding + name column).
-    fn compute_drop_hover(&self, x: f32, y: f32) -> Option<(usize, Option<usize>)> {
-        for pane in 0..self.panes.len() {
-            let tab = self.tab(pane);
-            let (origin, size, scrolled) = {
-                let st = tab.scroll_handle.0.borrow();
-                let b = st.base_handle.bounds();
-                let scr = (-(f64::from(st.base_handle.offset().y) as f32)).max(0.0);
-                (b.origin, b.size, scr)
-            };
-            let (y0, h) = (f64::from(origin.y) as f32, f64::from(size.height) as f32);
-            // The pane's horizontal extent must come from the VIEWPORT (the
-            // hscroll wrapper) — the list's own bounds grow to the full column
-            // width, which can silently extend underneath the neighbor pane
-            // when the columns are wider than a split pane.
-            let vp = tab.h_scroll.bounds();
-            let (mut x0, mut w) = (
-                f64::from(vp.origin.x) as f32,
-                f64::from(vp.size.width) as f32,
-            );
-            if w <= 1.0 {
-                // Views that don't track the hscroll wrapper (Icons, …) use
-                // the list bounds, which don't overflow there.
-                x0 = f64::from(origin.x) as f32;
-                w = f64::from(size.width) as f32;
-            }
-            if w <= 1.0 || x < x0 || x >= x0 + w {
-                continue;
-            }
-            // Fine-grained folder targeting only in the List view.
-            if tab.view != ViewMode::List || y < y0 || y >= y0 + h {
-                return Some((pane, None));
-            }
-            let row = ((y - y0 + scrolled) / ROW_H).floor();
-            if row < 0.0 {
-                return Some((pane, None));
-            }
-            let row = row as usize;
-            let find_active = tab.is_filtered();
-            let has_parent =
-                !find_active && prefs().show_parent && tab.current_dir.parent().is_some();
-            let count = if find_active {
-                tab.find_results.len()
-            } else {
-                tab.entries.len() + usize::from(has_parent)
-            };
-            if row >= count {
-                return Some((pane, None));
-            }
-            // Inside the name cell horizontally? (Row padding is px_3 = 12,
-            // shifted by any horizontal column scroll.)
-            let hx = f64::from(tab.h_scroll.offset().x) as f32;
-            let name_x0 = x0 + hx + 12.0 + tab.list_layout.offset(Column::Name);
-            if x < name_x0 || x >= name_x0 + tab.list_layout.width(Column::Name) {
-                return Some((pane, None));
-            }
-            // ".." row targets the parent; entries target real folders only.
-            let is_folder = if has_parent && row == 0 {
-                true
-            } else {
-                let ix = if find_active {
-                    tab.find_results[row]
-                } else {
-                    row - usize::from(has_parent)
-                };
-                tab.entries.get(ix).is_some_and(|e| e.is_folder())
-            };
-            return Some((pane, is_folder.then_some(row)));
-        }
-        None
-    }
-
     /// If a left-press on a row has moved past the drag threshold, hand the
     /// current selection to a native macOS drag session so the files can be
     /// dropped into Finder, Claude, Mail, or any other app (and back into
@@ -8340,7 +8242,6 @@ impl Schnauz {
             .children(items);
         let hint = (self.favourites_drop_hover && cx.has_active_drag()) || self.remote_drop_hover();
         sidebar.children(fixed).child(sections)
-            .drag_over::<ExternalPaths>(|s, _, _, _| s.bg(Theme::alpha(theme().accent, 0x18)))
             .on_drop(cx.listener(|this, drag: &ExternalPaths, _, cx| {
                 this.favourites_drop_hover = false; this.common_drop_hover = false;
                 this.add_dropped_favourites(this.projects.active, false, drag.paths().to_vec(), cx);
@@ -8455,6 +8356,34 @@ impl Schnauz {
         let current_dir = tab.current_dir.clone();
         let (badge, segs) = if let Some((badge, crumbs)) = self.cloud_breadcrumbs(pane, cx) {
             (Some(badge), crumbs)
+        } else if tab.remote.is_none() && current_dir.starts_with(home_dir()) {
+            let home = home_dir();
+            let mut segs = Vec::new();
+            for (index, (label, path)) in home_crumbs(&current_dir, &home).unwrap().into_iter().enumerate() {
+                if index == 0 {
+                    let ancestors = home.clone();
+                    segs.push(div().id(("home-ancestors", pane)).flex_none().px_1().h(px(20.)).rounded_md()
+                        .cursor_pointer().hover(|s| s.bg(rgb(theme().hover)))
+                        .tooltip(tip("Home and parent folders · ⌘L edits the full path"))
+                        .child("~")
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                            let nodes = ancestors.ancestors().map(|path| {
+                                let path = path.to_path_buf();
+                                let label = if path == ancestors { "Home".to_string() } else if path == Path::new("/") { "Macintosh HD".to_string() } else { path_label(&path) };
+                                mi(label, move |this, _, cx| { this.navigate_in(pane, path.clone(), cx); })
+                            }).collect();
+                            this.active_pane = pane;
+                            this.context_menu = Some(ContextMenu { x: f32::from(ev.position.x), y: f32::from(ev.position.y), target: None, nodes });
+                            cx.stop_propagation(); cx.notify();
+                        })).into_any_element());
+                    segs.push(breadcrumb_sep());
+                } else {
+                    if index > 1 { segs.push(breadcrumb_sep()); }
+                    let current = path == current_dir;
+                    segs.push(breadcrumb_seg(pane * 4096 + index, pane, label, path, true, current, cx));
+                }
+            }
+            (None, segs)
         } else {
             // A remote tab's root is the server, not the local disk.
             let root_label = match &tab.remote {
@@ -8981,14 +8910,7 @@ impl Schnauz {
                     .relative()
                     .flex_1()
                     .min_h_0()
-                    // Dropping file(s) on empty pane space moves them here. The
-                    // tint comes from our tracked drop target rather than
-                    // gpui's per-element drag hover, so it can't flicker
-                    // between the source and destination panes.
-                    .when(
-                        cx.has_active_drag() && self.drop_hover == Some((pane, None)),
-                        |s| s.bg(Theme::alpha(theme().accent, 0x22)),
-                    )
+                    // Drop actions remain available without recolouring the file pane.
                     .on_drop(cx.listener(move |this, drag: &ExternalPaths, _, cx| {
                         this.drop_files(pane, pane_dir.clone(), drag.paths().to_vec(), cx);
                     }))
@@ -9109,7 +9031,6 @@ impl Schnauz {
                                         widths,
                                         icon,
                                         true,        // accepts drops (move into parent)
-                                        this.drop_hover == Some((pane, Some(ix))),
                                         None,        // never renamed
                                         cx.listener({
                                             let parent = parent.clone();
@@ -9188,7 +9109,6 @@ impl Schnauz {
                                     widths,
                                     icon,
                                     entry.is_folder(), // ordinary folders accept drops
-                                    this.drop_hover == Some((pane, Some(ix))),
                                     rename_text,       // editable name when renaming
                                     cx.listener(move |this, ev: &ClickEvent, window, cx| {
                                         this.click_entry(pane, target.clone(), is_dir, false, ev, window, cx);
@@ -9292,11 +9212,6 @@ impl Schnauz {
             .relative()
             .flex_1()
             .min_h_0()
-            // Tracked drop target (see render_list_body) — no flicker.
-            .when(
-                cx.has_active_drag() && self.drop_hover == Some((pane, None)),
-                |s| s.bg(Theme::alpha(theme().accent, 0x22)),
-            )
             .on_drop(cx.listener(move |this, drag: &ExternalPaths, _, cx| {
                 this.drop_files(pane, pane_dir.clone(), drag.paths().to_vec(), cx);
             }))
@@ -9592,7 +9507,7 @@ impl Render for Schnauz {
                 this.update_hbar_drag(x, cx);
                 this.update_divider(x, cx);
                 this.update_marquee(x, y, cx);
-                this.update_drop_hover(x, y, cx);
+                if !cx.has_active_drag() { TAB_DRAG_LIVE.store(false, Ordering::Relaxed); }
             }))
             .on_mouse_up(
                 MouseButton::Left,
@@ -9607,10 +9522,7 @@ impl Render for Schnauz {
                     this.hbar_drag = None;
                     this.divider_drag = None;
                     this.end_marquee(cx);
-                    // A native file drag ends as a synthesized mouse-up.
-                    if this.drop_hover.take().is_some() {
-                        cx.notify();
-                    }
+                    TAB_DRAG_LIVE.store(false, Ordering::Relaxed);
                 }),
             )
             // A slim titlebar strip in the app's own background color. With the
@@ -9657,6 +9569,7 @@ impl Render for Schnauz {
         }
         // Paint drag feedback last so it stays above the sidebar and file panes.
         root = root.children(self.render_favourite_drag());
+        root = root.children(window_chrome::resize_cursors(window));
         root
     }
 }
@@ -9751,6 +9664,20 @@ fn nav_arrow(
     } else {
         base.into_any_element()
     }
+}
+
+/// Compact only complete path components under local Home, without filesystem I/O.
+fn home_crumbs(current: &Path, home: &Path) -> Option<Vec<(String, PathBuf)>> {
+    let relative = current.strip_prefix(home).ok()?;
+    let mut result = vec![("~".into(), home.to_path_buf())];
+    let mut path = home.to_path_buf();
+    for component in relative.components() {
+        if let std::path::Component::Normal(name) = component {
+            path.push(name);
+            result.push((name.to_string_lossy().into_owned(), path.clone()));
+        }
+    }
+    Some(result)
 }
 
 /// One clickable breadcrumb segment that navigates `pane` to `full` when clicked.
@@ -10781,9 +10708,6 @@ fn file_row(
     // Drag-and-drop: `accept_drop` true => it's a drop target (a folder or the
     // ".." row) that runs `on_drop_file` when files are dropped on it.
     accept_drop: bool,
-    // True while the tracked drag target is this row's folder: highlights the
-    // name cell (driven by Schnauz::drop_hover, not gpui's drag hover).
-    drop_hilite: bool,
     // When Some, this row is being renamed: the name shows as an editable field
     // with (text, cursor char-index, selection-anchor char-index, invalid).
     // Invalid names render the field in red (the pane shows the reason).
@@ -10807,7 +10731,6 @@ fn file_row(
         .flex_none().w(px(widths.width(Column::Name))).flex().items_center().gap_2().pr_2()
         .on_mouse_down(MouseButton::Left, on_press)
         .when(accept_drop, |c| c.rounded_sm().on_drop(on_drop_file))
-        .when(drop_hilite, |c| c.bg(rgb(theme().selected)))
         .child(div().flex_none().w(px(ICON_W)).flex().justify_center().child(icon))
         .child(name_el).into_any_element();
     let mut name_cell = Some(name_cell);
@@ -10928,7 +10851,6 @@ fn icon_cell(
         );
     if is_folder {
         cell = cell
-            .drag_over::<ExternalPaths>(|s, _, _, _| s.bg(rgb(theme().selected)))
             .on_drop(cx.listener(move |this, d: &ExternalPaths, _, cx| {
                 this.drop_files(pane, drop_t.clone(), d.paths().to_vec(), cx);
             }));
@@ -13321,6 +13243,16 @@ fn open_main_window(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_home_breadcrumbs_preserve_targets_and_do_not_shorten_similar_prefixes() {
+        let home = Path::new("/Users/example");
+        let crumbs = home_crumbs(Path::new("/Users/example/Design/素材"), home).unwrap();
+        assert_eq!(crumbs.iter().map(|(label, _)| label.as_str()).collect::<Vec<_>>(), vec!["~", "Design", "素材"]);
+        assert_eq!(crumbs[2].1, PathBuf::from("/Users/example/Design/素材"));
+        assert_eq!(home_crumbs(home, home).unwrap().len(), 1);
+        assert!(home_crumbs(Path::new("/Users/example-other/Design"), home).is_none());
+    }
 
     #[test]
     fn remote_browser_tabs_do_not_read_local_names_or_clone_terminal_state() {

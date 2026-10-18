@@ -126,13 +126,6 @@ impl ListLayout {
             .find(|c| c.column == column)
             .map_or(0., |c| c.width)
     }
-    pub fn offset(&self, column: Column) -> f32 {
-        self.columns
-            .iter()
-            .take_while(|c| c.column != column)
-            .map(|c| c.width)
-            .sum()
-    }
     pub fn total_width(&self) -> f32 {
         self.columns.iter().map(|c| c.width).sum::<f32>() + 44.
     }
@@ -412,7 +405,7 @@ mod tests {
         layout.move_before(Column::Created, Some(Column::Name));
         layout.toggle(Column::Name);
         assert_eq!(layout.columns[0].column, Column::Created);
-        assert_eq!(layout.offset(Column::Name), 185.);
+        assert_eq!(layout.columns[0].width, 185.);
         assert_eq!(layout.width(Column::Name), 450.);
         assert_eq!(layout.total_width(), 1119.);
         layout.columns.push(ColumnSpec {
