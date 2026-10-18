@@ -184,7 +184,7 @@ switches while the app stays open; terminals start fresh after quitting the app.
 Projects persist local tabs; remote tabs remain available during the running
 session. Unavailable local folders are skipped when restoring.
 
-The **Todoist** button opens Todoist beside the file pane. First connect under
+The **Todoist** button appears after connection and opens Tasks beside the file pane. Connect under
 **Settings → General → Connections → Todoist**, using an API token entered in a
 secure native field and stored in Keychain. A Schnauz project uses the same name
 as its Todoist project: a unique existing match is linked, while a newly created
@@ -193,8 +193,9 @@ Todoist names get a chooser. Offline creation intents wait until connected.
 
 Todoist opens a project-specific Tasks pane on the right after connection.
 Use the **Todoist** toolbar button or **Settings → General → Connections →
-Todoist → Show tasks** to reopen it. The pane shares the saved preview width
-and resize boundary with file previews and Disk Usage.
+Todoist → Show tasks** to reopen it. Todoist and Disk Usage share a framed tools
+pane with its own saved width. File preview remains visible independently. In
+narrow split panes the tools and preview stack vertically to retain browsing room.
 
 Selecting another Schnauz project switches Tasks with it. Existing unlinked
 projects first search by name; **Find or create matching project** can create a
@@ -203,8 +204,8 @@ to complete, the task text to open Todoist, or **Add task…** to enter a task a
 optional due date. A task is sent to the project where its dialog was opened,
 even if you switch projects. Failed forms keep their text for an explicit retry.
 Cached tasks remain visible during connection errors. Only visible rows render,
-and refresh runs in the background while Tasks is open. **Preview** returns to
-file previews. Todoist account/server compatibility still requires a manual test;
+and refresh runs in the background while Tasks is open. **Preview** toggles only
+file previews. Todoist is connected and working in Oliver's personal build;
 automated tests use fixtures without live service or Keychain access.
 
 The preview pane appears only for a single selected file with an available
@@ -215,8 +216,10 @@ to the full preview width, including smaller originals; tall media scrolls.
 Local clips use native AVKit playback with seeking, Play/Pause and Unmute/Mute.
 Each new clip starts paused and muted, and leaving its preview stops playback.
 Supported codecs follow macOS; unsupported videos show an explanation.
-Text files use readable 14 pt text.
-Large text previews are bounded, and show a notice when shortened.
+Text uses the same 12 pt size as file names. Select text with the mouse, use
+**⌘A** to select all and **⌘C** to copy. The preview is read-only, and its selection
+and scroll position survive resizing. Large text previews are bounded, with a
+notice when shortened. Terminal and Preview retain labeled toolbar buttons.
 
 File timestamps follow the macOS locale, time zone and 12/24-hour setting using
 the native date formatter. The Share control uses Apple's `square.and.arrow.up`
@@ -289,7 +292,8 @@ disposable test folders.
 - `src/entry_filter.rs`: per-tab folder/file visibility
 - `src/clipboard_path.rs`: pasted-path interpretation
 - `src/new_text_file.rs`: named text-file creation without overwriting
-- `src/text_preview.rs`: bounded native text previews
+- `src/text_preview.rs`: bounded text decoding; `src/text_view.rs`: native read-only selection/copying
+- `src/native_preview.rs`: shared clipping geometry for native text and video
 - `src/previews.rs`: cancellable preview jobs, metadata and bounded preview caches
 - `src/preview_panel.rs`: preview divider dragging, limits and remembered width
 - `src/cache.rs`: weighted LRU storage for icons, previews and shared listings

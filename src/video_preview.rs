@@ -4,6 +4,7 @@ use objc2::{class, msg_send, rc::Retained};
 use objc2_app_kit::NSView;
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use std::cell::Cell;
+use crate::native_preview::frames;
 
 #[link(name = "AVKit", kind = "framework")]
 unsafe extern "C" {}
@@ -223,39 +224,10 @@ impl Drop for Session {
     }
 }
 
-fn frames(
-    full: Bounds<gpui::Pixels>,
-    visible: Bounds<gpui::Pixels>,
-    flipped: bool,
-    parent_height: f64,
-) -> (NSRect, NSRect) {
-    let x = f32::from(visible.origin.x) as f64;
-    let y = f32::from(visible.origin.y) as f64;
-    let w = f32::from(visible.size.width) as f64;
-    let h = f32::from(visible.size.height) as f64;
-    let outer = NSRect::new(
-        NSPoint::new(x, if flipped { y } else { parent_height - y - h }),
-        NSSize::new(w, h),
-    );
-    let inner = NSRect::new(
-        NSPoint::new(
-            f32::from(full.origin.x) as f64 - x,
-            y + h - f32::from(full.bottom()) as f64,
-        ),
-        NSSize::new(
-            f32::from(full.size.width) as f64,
-            f32::from(full.size.height) as f64,
-        ),
-    );
-    (outer, inner)
-}
-
 impl Schnauz {
     pub(super) fn sync_video_preview(&mut self, cx: &mut Context<Self>) {
         let tab = self.active_tab();
         let wanted = (prefs().preview
-            && !self.todoist.open
-            && self.space_map.is_none()
             && tab.remote.is_none()
             && tab.selection.len() == 1)
             .then(|| tab.selection.iter().next().cloned())
@@ -287,15 +259,7 @@ impl Schnauz {
                 .detach();
             }
         }
-        let blocked = self.confirm_delete.is_some()
-            || self.info_panel.is_some()
-            || self.batch_rename.is_some()
-            || self.ssh_ask
-            || self.server_dialog.is_some()
-            || self.group_dialog.is_some()
-            || self.new_text_file.is_some()
-            || self.project_dialog.is_some()
-            || (self.palette_open && !self.file_search.inline);
+        let blocked = self.native_preview_blocked();
         if let Some(session) = &self.video_preview {
             session.block(blocked);
         }

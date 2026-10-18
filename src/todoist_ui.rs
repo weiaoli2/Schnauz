@@ -66,21 +66,7 @@ pub(super) fn settings_rows<T: 'static>(cx: &Context<T>) -> Vec<AnyElement> {
 }
 impl Schnauz {
     pub(super) fn show_file_preview(&mut self, cx: &mut Context<Self>) {
-        if self.space_map.is_some() {
-            self.dismiss_space_map = true;
-            self.todoist.open = false;
-            if !prefs().preview { schnauz::toggle_inspector(cx); }
-            cx.notify();
-            return;
-        }
-        if self.todoist.open {
-            self.todoist.open = false;
-            if !prefs().preview {
-                schnauz::toggle_inspector(cx);
-            }
-        } else {
-            schnauz::toggle_inspector(cx);
-        }
+        schnauz::toggle_inspector(cx);
         cx.notify();
     }
     pub(super) fn render_todoist(&self, cx: &Context<Self>) -> AnyElement {
@@ -142,7 +128,7 @@ impl Schnauz {
         }
         header = header.child(
             button("todoist-close", "×")
-                .tooltip(tip("Close Tasks and return to the file preview"))
+                .tooltip(tip("Close Todoist tasks"))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.todoist.open = false;
                     cx.notify();

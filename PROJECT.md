@@ -54,10 +54,13 @@ has been removed. App-icon customization and icon packs are also removed;
 Schnauz keeps its fixed app icon and uses native macOS file/application icons.
 
 Schnauz Light uses black text and controls; saved stock light themes upgrade
-on load while native folder icons keep macOS blue. The English Disk Usage
-panel shares the preview/Tasks sizing and resize boundary, including its
-loading state. The Todoist toolbar button and Settings → Show tasks open
-the right Tasks pane; successful connection opens it automatically.
+on load while native folder icons keep macOS blue. File preview is independent
+of the framed Todoist/Disk Usage tools pane, below the full-width path/filter
+rows. The two tools replace each other; preview remains visible for previewable
+selections. Narrow split panes stack tools and preview. Preview width stays in
+folder views; tools width is saved separately in central preferences. Terminal
+and Preview have visible toolbar labels. Text preview is read-only native text
+at the file-name size (12 pt), with mouse selection, Cmd+A and Cmd+C.
 
 ## Current stage and user data
 
@@ -89,7 +92,7 @@ the server account/repository and current review status before proceeding.
 | Saved folder views and list columns | `src/folder_views.rs`, `src/list_ui.rs` |
 | Todoist API bridge, cache and Tasks pane | `src/todoist.rs`, `src/todoist_ui.rs`, `native/todoist/` |
 | Inline name editor and click-to-rename timing | `src/rename_ui.rs`, click dispatch in `src/main.rs` and `src/search_ui.rs` |
-| Preview layout and media | `src/preview_panel.rs`, `src/previews.rs`, `src/video_preview.rs` |
+| Preview layout, selectable text and media | `src/preview_panel.rs`, `src/previews.rs`, `src/text_view.rs`, `src/native_preview.rs`, `src/video_preview.rs` |
 | Terminal and SSH following | `src/schnauz_terminal.rs`, `src/ssh_sync.rs`, `src/terminal-shell/` |
 | Remote directory names and listings | `src/remote_listing.rs` |
 | Search and storage map | `src/file_search.rs`, `src/search_ui.rs`, `src/space_map.rs`, `src/space_ui.rs` |
@@ -120,19 +123,21 @@ or creates a same-named Todoist project if absent. Ambiguous duplicate names get
 an explicit chooser. A failed lookup cannot cause project creation. If disconnected,
 the creation intent waits in the local project until Todoist is connected.
 
-Connect in **Settings → General → Connections → Todoist**, or click **Todoist** and
-use **Connect Todoist…**. For this personal build, enter the API token in the native
+Connect in **Settings → General → Connections → Todoist**. The toolbar's Todoist
+button appears only after an account is configured; connection opens Tasks and
+Settings → Show tasks can reopen it. For this personal build, enter the API token in the native
 secure dialog. Only macOS Keychain stores it. `todoist.json` holds the local account
 reference and display identity; project links and stable creation-request IDs live
 in `projects.json`. Existing projects migrate without links. Disconnect removes
 Schnauz access without revoking a personal token used by other apps.
 
-Oliver confirmed that Todoist was connected on 2026-10-18. The reported panel
-visibility and layout issues are addressed in the current build; visual/task
-verification remains his manual workflow.
+Oliver confirmed that Todoist was connected and working on 2026-10-18. Panel
+layout and text-preview refinements are in the current build; visual verification
+remains his manual workflow.
 
-The **Todoist** button selects the right pane, below the full-width navigation and
-filter bars. It follows Schnauz project switching and uses the saved preview width.
+The **Todoist** button toggles the framed tools pane, below the full-width navigation
+and filter bars, independently of file preview. It follows Schnauz project switching
+and has its own saved width; opening Disk Usage replaces Tasks in that tools pane.
 Existing unlinked projects look for matching names; **Find or create matching
 project** can explicitly create one if absent. Open tasks show sections, subtasks,
 due dates and priority colours. Click a circle to complete, a task to open Todoist,

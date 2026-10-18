@@ -364,6 +364,7 @@ impl State {
         let changed = self.revision != global.revision;
         let requested = self.tasks_request != global.tasks_request && global.account.is_some();
         self.tasks_request = global.tasks_request;
+        if global.account.is_none() { self.open = false; }
         if changed {
             self.caches.clear();
             self.attempted.clear();
@@ -642,6 +643,7 @@ impl Schnauz {
         .detach();
     }
     pub(super) fn open_todoist(&mut self, cx: &mut Context<Self>) {
+        if cx.global::<Global>().account.is_none() { return; }
         self.dismiss_space_map |= self.space_map.is_some();
         self.todoist.open = true;
         self.todoist.scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -782,8 +784,10 @@ mod tests {
         assert_eq!(state.observe_account(&global), (false, false));
         global.revision += 1;
         global.account = None;
+        state.open = true;
         assert_eq!(state.observe_account(&global), (true, false));
         assert!(state.caches.is_empty());
+        assert!(!state.open, "Disconnect must close Tasks as well as hide its toolbar button");
     }
 
     #[test]

@@ -8,7 +8,7 @@ impl Schnauz {
             .iter()
             .map(Pane::active_tab)
             .filter(|t| {
-                prefs().preview && self.space_map.is_none() && t.selection.len() == 1
+                prefs().preview && t.selection.len() == 1
             })
             .filter_map(|t| t.anchor.clone())
             .collect();

@@ -599,7 +599,7 @@ impl Schnauz {
             .flex_none()
             .flex()
             .items_center()
-            .gap_3()
+            .gap_2()
             .w_full()
             .h(px(TITLEBAR_H))
             .pl(px(88.0))
@@ -660,16 +660,16 @@ impl Schnauz {
                 ),
             )
             .child(
-                schnauz_button("schnauz-preview", "Preview", prefs().preview && !self.todoist.open)
+                schnauz_button("schnauz-preview", "Preview", prefs().preview)
                     .tooltip(tip("Show or hide the preview panel · ⌘⇧I"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.show_file_preview(cx))),
             )
-            .child(schnauz_button("schnauz-todoist", "Todoist", self.todoist.open)
+            .when(cx.global::<todoist::Global>().account.is_some(), |d| d.child(schnauz_button("schnauz-todoist", "Todoist", self.todoist.open)
                 .tooltip(tip("Todoist tasks for the current project"))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     if this.todoist.open { this.todoist.open = false; cx.notify(); }
                     else { this.open_todoist(cx); }
-                })))
+                }))))
             .child(
                 schnauz_button("schnauz-save", "New project", true)
                     .tooltip(tip("Create a project from these tabs · ⌘⇧S"))
@@ -1015,17 +1015,17 @@ pub(super) fn schnauz_button(
     accented: bool,
 ) -> gpui::Stateful<gpui::Div> {
     let t = theme();
-    let compact = matches!(id, "schnauz-split" | "schnauz-terminal" | "schnauz-preview");
+    let compact = id == "schnauz-split";
     div()
         .id(id)
         .flex_none()
         .h(px(30.0))
-        .px_3()
+        .px_2()
         .when(compact, |d| d.w(px(32.)).px_0())
         .rounded_lg()
         .flex()
         .items_center()
-        .gap_2()
+        .gap_1p5()
         .justify_center()
         .text_size(px(UI_SMALL_FONT_SIZE))
         .font_weight(FontWeight::MEDIUM)

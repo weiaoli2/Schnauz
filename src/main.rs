@@ -74,6 +74,8 @@ mod projects;
 mod legacy;
 mod project_sidebar;
 mod text_preview;
+mod text_view;
+mod native_preview;
 mod new_text_file;
 mod entry_filter;
 use entry_filter::EntryFilter;
@@ -124,6 +126,8 @@ struct Prefs {
     preview_pages: bool,
     /// Preferred inspector width in logical pixels, retained across launches.
     preview_width: u16,
+    /// Independent Todoist / Disk Usage pane width.
+    tools_width: u16,
     /// Show file information in the inspector when a file is selected.
     info: bool,
     /// Show the leading ".." row that goes up one level.
@@ -163,6 +167,7 @@ impl Default for Prefs {
             preview: true,
             preview_pages: true,
             preview_width: 420,
+            tools_width: 360,
             info: true,
             show_parent: false,
             sidebar_collapsed: false,
@@ -190,6 +195,7 @@ thread_local! {
         preview: true,
         preview_pages: true,
         preview_width: 420,
+        tools_width: 360,
         info: true,
         show_parent: false,
         sidebar_collapsed: false,
@@ -1269,6 +1275,7 @@ struct Schnauz {
     preview_pending: RefCell<HashMap<PathBuf,Arc<AtomicBool>>>,
     preview_resize: Option<preview_panel::Drag>,
     video_preview: Option<Rc<video_preview::Session>>,
+    text_view: Option<Rc<text_view::Session>>,
     info_pending: RefCell<HashSet<PathBuf>>,
     pdf_pending: RefCell<HashSet<(PathBuf,usize)>>,
     query: String,
@@ -1567,6 +1574,7 @@ impl Schnauz {
             preview_pending: RefCell::new(HashMap::new()),
             preview_resize: None,
             video_preview: None,
+            text_view: None,
             info_pending: RefCell::new(HashSet::new()),
             pdf_pending: RefCell::new(HashSet::new()),
             query: String::new(),
@@ -6990,7 +6998,6 @@ impl Schnauz {
         self.tab_mut(pane).anchor = Some(path.clone());
         self.preview_page = 0;
         self.cancel_unused_previews();
-        if self.space_map.is_some() { cx.notify(); return; }
         // Remote files aren't on the local disk, so QuickLook/PDF rendering
         // can't read them directly. Fetch a copy to a temp cache and preview
         // that (images & PDFs only, size-capped). Info (local stat) is skipped.
@@ -7622,23 +7629,7 @@ impl Schnauz {
         if text.is_none() && !visual { return None; }
         let t = theme();
         if show_preview {
-            if let Some(text) = text {
-                return Some(
-                    div().id("inspector").flex_none().w_full().h_full()
-                        .min_h_0().flex().flex_col().gap_3().p_4()
-                        .bg(rgb(t.sidebar)).border_l_1().border_color(rgb(t.border))
-                        .child(div().flex_none().font_weight(FontWeight::SEMIBOLD)
-                            .truncate().child(path_label(&sel)))
-                        .child(div().id(SharedString::from(format!("text-preview:{}", sel.display())))
-                            .flex_1().min_h_0().overflow_y_scroll().p_4().rounded_md()
-                            .bg(rgb(t.bg)).text_color(rgb(t.text))
-                            .text_size(px(14.0)).font_family("Menlo")
-                            .child(if text.text.is_empty() { "Empty text file".to_string() } else { text.text.clone() }))
-                        .when(text.truncated, |d| d.child(div().text_size(px(UI_SMALL_FONT_SIZE))
-                            .text_color(rgb(t.text_muted)).child("Preview shortened for this large file.")))
-                        .into_any_element()
-                );
-            }
+            if text.is_some() { return self.render_text_preview(); }
         }
 
         let mut col = div()
@@ -9142,15 +9133,11 @@ impl Schnauz {
             )
             .children(self.render_terminal_panel(pane, cx));
         let mut body_row = div().flex().flex_1().min_h_0().min_w_0().child(browser);
-        // Keep the shared selection preview on the far right, below every
-        // navigation/filter row. Inspect retains its separate full-height map.
+        // Preview is independent. Todoist and Disk Usage share only the tools pane.
         if pane + 1 == self.panes.len() {
-            if let Some(map) = self.render_space_map(cx) {
-                body_row = body_row.child(self.render_preview_panel(map, pane, cx));
-            } else if self.todoist.open {
-                body_row = body_row.child(self.render_preview_panel(self.render_todoist(cx), pane, cx));
-            } else if let Some(inspector) = self.render_inspector(cx) {
-                body_row = body_row.child(self.render_preview_panel(inspector, pane, cx));
+            let tools = self.render_space_map(cx).or_else(|| self.todoist.open.then(|| self.render_todoist(cx)));
+            if let Some(panels) = self.render_side_panels(self.render_inspector(cx), tools, pane, cx) {
+                body_row = body_row.child(panels);
             }
         }
 
@@ -9721,6 +9708,7 @@ impl Render for Schnauz {
             window.on_next_frame(move |_, cx| { let _ = owner.update(cx, |this, cx| this.ensure_todoist(false, cx)); });
         }
         self.sync_video_preview(cx);
+        self.sync_text_preview();
         let owner=cx.entity().downgrade();
         window.on_next_frame(move|_,cx|{let _=owner.update(cx,|this,cx|this.prewarm_icons(cx));});
         let t = theme();
@@ -9746,6 +9734,7 @@ impl Render for Schnauz {
             // Focusable so it receives key events (Cmd+P, palette typing).
             .track_focus(&self.focus)
             .capture_any_mouse_down(cx.listener(|this, _, _, _| {
+                if let Some(text) = &this.text_view { text.release_focus(); }
                 this.pending_click_rename = None;
                 this.suppress_entry_click = false;
             }))
@@ -9755,6 +9744,7 @@ impl Render for Schnauz {
             .on_scroll_wheel(cx.listener(|this, _: &ScrollWheelEvent, _, _| {
                 this.pending_click_rename = None;
             }))
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| { this.text_preview_key(ev, cx); }))
             .on_key_down(cx.listener(Self::on_key))
             // Native menu-bar actions (File / View / Go menus).
             .on_action(cx.listener(|this, _: &NewProject, window, cx| this.open_project_dialog(window, cx)))
@@ -13173,7 +13163,7 @@ fn save_prefs(p: &Prefs) {
             "preview={}\npreview_pages={}\ninfo={}\nshow_parent={}\nsidebar_collapsed={}\npalette_history={}\ngroups_enabled={}\nshow_filter_button={}\nshow_fps={}\nscript_actions={}\nssh_use_system={}\nssh_configured={}\nwaterfall={}\npalette_opacity={}\n",
             p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.palette_history, p.groups_enabled, p.show_filter_button, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured, p.waterfall, p.palette_opacity
         );
-        body.push_str(&format!("preview_width={}\n",p.preview_width));
+        body.push_str(&format!("preview_width={}\ntools_width={}\n",p.preview_width,p.tools_width));
         body.push_str(&format!("drive_warning={}\ndrive_critical={}\n", p.drive_warning, p.drive_critical));
         let _ = fs::write(&file, body);
     }
@@ -13226,6 +13216,7 @@ fn load_prefs() -> Prefs {
                     "preview" => p.preview = on,
                     "preview_pages" => p.preview_pages = on,
                     "preview_width" => if let Ok(width) = v.trim().parse::<u16>() { p.preview_width = width.clamp(220,1200); },
+                    "tools_width" => if let Ok(width) = v.trim().parse::<u16>() { p.tools_width = width.clamp(220,720); },
                     "info" => p.info = on,
                     "show_parent" => p.show_parent = on,
                     "sidebar_collapsed" => p.sidebar_collapsed = on,
@@ -13256,6 +13247,13 @@ fn load_prefs() -> Prefs {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "--text-preview-test") {
+        match text_view::smoke_test() {
+            Ok(message) => println!("{message}"),
+            Err(message) => { eprintln!("{message}"); std::process::exit(1); }
+        }
+        return;
+    }
     if args.len() >= 3 && args[1] == "--video-preview-test" {
         match video_preview::smoke_test(PathBuf::from(&args[2])) {
             Ok(message) => println!("{message}; system date: {}", format_date(Some(SystemTime::now()))),

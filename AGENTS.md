@@ -146,8 +146,12 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Keychain. `./test.sh` includes those native tests. Live login remains manual QA.
 - Hidden items (dot names and macOS UF_HIDDEN) are hidden by default; the per-tab eye
   toggle applies in every view and combines with type/text filters.
-- Hide the inspector without an actual previewable single selection. Show text as
-  readable native text in a scrollable panel, with bounded reads for large files.
+- Hide the inspector without an actual previewable single selection. Text uses a
+  read-only native NSTextView/NSScrollView at UI_FONT_SIZE (12 pt, matching file
+  names), with mouse selection, Cmd+A and Cmd+C. Keep bounded file reads and the
+  shortened-preview notice. Preserve native selection/scroll while resizing or
+  redrawing; release native focus on clicks elsewhere and hide during app modals.
+  Cmd+C in the preview copies text, never the selected file object.
 - The preview's left edge resizes both text and visual previews. Remember width
   after the drag as part of the folder view, retain room for browsing, and double-click to reset to 420 pt.
   Start the preview below the tab, path/icon and type-filter rows so those headers
@@ -239,7 +243,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   intents or the explicit Find/create button may create a project.
   ./test.sh includes native URLProtocol fixtures plus project/cache regressions;
   no live Todoist calls or Keychain access in tests. Manual account/UI QA remains
-  Oliver's workflow. Preview videos stop while Tasks occupies the right pane.
+  Oliver's workflow. File previews and video playback remain independent of Tasks.
 
 - Remote listings enter the requested directory with SFTP `cd` before `ls -la`.
   Store immediate child basenames only; drop dot/parent entries even when a client
@@ -252,19 +256,24 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   SFTP Keychain items and active control sockets. Do not drop saved access when
   changing internal names. The former upstream updater is removed.
 
-- The interface language is English; call the storage map Disk Usage. Disk Usage,
-  file previews and Todoist share the right-panel wrapper, height, saved width
-  and resize boundary below the navigation/filter rows. Always show scan progress
-  or errors instead of an empty panel. Inspect closes Tasks; opening Tasks
-  dismisses Disk Usage through the existing deferred close path.
+- The interface language is English; call the storage map Disk Usage. File preview
+  is independent of the framed tools pane, where Todoist and Disk Usage replace
+  each other. Both start below the full-width navigation/filter rows. Keep both
+  visible side by side when space permits; stack vertically in a narrow split,
+  preserving browser space. Preview width stays in folder views; tools_width is
+  saved separately in central prefs, only after a drag. Use unique resize IDs.
+  Always show scan progress or errors instead of an empty panel. Inspect closes
+  Tasks; opening Tasks dismisses Disk Usage through the deferred close path.
   Close the map on actual browser selection/navigation, never on a root-level
   mouse press; moving/resizing the window and dragging its panel divider must
   preserve the map. Map-originated navigation explicitly preserves it too.
 - Schnauz Light uses black normal/secondary text and controls. Upgrade saved
   stock light colours on load; preserve custom and dark palettes. Native macOS
   folder icons stay blue. Keep semantic status/tag colours and disabled states.
-- The toolbar button is labeled Todoist with a checklist icon. Successful
-  connection requests the Tasks pane; Settings → Connections also offers Show
-  tasks. A pane-open request must not invalidate account/project caches.
+- The Todoist toolbar button (checklist icon) exists only with configured account
+  metadata. Never query Keychain while rendering. Disconnect also closes Tasks.
+  Successful connection requests Tasks; Settings → Connections offers Show tasks.
+  Opening a pane must not invalidate account/project caches. Keep Terminal and
+  Preview labeled in the top toolbar; Preview toggles only the file preview.
 - Settings uses the main app's transparent native titlebar and 56 pt themed
   header, with traffic-light clearance and independently scrolling content.
