@@ -8,6 +8,48 @@ pub(super) struct ProjectSession {
     pub split_ratio: f32,
 }
 
+pub(super) fn capture_panes_layout(source: &[Pane], source_active: usize, source_ratio: f32, skip: Option<u64>, append: Option<(usize, &Tab)>) -> Layout {
+        let mut panes = Vec::new();
+        let mut active_pane = 0;
+        for (index, pane) in source.iter().enumerate() {
+            let mut tabs = Vec::new();
+            let mut active = 0;
+            let extra = append.filter(|(p, _)| *p == index).map(|(_, tab)| tab);
+            let selected = if extra.is_some() { pane.tabs.len() } else { pane.active };
+            for (tab_index, tab) in pane.tabs.iter().chain(extra).enumerate() {
+                if skip == Some(tab.id) { continue; }
+                if tab.remote.is_some() && tab.terminal.as_ref().and_then(|s| s.ssh.as_ref()).is_some() {
+                    if tab_index <= selected { active = tabs.len(); }
+                    tabs.push(tab.terminal.as_ref().unwrap().ssh.as_ref().unwrap().saved_local());
+                } else if tab.remote.is_none() {
+                    if tab_index <= selected {
+                        active = tabs.len();
+                    }
+                    tabs.push(SavedTab {
+                        path: tab.current_dir.clone(),
+                        view: view_mode_key(tab.view).into(),
+                        sort: sort_key_name(tab.sort_key).into(),
+                        ascending: tab.sort_asc,
+                        filter: tab.entry_filter,
+                        show_hidden: tab.show_hidden,
+                    });
+                }
+            }
+            if !tabs.is_empty() {
+                if index <= source_active {
+                    active_pane = panes.len();
+                }
+                panes.push(SavedPane { tabs, active });
+            }
+        }
+        Layout {
+            panes,
+            active_pane,
+            split_ratio: source_ratio,
+        }
+    }
+
+
 impl Schnauz {
     pub(super) fn render_hidden_button(&self, pane: usize, cx: &Context<Self>) -> AnyElement {
         let t = theme();
@@ -293,41 +335,7 @@ impl Schnauz {
     }
 
     pub(super) fn capture_layout(&self) -> Layout {
-        let mut panes = Vec::new();
-        let mut active_pane = 0;
-        for (index, pane) in self.panes.iter().enumerate() {
-            let mut tabs = Vec::new();
-            let mut active = 0;
-            for (tab_index, tab) in pane.tabs.iter().enumerate() {
-                if tab.remote.is_some() && tab.terminal.as_ref().and_then(|s| s.ssh.as_ref()).is_some() {
-                    if tab_index <= pane.active { active = tabs.len(); }
-                    tabs.push(tab.terminal.as_ref().unwrap().ssh.as_ref().unwrap().saved_local());
-                } else if tab.remote.is_none() {
-                    if tab_index <= pane.active {
-                        active = tabs.len();
-                    }
-                    tabs.push(SavedTab {
-                        path: tab.current_dir.clone(),
-                        view: view_mode_key(tab.view).into(),
-                        sort: sort_key_name(tab.sort_key).into(),
-                        ascending: tab.sort_asc,
-                        filter: tab.entry_filter,
-                        show_hidden: tab.show_hidden,
-                    });
-                }
-            }
-            if !tabs.is_empty() {
-                if index <= self.active_pane {
-                    active_pane = panes.len();
-                }
-                panes.push(SavedPane { tabs, active });
-            }
-        }
-        Layout {
-            panes,
-            active_pane,
-            split_ratio: self.split_ratio,
-        }
+        capture_panes_layout(&self.panes, self.active_pane, self.split_ratio, None, None)
     }
 
     pub(super) fn apply_layout(&mut self, layout: &Layout) -> bool {

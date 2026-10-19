@@ -137,6 +137,9 @@ pub struct TerminalConfig {
     /// Color palette for terminal colors (16 ANSI colors, 256 extended colors,
     /// foreground, background, and cursor colors)
     pub colors: ColorPalette,
+
+    /// Copy a completed nonempty mouse selection to the system clipboard.
+    pub copy_on_select: bool,
 }
 
 impl Default for TerminalConfig {
@@ -150,6 +153,7 @@ impl Default for TerminalConfig {
             line_height_multiplier: 1.2,
             padding: Edges::all(px(0.0)),
             colors: ColorPalette::default(),
+            copy_on_select: false,
         }
     }
 }
@@ -415,6 +419,8 @@ pub struct TerminalView {
         Option<Box<dyn Fn(&crate::shell::ShellEvent, &mut Window, &mut Context<TerminalView>)>>,
     bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
     selecting: bool,
+    selection_origin: Option<Point<Pixels>>,
+    scrollbar_drag: Option<f32>,
     scroll_remainder: f32,
     exited: bool,
 }
@@ -542,6 +548,8 @@ impl TerminalView {
             shell_callback: None,
             bounds: Default::default(),
             selecting: false,
+            selection_origin: None,
+            scrollbar_drag: None,
             scroll_remainder: 0.0,
             exited: false,
         }
@@ -819,34 +827,61 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use alacritty_terminal::index::Side;
         use alacritty_terminal::selection::{Selection, SelectionType};
         window.focus(&self.focus_handle);
         if let Some(callback) = &self.shell_callback {
             callback(&crate::shell::ShellEvent::Focused, window, cx);
         }
         let point = self.mouse_cell(event.position);
+        self.selecting = false;
+        self.selection_origin = None;
         if !event.modifiers.shift
             && let Some(bytes) =
                 crate::mouse::mouse_button_report(event.button, true, point, 0, self.state.mode())
         {
             self.write_input(&bytes);
         } else {
+            let side = self.selection_side(event.position);
             let kind = match event.click_count {
                 2 => SelectionType::Semantic,
                 3.. => SelectionType::Lines,
                 _ => SelectionType::Simple,
             };
-            self.state.with_term_mut(|term| {
-                term.selection = Some(Selection::new(kind, point, Side::Left))
-            });
+            self.state
+                .with_term_mut(|term| term.selection = Some(Selection::new(kind, point, side)));
             self.selecting = true;
+            self.selection_origin = Some(event.position);
         }
         cx.stop_propagation();
         cx.notify();
     }
 
     fn on_mouse_up(&mut self, event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.selecting {
+            // Complete the selection even when the pointer left the viewport.
+            // A plain click keeps Alacritty's empty selection and the clipboard.
+            if self
+                .selection_origin
+                .is_some_and(|origin| origin != event.position)
+            {
+                let point = self.mouse_cell(event.position);
+                let side = self.selection_side(event.position);
+                self.state.with_term_mut(|term| {
+                    if let Some(selection) = term.selection.as_mut() {
+                        selection.update(point, side);
+                    }
+                });
+            }
+            if self.config.copy_on_select {
+                if let Some(text) = self
+                    .state
+                    .with_term(|term| term.selection_to_string())
+                    .filter(|text| !text.is_empty())
+                {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
+            }
+        }
         if !self.selecting
             && let Some(bytes) = crate::mouse::mouse_button_report(
                 event.button,
@@ -859,6 +894,7 @@ impl TerminalView {
             self.write_input(&bytes);
         }
         self.selecting = false;
+        self.selection_origin = None;
         cx.stop_propagation();
         cx.notify();
     }
@@ -871,13 +907,27 @@ impl TerminalView {
     ) {
         if self.selecting && event.dragging() {
             let point = self.mouse_cell(event.position);
+            let side = self.selection_side(event.position);
             self.state.with_term_mut(|term| {
                 if let Some(selection) = term.selection.as_mut() {
-                    selection.update(point, alacritty_terminal::index::Side::Right);
+                    selection.update(point, side);
                 }
             });
             cx.stop_propagation();
             cx.notify();
+        }
+    }
+
+    fn selection_side(&self, position: Point<Pixels>) -> alacritty_terminal::index::Side {
+        use alacritty_terminal::index::Side;
+        let x = f32::from(position.x - self.bounds.get().origin.x - self.config.padding.left);
+        let width = f32::from(self.renderer.cell_width);
+        if x < 0. {
+            Side::Left
+        } else if x >= width * self.state.cols() as f32 || x.rem_euclid(width) >= width / 2. {
+            Side::Right
+        } else {
+            Side::Left
         }
     }
 
@@ -1074,9 +1124,12 @@ impl Render for TerminalView {
         let state_arc = self.state.term_arc();
         let renderer = self.renderer.clone();
         let resize_callback = self.resize_callback.clone();
-        let padding = self.config.padding;
+        let mut padding = self.config.padding;
+        padding.right += px(12.); // Keep the scrollbar clear of terminal glyphs.
+        let owner = cx.entity().downgrade();
 
         div()
+            .relative()
             .size_full()
             .overflow_hidden()
             .bg(rgb(0x151822))
@@ -1084,12 +1137,31 @@ impl Render for TerminalView {
             .on_key_down(cx.listener(Self::on_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, event, window, cx| {
+                    if this.selecting {
+                        this.on_mouse_up(event, window, cx);
+                    }
+                }),
+            )
+            .capture_any_mouse_up(cx.listener(|this, _, _, cx| {
+                if this.scrollbar_drag.take().is_some() {
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .child(
                 canvas(
-                    move |bounds, _window, _cx| {
-                        bounds_cell.set(bounds);
+                    move |bounds, window, _cx| {
+                        if bounds_cell.replace(bounds) != bounds {
+                            let owner = owner.clone();
+                            window.on_next_frame(move |_, cx| {
+                                let _ = owner.update(cx, |_, cx| cx.notify());
+                            });
+                        }
                         bounds
                     },
                     move |bounds, _, window, cx| {
@@ -1154,8 +1226,12 @@ impl Render for TerminalView {
                 )
                 .size_full(),
             )
+            .child(self.render_scrollbar(cx))
     }
 }
 
-// Tests are omitted due to macro expansion issues with the test attribute
-// in this configuration. Integration tests can be added separately.
+#[cfg(feature = "ui-checks")]
+#[path = "clipboard_checks.rs"]
+pub mod clipboard_checks;
+#[path = "scrollbar.rs"]
+mod scrollbar;

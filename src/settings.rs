@@ -75,6 +75,7 @@ impl Settings {
 
     fn new(cx: &mut Context<Self>) -> Self {
         cx.observe_global::<todoist::Global>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<updates::State>(|_,cx|cx.notify()).detach();
         cx.observe_global::<nextcloud::State>(|_, cx| cx.notify())
             .detach();
         Settings {
@@ -691,7 +692,7 @@ impl Settings {
             settings_section(
                 "Version",
                 None,
-                vec![self.render_version_row()],
+                vec![self.render_version_row(cx)],
             ),
             settings_section(
                 "Developer",
@@ -724,13 +725,14 @@ impl Settings {
         ]
     }
 
-    /// Current local build; release installation is managed separately.
-    fn render_version_row(&self) -> AnyElement {
+    fn render_version_row(&self, _: &Context<Self>) -> AnyElement {
         div().flex().flex_col().gap_1()
             .child(format!("Schnauz {}", env!("CARGO_PKG_VERSION")))
             .child(div().text_size(px(UI_SMALL_FONT_SIZE))
                 .text_color(rgb(theme().text_muted))
-                .child("Personal build · updates are installed from this project's builds."))
+                .child("Update preferences are in About Schnauz · Updates are checked via GitHub."))
+            .child(div().id("settings-check-updates").py_1().text_color(rgb(theme().accent)).cursor_pointer()
+                .child("Check for Updates…").on_click(|_,_,cx| {updates::check(cx);about::open_about(cx);}))
             .into_any_element()
     }
 

@@ -1,6 +1,6 @@
 # Schnauz
 
-Last updated: 2026-10-18
+Last updated: 2026-10-19
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -28,6 +28,14 @@ document current when the architecture, working location or release stage change
 
 Codex reads repository `AGENTS.md`; that file points here for the handoff.
 See the [official instruction-discovery guide](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
+
+## Website and video material
+
+- [Website product summary, copy and assets](website/PROJECT.md)
+- [Video project, recordings, exports and current direction](video/PROJECT.md)
+
+Both live in this source project. Continue production in these existing folders;
+keep the product claims aligned with the current app. No publishing is implied.
 
 ## Build and verify
 
@@ -83,8 +91,11 @@ The original 0.5.0-rc.1 preparation published no tag or release. Its outputs
 predate subsequent fixes; 0.5.5 is rebuilt separately before publication. Reuse release.sh and the complete
 procedure in docs/RELEASING.md; do not redo account/repository/tooling setup.
 
-The separate website kit is at
-/Users/oliw/Documents/Codex/2026-10-17/what/outputs/Schnauz-Website-Kit.
+Website material index: [website/PROJECT.md](website/PROJECT.md). Keep the product
+summary and copy aligned with new features using that handoff.
+
+The website kit is at
+/Users/oliw/CurrentProjects/Schnauz/website/Schnauz-Website-Kit.
 Oliver explicitly authorized a product-info and screenshot refresh on 2026-10-18,
 prioritizing projects, terminal, path paste and Todoist. That supersedes only the
 website-kit freeze; release publication was later resumed for 0.5.5. The kit includes
@@ -366,7 +377,7 @@ signature verification. It was not launched or substituted for Oliver's live app
 Real-server interoperability remains his manual test. Logs are
 /private/tmp/schnauz-054-tests.log and /private/tmp/schnauz-054-build.log.
 
-The refreshed website handoff is outputs/Schnauz-Website-Kit, with START-HERE.md,
+The refreshed website handoff is website/Schnauz-Website-Kit, with START-HERE.md,
 WEBSITE-BRIEF.md, ASSETS.md, English description/SEO copy, original brand artwork
 and four 3200x1640 JPEG captures: light project/terminal/Todoist overview, Brand
 Refresh workspace, pasted README.md path/selection and dark overview. Todoist
@@ -555,3 +566,79 @@ All four GitHub asset digests match local SHA-256. Receipt is saved under
 dist/0.5.9/RELEASE-VERIFICATION.json. English notes describe fixes and features,
 link TechGuyZone, and state Apple Development signing/no notarization. Published
 as an early prerelease. Live apps/terminals were untouched. This request is complete.
+
+## Local 0.5.10 — clipboard, terminal scrolling, project moves and video preview
+
+Search now handles Copy/Cut/Paste as text editing before file shortcuts and has
+a native editing context menu. Unicode ranges, replacement and meaningful spaces
+are preserved; multiline paste becomes a single-line query. Terminal selections
+copy automatically on release, with correct forward/reverse half-cell boundaries,
+word selection and release outside the viewport. Shift permits selection in
+mouse-reporting terminal apps. The visible right scrollbar tracks actual history
+and supports dragging/track clicks without writing to the PTY. Native text preview
+uses ordinary wheel scrolling and Shift+wheel zoom, preserving selection.
+
+Tabs offer Move to Project… with a destination list and default-on Activate
+Project below. Both saved layouts are committed together before moving the live
+Tab object into the destination's parked session. Activating restores that same
+tab/session; nothing spawns, restarts or reconnects a terminal. Save failure
+leaves all ownership intact. Add to Favourites… is the new tab-menu name for the
+former View in… action, with destination feedback; it adds a shortcut only.
+
+The MP4 failure was reproduced in a real hidden GPUI window: the native canvas
+had 0 px width despite a correctly sized inspector. Explicit pixel widths and
+flex-none sizing restore attachment before metadata is ready. AVPlayerItem avoids
+optional duration preloading, polls early readiness at 50 ms, and starts paused
+and muted. A generated local H.264 fixture tests viewport attachment and playback;
+no personal media or live account is used. Public release remains 0.5.9.
+
+Validation passed: all 89 Rust tests, native Nextcloud/Todoist/composer fixtures,
+generated MP4 playback/unmute/cleanup and immediate real NSView attachment,
+native ordinary-wheel scrolling/Shift-wheel zoom, focused search clipboard
+editing, terminal selection/scrollbar positions, and the project-move dialog.
+The owned shell keeps the same PID, session and view across background-tab moves,
+activation on/off, Personal and split transitions; a failed save leaves it intact.
+Clipboard fixtures restore original item data formats, including on failure.
+All checks use disposable settings/files and owned fixture shells, not live
+sessions or servers. User mouse/trackpad feel and real-world codec interoperability
+remain manual QA; no new screenshot verification is claimed.
+The optimized Schnauz.app 0.5.10 is built with the stable Apple Development
+certificate. Packaged --version, native text scroll/Shift-zoom smoke checks and
+deep/strict signature verification passed. No live app, terminal or SSH session
+was restarted. No new GitHub publication was requested for this local test build.
+
+## Local 0.5.11 — GitHub update checks and pre-Todoist checkpoint
+
+About Schnauz now contains Automatically check for updates at startup, default
+OFF, and “Updates are checked via GitHub.” Manual checks also exist in Settings
+and the app menu. The public release list includes published prereleases; plain
+tags/drafts are ignored. SemVer comparison prevents false numeric ordering and
+downgrades. Only an uploaded DMG matching the installed binary's architecture
+is offered, including Intel under Rosetta. Release and download URLs are restricted
+to weiaoli2/Schnauz. Discovery is a bounded, timed, credential-free HTTPS read on a
+dedicated worker, not an installer. The original upstream updater stays removed.
+
+A small info badge above the toolbar mascot appears for a discovered newer
+version, with Update available tooltip and an About link. It does not intercept
+the dog's existing stop-search action or open a browser automatically. A locally
+newer developer build shows an amber badge and the installed/latest versions in
+About; this makes the check testable before publication without offering downgrades. The user
+chooses Release Notes or the architecture-specific download. Existing terminals
+and SSH sessions are never restarted. GitHub already supports this; no duplicate
+homepage DMGs or homepage edits are needed.
+
+Oliver requested committing/tagging this working checkpoint before the next
+Todoist change, without a release. Next: one shared floating Todoist window,
+following the globally active project; full and first-task compact modes;
+always-on-top/all-Spaces; Show Floating Tasks and Dock Here across main windows.
+Test before a later release and retain this checkpoint for rollback.
+
+0.5.11 validation: 93 Rust tests and the isolated real-GPUI suite pass, including
+both blue available-update and amber developer-build indicators, readable About
+status and opt-in preference persistence. Offline native fixtures from the full
+suite also passed before the final warning addition. Dependency notices verified
+(497 dependencies, 361 texts). Optimized Schnauz.app 0.5.11 is built and signed
+with the existing Apple Development certificate; packaged version and deep/strict
+signature checks pass. No live windows, terminals or SSH sessions were restarted.
+The pre-Todoist checkpoint is an annotated v0.5.11 source tag, not a GitHub Release.
+The next Todoist change uses a small pin at the panel's upper-right to detach it.

@@ -422,7 +422,7 @@ the path. File drags do not recolour the browser/sidebar background.
 
 The website kit (separate from GitHub) prioritizes project-specific work,
 seamless terminal use, pasted-path navigation and Todoist. Its description,
-brief and new sample-data captures are in the existing outputs/Schnauz-Website-Kit.
+brief and new sample-data captures are in the existing website/Schnauz-Website-Kit.
 Release status is recorded in docs/RELEASING.md. The opt-in ui-checks build supports
 --website-preview; its separately named preview bundle always uses an isolated
 profile even when LaunchServices drops arguments. --website-preview-scene=N
@@ -453,8 +453,9 @@ Use macOS Default Again removes the Schnauz override. Choices are stored central
 in file-apps.json; folders, app bundles and extensionless files retain normal behavior.
 
 Image and document previews support wheel zoom and dragging to pan an enlarged
-image. Selecting another file resets the preview zoom; text previews scale their
-native selectable text. Image layout retains the source aspect ratio at pane width.
+image. Selecting another file resets preview zoom. In native text previews,
+ordinary wheel scrolls the text and Shift+wheel changes its size. Image layout
+retains the source aspect ratio at pane width.
 Quick Actions also lists matching installed Automator file actions from the user
 and system Services folders, including Finder-scoped image workflows. Actions run
 only when chosen; no-input workflows and Finder extensions are separate facilities.
@@ -478,3 +479,23 @@ back into the original folder restores immediate file selection.
 Home-folder aliases pointing into CloudStorage (such as ~/Nextcloud) retain cloud
 identity, provider menus and file/folder badges. Nextcloud sharing requires an
 explicit Schnauz connection; the desktop client's credentials are not reused.
+
+Search supports Command+C/X/V and a native Cut/Copy/Paste/Select All context menu.
+Terminal mouse selections copy automatically on release. Use Shift while selecting
+in terminal applications that capture the mouse. A visible right-hand scrollbar
+shows the scrollback position and can be dragged.
+
+Right-click a tab and choose Move to Project… to move it with its existing terminal,
+output and running jobs. Choose a project, leave Activate Project checked to switch
+there immediately, and click Move. Clear that option to stay in the source project.
+Add to Favourites… in the tab menu adds its folder as a project shortcut instead.
+
+Click the idle Schnauz dog to open About Schnauz / Coffee for Cookie. Its Updates
+section offers an optional startup check (off by default) and Check for Updates….
+Checks use public GitHub releases, including previews, and offer only the DMG for
+the installed app's architecture. A small info badge above the dog indicates a
+newer available version; hover for Update available and click for details.
+A locally newer developer build shows an amber info badge instead, with an About
+warning naming the installed and latest published versions. No downgrade is offered.
+Checks do not install updates or restart the app or terminals. The same manual
+check is available in the Schnauz app menu and Settings → General → Version.

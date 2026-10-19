@@ -4718,7 +4718,7 @@ dependencies = [
 
 [[package]]
 name = "schnauz"
-version = "0.5.9"
+version = "0.5.11"
 dependencies = [
  "chrono",
  "futures",
@@ -4731,6 +4731,7 @@ dependencies = [
  "objc2-foundation",
  "portable-pty",
  "raw-window-handle",
+ "semver",
  "serde",
  "serde_json",
 ]

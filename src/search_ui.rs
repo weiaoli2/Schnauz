@@ -51,6 +51,49 @@ impl Drop for State {
 }
 
 impl Schnauz {
+    pub(super) fn search_edit_nodes(&self) -> Vec<MenuNode> {
+        let selected = self.query_sel().is_some();
+        vec![
+            if selected {
+                mi("Cut", |this, _, cx| this.copy_query_selection(true, cx))
+            } else {
+                MenuNode::Disabled("Cut".into())
+            },
+            if selected {
+                mi("Copy", |this, _, cx| this.copy_query_selection(false, cx))
+            } else {
+                MenuNode::Disabled("Copy".into())
+            },
+            mi("Paste", |this, _, cx| this.paste_query(cx)),
+            MenuNode::Sep,
+            mi("Select All", |this, _, cx| {
+                this.query_anchor = Some(0);
+                this.query_cursor = this.query.chars().count();
+                cx.notify();
+            }),
+        ]
+    }
+    pub(super) fn copy_query_selection(&mut self, cut: bool, cx: &mut Context<Self>) {
+        if let Some((lo, hi)) = self.query_sel() {
+            let text = self.query[self.query_byte(lo)..self.query_byte(hi)].to_owned();
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            if cut {
+                self.query_delete_sel();
+                self.refresh_palette(cx);
+            }
+        }
+    }
+
+    pub(super) fn paste_query(&mut self, cx: &mut Context<Self>) {
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            // Keep this a single-line field, without stripping meaningful spaces.
+            let text = text.replace("\r\n", "\n").replace(['\r', '\n', '\t'], " ");
+            let text: String = text.chars().filter(|ch| !ch.is_control()).collect();
+            self.palette_insert(&text);
+            self.refresh_palette(cx);
+        }
+    }
+
     pub(super) fn search_in_pane(&self, pane: usize) -> bool {
         self.palette_open
             && self.file_search.inline
@@ -98,31 +141,52 @@ impl Schnauz {
     }
 
     pub(super) fn refresh_file_search_preserving_selection(&mut self, cx: &mut Context<Self>) {
-        let kept = (self.active_tab().selection.clone(), self.active_tab().anchor.clone());
+        let kept = (
+            self.active_tab().selection.clone(),
+            self.active_tab().anchor.clone(),
+        );
         self.refresh_file_search(cx);
         self.file_search.restore_selection = Some(kept);
     }
     fn restore_search_selection(&mut self, done: bool, cx: &mut Context<Self>) {
-        let Some((wanted, anchor)) = &self.file_search.restore_selection else { return };
-        let kept: HashSet<PathBuf> = self.palette_items.iter().filter_map(|item| {
-            let Action::Open(path, _) = &item.action;
-            wanted.contains(path).then(|| path.clone())
-        }).collect();
-        let anchor = anchor.as_ref().filter(|p| kept.contains(*p)).cloned().or_else(|| kept.iter().next().cloned());
+        let Some((wanted, anchor)) = &self.file_search.restore_selection else {
+            return;
+        };
+        let kept: HashSet<PathBuf> = self
+            .palette_items
+            .iter()
+            .filter_map(|item| {
+                let Action::Open(path, _) = &item.action;
+                wanted.contains(path).then(|| path.clone())
+            })
+            .collect();
+        let anchor = anchor
+            .as_ref()
+            .filter(|p| kept.contains(*p))
+            .cloned()
+            .or_else(|| kept.iter().next().cloned());
         let pane = self.file_search.pane;
         let changed = self.tab(pane).anchor != anchor;
         self.tab_mut(pane).selection = kept;
         self.tab_mut(pane).anchor = anchor.clone();
         if changed {
             if let Some(path) = anchor {
-                if let Some(row) = self.palette_items.iter().position(|i| matches!(&i.action, Action::Open(p, _) if p == &path)) {
+                if let Some(row) = self
+                    .palette_items
+                    .iter()
+                    .position(|i| matches!(&i.action, Action::Open(p, _) if p == &path))
+                {
                     self.selected = row;
-                    self.file_search.scroll.scroll_to_item(row, ScrollStrategy::Center);
+                    self.file_search
+                        .scroll
+                        .scroll_to_item(row, ScrollStrategy::Center);
                 }
                 self.focus_entry(pane, path, cx);
             }
         }
-        if done { self.file_search.restore_selection = None; }
+        if done {
+            self.file_search.restore_selection = None;
+        }
     }
     pub(super) fn refresh_file_search(&mut self, cx: &mut Context<Self>) {
         self.file_search.restore_selection = None;
@@ -367,7 +431,21 @@ impl Schnauz {
                     )
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.focus_file_search(false, window, cx)
-                    })),
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                            this.focus_file_search(false, window, cx);
+                            this.context_menu = Some(ContextMenu {
+                                x: f32::from(event.position.x),
+                                y: f32::from(event.position.y),
+                                target: None,
+                                nodes: this.search_edit_nodes(),
+                            });
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ),
             )
             .child(modes)
             .into_any_element()
@@ -381,7 +459,9 @@ impl Schnauz {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.suppress_entry_click { return; }
+        if self.suppress_entry_click {
+            return;
+        }
         let Some(item) = self.palette_items.get(row) else {
             return;
         };
@@ -424,7 +504,14 @@ impl Schnauz {
         self.open_path(pane, path, is_dir, cx);
     }
 
-    fn search_result_menu(&mut self, row: usize, x: f32, y: f32, direct_actions: bool, cx: &mut Context<Self>) {
+    fn search_result_menu(
+        &mut self,
+        row: usize,
+        x: f32,
+        y: f32,
+        direct_actions: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.select_search_result(row, cx);
         let Some(item) = self.palette_items.get(row) else {
             return;
@@ -474,9 +561,6 @@ impl Schnauz {
             y,
             target: Some((path, is_dir)),
             nodes,
-
-
-
         });
         cx.notify();
     }

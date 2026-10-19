@@ -262,7 +262,7 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
         cx.update(|cx| {
             assert!(!source.join("a.txt").exists(),"Move removes only its source after success");
             assert!(target.join("a.txt").exists());
-            window.update(cx, |fixture, _, cx| fixture.browser.update(cx, |b, cx| {
+            window.update(cx, |fixture, window, cx| fixture.browser.update(cx, |b, cx| {
                 b.tab_mut(0).remote = None;
                 b.load_dir_in(0,source.clone(),cx);
                 assert!(b.start_fixture_terminal(0,cx));
@@ -300,6 +300,7 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
                 assert_eq!(b.tab(0).terminal.as_ref().unwrap().id,id);
                 assert_eq!(b.panes[0].tabs.len(),count);
                 assert!(b.tab(0).selection.contains(&target.join("a.txt")));
+                crate::tab_projects::check_moves(b, window, cx);
                 // Drop only this owned fixture session, never a live user PTY.
                 b.tab_mut(0).terminal.take(); b.tab_mut(0).terminal_open=false;
             })).unwrap();

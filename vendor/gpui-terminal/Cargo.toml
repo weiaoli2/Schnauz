@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 autobins = false
+[features]
+ui-checks = []
 [dependencies]
 gpui = "0.2.2"
 alacritty_terminal = "0.25.1"

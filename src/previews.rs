@@ -7,9 +7,7 @@ impl Schnauz {
             .panes
             .iter()
             .map(Pane::active_tab)
-            .filter(|t| {
-                prefs().preview && t.selection.len() == 1
-            })
+            .filter(|t| prefs().preview && t.selection.len() == 1)
             .filter_map(|t| t.anchor.clone())
             .collect();
         self.preview_pending.borrow_mut().retain(|path, cancel| {
@@ -40,7 +38,9 @@ impl Schnauz {
         .detach();
     }
     pub(super) fn ensure_preview(&self, path: PathBuf, force: bool, cx: &mut Context<Self>) {
-        if video_preview::is_video(&path) { return; }
+        if video_preview::is_video(&path) {
+            return;
+        }
         if (!force && !prefs().preview)
             || lookup_preview(&path).is_some()
             || self.preview_pending.borrow().contains_key(&path)
@@ -371,7 +371,11 @@ fn build_preview_cancellable(path: &Path, cancel: &AtomicBool) -> Option<Arc<Ren
         NEXT_PREVIEW.fetch_add(1, Ordering::Relaxed)
     )));
     fs::create_dir_all(&directory.0).ok()?;
-    let edge = if video_preview::is_picture(path) { 1600 } else { 600 };
+    let edge = if video_preview::is_picture(path) {
+        1600
+    } else {
+        600
+    };
     let mut child = Command::new("qlmanage")
         .args(["-t", "-s", &edge.to_string(), "-o"])
         .arg(&directory.0)
@@ -438,19 +442,25 @@ pub(super) fn gather_info(path: &Path) -> FileInfo {
         .as_ref()
         .map(|m| format_size(is_dir, m.len()))
         .unwrap_or_else(|| "--".into());
-    let times = [md.as_ref().and_then(|m| m.created().ok()),
-        md.as_ref().and_then(|m| m.modified().ok()), md.as_ref().and_then(|m| m.accessed().ok())];
+    let times = [
+        md.as_ref().and_then(|m| m.created().ok()),
+        md.as_ref().and_then(|m| m.modified().ok()),
+        md.as_ref().and_then(|m| m.accessed().ok()),
+    ];
     let [created, modified, accessed] = times.map(format_date);
     let date_times = times.map(system_dates::parts);
 
     // Image dimensions + color, both from the header only (no full decode).
     let (mut dimensions, mut color) = (None, None);
-    if let Ok((w, h)) = image::image_dimensions(path) {
-        dimensions = Some(format!("{w} × {h}"));
-        use image::ImageDecoder;
-        if let Ok(reader) = image::ImageReader::open(path).and_then(|r| r.with_guessed_format()) {
-            if let Ok(decoder) = reader.into_decoder() {
-                color = Some(color_label(decoder.color_type()));
+    if !video_preview::is_video(path) {
+        if let Ok((w, h)) = image::image_dimensions(path) {
+            dimensions = Some(format!("{w} × {h}"));
+            use image::ImageDecoder;
+            if let Ok(reader) = image::ImageReader::open(path).and_then(|r| r.with_guessed_format())
+            {
+                if let Ok(decoder) = reader.into_decoder() {
+                    color = Some(color_label(decoder.color_type()));
+                }
             }
         }
     }

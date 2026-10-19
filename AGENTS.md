@@ -415,7 +415,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The current local and published version is 0.5.9.
+  no per-build app copies or releases. The current local version is 0.5.11; the published version is 0.5.9.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -486,7 +486,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   in the separate isolated preview bundle: 0 light overview, 1 Brand Refresh,
   2 pasted file path, 3 dark overview. Only the preview's owned test shell may
   be restarted for captures. The final four 3200x1640 JPEGs and handoff are in
-  outputs/Schnauz-Website-Kit; originals are raw CUA captures, not retouched UI.
+  website/Schnauz-Website-Kit; originals are raw CUA captures, not retouched UI.
 
 - Oliver confirmed both local/SSH and SSH/SSH copying work; the reported issue
   was missing feedback. Retain the working transfer transport. Local jobs and
@@ -518,7 +518,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   resolver; folders/app bundles/extensionless files retain normal behavior.
 
 - Image previews use explicit aspect-ratio dimensions, never percentage width with
-  intrinsic pixel height. Wheel zoom applies to visual previews and native text;
+  intrinsic pixel height. Wheel zoom applies to visual previews; native text uses
+  Shift+wheel for zoom and ordinary wheel for native scrolling;
   selecting another file resets the transient zoom and image scroll. Drag images
   to pan at enlarged sizes. Keep native text selection/copy and bounded reads.
 - Quick Actions includes installed file-input Automator workflows from user/system
@@ -563,3 +564,45 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Rosetta Intel text-preview checks passed. Apple Development signed, unnotarized
   prerelease. Receipt: dist/0.5.9/RELEASE-VERIFICATION.json. The request is complete;
   future publication needs a new request. Preserve existing tags/assets/sessions.
+- Search text owns Cmd+C/X/V while editing, including native Cut/Copy/Paste/
+  Select All context menus. Preserve Unicode selections and meaningful spaces;
+  pasted text must never trigger file paste/navigation while editing a query.
+- Terminal mouse selection copies nonempty text on release, including word/line
+  selection and release outside. Plain clicks cannot overwrite the clipboard.
+  Respect app mouse reporting; Shift overrides it for text selection. Keep the
+  right scrollbar visible and draggable, reflecting actual Alacritty scrollback
+  without sending PTY input or covering terminal text.
+- Tab menus offer Move to Project… with a scrollable destination list and an
+  Activate Project checkbox below it, default on. Move the owned Tab/Session/PTY
+  (not a copy or new process), preserving terminal view, output, running jobs,
+  SSH identity, selection and navigation history. Persist both layouts before
+  changing ownership; save failure leaves sessions intact. Cover Personal,
+  parked destinations and last-tab/split handling. Native previews hide in the
+  modal. Tab View in… is renamed Add to Favourites…; it adds only a reference,
+  with destination feedback. Other shortcut View in… semantics remain.
+- Video viewports need explicit pixel widths and flex-none native canvas sizes.
+  Test the actual attached NSView, not only metadata/container bounds. Start
+  the player independently of optional metadata/duration loading and retain
+  paused/muted defaults. Use generated H.264 fixtures for playback/viewport QA.
+- About Schnauz (idle mascot / Coffee for Cookie) owns the opt-in startup update
+  checkbox, default OFF, with “Updates are checked via GitHub.” beneath it.
+  Manual Check for Updates is available there, in Settings and the app menu.
+  Use only public weiaoli2/Schnauz releases, including published prereleases;
+  ordinary tags/drafts are not updates. Compare semantic version precedence,
+  never downgrade local builds. Require the exact DMG for the compiled app's
+  architecture (Intel stays Intel under Rosetta), validated to the same GitHub
+  repository. No token, telemetry, credentials or personal curl config. Bounded
+  HTTPS checks run once on opted-in startup, deduplicated per process, on a
+  dedicated worker with timeouts. Never replace or restart the app/terminals.
+  Show a 13 pt blue info badge above the toolbar mascot for discovered updates;
+  tooltip “Update available”. A locally newer build gets an amber info badge and
+  About warning naming installed/latest versions, never a downgrade download.
+  Clicking either badge opens About without stopping a running search.
+  Downloads/notes open only on a user's click. UI tests use injected releases.
+- Oliver requested a committed/tagged 0.5.11 checkpoint before implementing the
+  detached Todoist window; no GitHub Release or DMG publication at this stage.
+  Then implement/test one global floating Todoist window (shared active project),
+  full/compact-first-task modes, always-on-top/all-Spaces and Dock Here. Multiple
+  browser windows must show/reuse the same floater rather than detach duplicates.
+  Preserve the checkpoint for rollback. Publish a later release only after the
+  new integration has passed testing, including Oliver's live workflow review.

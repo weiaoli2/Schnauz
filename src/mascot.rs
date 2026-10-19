@@ -6,6 +6,8 @@ impl Schnauz {
         let running = self.file_search.busy && self.palette_open && self.file_search.inline;
         let dog = div()
             .id("schnauz-mascot")
+            .relative()
+            .children(ui_checks::probe("mascot-body"))
             .w(px(28.))
             .h(px(28.))
             .flex_none()
@@ -40,7 +42,15 @@ impl Schnauz {
                     },
                 )
                 .size_full(),
-            );
+            )
+            .when_some(updates::badge(cx),|dog,(color,message)|dog.child(
+                div().id("schnauz-update-info").absolute().top(px(-4.)).right(px(-2.))
+                    .children(ui_checks::probe("update-info"))
+                    .w(px(13.)).h(px(13.)).rounded_full().bg(rgb(color)).text_color(rgb(0xffffff))
+                    .flex().items_center().justify_center().text_size(px(10.)).font_weight(FontWeight::BOLD)
+                    .cursor_pointer().child("i").tooltip(tip(message))
+                    .on_click(|_,_,cx| {cx.stop_propagation();about::open_about(cx);})
+            ));
         if running {
             dog.with_animation(
                 "schnauz-running",

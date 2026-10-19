@@ -31,6 +31,10 @@ pub(super) fn probe(name: &'static str) -> Option<AnyElement> {
 mod drag_checks;
 
 #[cfg(feature = "ui-checks")]
+#[path = "clipboard_checks.rs"]
+mod clipboard_checks;
+
+#[cfg(feature = "ui-checks")]
 struct Fixture {
     browser: gpui::Entity<Schnauz>,
 }
@@ -103,6 +107,7 @@ fn check_geometry(phase: usize) {
 #[cfg(feature = "ui-checks")]
 pub(super) fn run() {
     std::panic::set_hook(Box::new(|error| {
+        clipboard_checks::restore_on_failure();
         eprintln!("Layout check failed: {error}");
         std::process::exit(1);
     }));
@@ -216,9 +221,99 @@ pub(super) fn run() {
             settings::check_quick_keybinds(cx);
             check_previews(window, cx);
             check_cloud_alias(window, cx);
+            clipboard_checks::run(window, cx);
+            check_updates(window,cx);
+            check_tab_project_dialog(window,cx);
+            check_video(window,cx);
             drag_checks::run(window, cleanup, cx);
         }
     });
+}
+
+#[cfg(feature = "ui-checks")]
+pub(super) fn recorded_text(name:&'static str)->gpui::TextLayout {
+    TEXT_LAYOUTS.with(|all|all.borrow().get(name).unwrap().clone())
+}
+#[cfg(feature = "ui-checks")]
+pub(super) fn recorded_bounds(name:&'static str)->Bounds<gpui::Pixels> {
+    BOUNDS.with(|all|*all.borrow().get(name).unwrap())
+}
+#[cfg(feature = "ui-checks")]
+fn check_updates(window:gpui::WindowHandle<Fixture>,cx:&mut App) {
+    let original=cx.try_global::<updates::State>().cloned().unwrap_or_default();
+    cx.set_global(updates::State {checked:true,release:Some(updates::Release {
+        version:semver::Version::parse("999.0.0").unwrap(),prerelease:true,
+        notes:"https://github.com/weiaoli2/Schnauz/releases/tag/v999.0.0".into(),
+        download:"https://github.com/weiaoli2/Schnauz/releases/download/v999.0.0/fixture.dmg".into(),
+    }),..Default::default()});
+    for _ in 0..3 {cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap();}
+    let badge=recorded_bounds("update-info");let dog=recorded_bounds("mascot-body");
+    assert_eq!(f32::from(badge.size.width),13.);assert!(badge.origin.y<dog.origin.y);
+    assert!(badge.origin.y>=px(0.),"Update info stays inside toolbar");
+    about::check_updates(cx);
+    cx.set_global(updates::State {checked:true,ahead_of:Some(semver::Version::parse("0.5.9").unwrap()),..Default::default()});
+    assert_eq!(updates::badge(cx),Some((0xb77900,"Installed version is newer than the latest GitHub release")));
+    assert!(cx.global::<updates::State>().release.is_none(),"Developer warning never offers a downgrade");
+    for _ in 0..3 {cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap();}
+    assert_eq!(f32::from(recorded_bounds("update-info").size.width),13.);
+    about::check_updates(cx);
+    cx.set_global(updates::State::default());
+    BOUNDS.with(|all|{all.borrow_mut().remove("update-info");});
+    for _ in 0..3 {cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap();}
+    BOUNDS.with(|all|assert!(!all.borrow().contains_key("update-info"),"No badge without a discovered update"));
+    cx.set_global(original);
+    println!("PASS opt-in About update checkbox persistence, readable GitHub source, blue update / amber developer badges above mascot and no badge before checking; no requests, downloads or sessions touched");
+}
+
+#[cfg(feature = "ui-checks")]
+fn check_tab_project_dialog(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
+    let original=window.update(cx,|f,w,cx|f.browser.update(cx,|b,cx| {
+        let original=b.projects.clone();let layout=b.capture_layout();
+        let first=b.projects.items.iter().map(|p|p.id).max().unwrap_or(0)+1;
+        for i in 0..12 {b.projects.items.push(projects::Project {id:first+i,name:format!("Destination project {i}"),layout:layout.clone(),sidebar:Default::default()});}
+        b.open_tab_project_move(b.active_tab().id,w,cx);original
+    })).unwrap();
+    for _ in 0..3 {cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap();}
+    BOUNDS.with(|all| {
+        let all=all.borrow();let dialog=all.get("move-project-dialog").unwrap();
+        let choices=all.get("move-project-choices").unwrap();let activate=all.get("move-project-activate").unwrap();
+        assert!(f32::from(dialog.size.width)>=380.);
+        assert!(choices.size.width<=dialog.size.width,"Destination list stays inside padded content");
+        assert!(f32::from(choices.size.height)<=240.1 && f32::from(choices.size.height)>100.);
+        assert!(activate.origin.y>=choices.bottom());
+    });
+    TEXT_LAYOUTS.with(|all|{
+        let all=all.borrow();let heading=all.get("move-project-heading").unwrap();
+        assert_eq!(heading.text(),"Move to Project…");assert!(f32::from(heading.bounds().size.width)>100.);
+    });
+    window.update(cx,|f,w,cx|f.browser.update(cx,|b,cx|{
+        assert!(b.tab_project_move.as_ref().unwrap().activate);
+        b.handle_tab_project_key(&KeyDownEvent {keystroke:gpui::Keystroke::parse("space").unwrap(),is_held:false},w,cx);
+        assert!(!b.tab_project_move.as_ref().unwrap().activate);
+        b.handle_tab_project_key(&KeyDownEvent {keystroke:gpui::Keystroke::parse("escape").unwrap(),is_held:false},w,cx);
+        assert!(b.tab_project_move.is_none());b.projects=original;cx.notify();
+    })).unwrap();
+    println!("PASS Move to Project modal heading/scrolling destinations, activation below list, default-on toggle and cancellation");
+}
+
+#[cfg(feature = "ui-checks")]
+fn check_video(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
+    let path=PathBuf::from(std::env::var_os("SCHNAUZ_UI_VIDEO_FIXTURE").expect("Synthetic MP4 fixture"));
+    window.update(cx,|f,_,cx|f.browser.update(cx,|b,cx| {
+        b.todoist.open=false;
+        let pane=b.active_pane;
+        b.tab_mut(pane).selection=std::iter::once(path.clone()).collect();
+        b.tab_mut(pane).anchor=Some(path.clone());cx.notify();
+    })).unwrap();
+    let start=Instant::now();
+    for _ in 0..3 { cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap(); }
+    window.update(cx,|f,_,cx|{
+        f.browser.read(cx).video_preview.as_ref().expect("Immediate video session").check_painted();
+    }).unwrap();
+    assert!(start.elapsed()<Duration::from_secs(2),"Native video attachment cannot wait for file information");
+    window.update(cx,|f,_,cx|f.browser.update(cx,|b,cx| {b.tab_mut(b.active_pane).selection.clear();cx.notify();})).unwrap();
+    for _ in 0..2 { cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap(); }
+    println!("PASS synthetic MP4 immediate player attachment and nonzero native viewport without waiting for file metadata");
 }
 
 #[cfg(feature = "ui-checks")]
@@ -350,7 +445,8 @@ fn check_previews(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
     })).unwrap();
     println!("PASS single-line information heading, compact date/time lines at 253/360/420 pt, persistent sidebar visibility and sidebar tree view/sort scope");
     println!("PASS preview aspect, zoom/reset, padded four-column information and Command direct-action menu routing");
-    println!("{}", text_view::smoke_test().unwrap());
+    // Native scroll/zoom smoke checks run in their own process in test-ui.sh,
+    // without borrowing a browser window or using a live profile.
     if std::env::var_os("SCHNAUZ_PREVIEW_CHECK_VISIBLE").is_some() {
         window.update(cx, |fixture, _, cx| fixture.browser.update(cx, |browser, _| browser.tab_mut(browser.active_pane).preview_width = 360)).unwrap();
         select("sample.png", (1600, 800), cx); paint(cx);

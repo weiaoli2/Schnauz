@@ -1,10 +1,10 @@
 //! Native, initially muted AVKit playback in the file preview.
 use super::*;
+use crate::native_preview::frames;
 use objc2::{class, msg_send, rc::Retained};
 use objc2_app_kit::NSView;
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use std::cell::Cell;
-use crate::native_preview::frames;
 
 #[link(name = "AVKit", kind = "framework")]
 unsafe extern "C" {}
@@ -63,7 +63,7 @@ pub(super) fn is_picture(path: &Path) -> bool {
     })
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 struct Snapshot {
     aspect: f32,
     dimensions: Option<(u32, u32)>,
@@ -85,14 +85,32 @@ pub(super) struct Session {
     state: Cell<Snapshot>,
 }
 impl Session {
+    #[cfg(feature = "ui-checks")]
+    pub(super) fn check_painted(&self) {
+        assert!(!self.clip.isHidden(),"Native video must be visible before metadata finishes: state {:?}, active {}, blocked {}, frame {:?}",self.state.get(),self.active.get(),self.blocked.get(),self.clip.frame());
+        let frame = self.view.frame();
+        assert!(
+            frame.size.width > 200. && frame.size.height > 100.,
+            "Native video needs a real viewport: {frame:?}"
+        );
+        assert!(
+            unsafe { self.clip.superview() }.is_some(),
+            "Player must attach to the actual GPUI view"
+        );
+    }
     fn new(path: PathBuf) -> Option<Rc<Self>> {
         let mtm = objc2::MainThreadMarker::new()?;
         let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
         // The selectors and ABI types below come directly from the AVKit and
         // AVFoundation SDK headers. AVPlayer loads local media asynchronously.
         unsafe {
+            let asset: Retained<objc2::runtime::AnyObject> = msg_send![class!(AVURLAsset), URLAssetWithURL: &*url, options: None::<&objc2::runtime::AnyObject>];
+            // The default URL initializer also waits for duration. A preview
+            // needs playable frames first; don't preload optional metadata keys.
+            let keys = objc2_foundation::NSArray::<NSString>::new();
+            let item: Retained<objc2::runtime::AnyObject> = msg_send![class!(AVPlayerItem), playerItemWithAsset: &*asset, automaticallyLoadedAssetKeys: &*keys];
             let player: Retained<objc2::runtime::AnyObject> =
-                msg_send![class!(AVPlayer), playerWithURL: &*url];
+                msg_send![class!(AVPlayer), playerWithPlayerItem: &*item];
             let _: () = msg_send![&*player, setMuted: true];
             let view: Retained<PlayerView> = msg_send![PlayerView::alloc(mtm), initWithFrame: NSRect::new(NSPoint::new(0., 0.), NSSize::new(320., 180.))];
             let _: () = msg_send![&*view, setPlayer: &*player];
@@ -144,7 +162,10 @@ impl Session {
                         self.state.get().aspect
                     };
                     let dimensions = (presentation.width > 0. && presentation.height > 0.)
-                        .then_some((presentation.width.round() as u32, presentation.height.round() as u32));
+                        .then_some((
+                            presentation.width.round() as u32,
+                            presentation.height.round() as u32,
+                        ));
                     (aspect.clamp(0.1, 10.), status, dimensions)
                 })
                 .unwrap_or((16. / 9., 0, None));
@@ -232,9 +253,7 @@ impl Drop for Session {
 impl Schnauz {
     pub(super) fn sync_video_preview(&mut self, cx: &mut Context<Self>) {
         let tab = self.active_tab();
-        let wanted = (prefs().preview
-            && tab.remote.is_none()
-            && tab.selection.len() == 1)
+        let wanted = (prefs().preview && tab.remote.is_none() && tab.selection.len() == 1)
             .then(|| tab.selection.iter().next().cloned())
             .flatten()
             .filter(|p| is_video(p));
@@ -245,9 +264,16 @@ impl Schnauz {
             self.video_preview = wanted.and_then(Session::new);
             if let Some(session) = &self.video_preview {
                 let session = Rc::downgrade(session);
+                let started = Instant::now();
                 cx.spawn(async move |this, cx| loop {
                     cx.background_executor()
-                        .timer(Duration::from_millis(250))
+                        .timer(Duration::from_millis(
+                            if started.elapsed() < Duration::from_secs(1) {
+                                50
+                            } else {
+                                250
+                            },
+                        ))
                         .await;
                     let Some(session) = session.upgrade() else {
                         break;
@@ -274,13 +300,19 @@ impl Schnauz {
         let state = session.state.get();
         let t = theme();
         let width = preview_panel::preview_width(self, self.panes.len() - 1).max(1.);
-        let height = (width / state.aspect).max(40.);
-        let information = prefs().info.then(|| native_preview::information(&session.path,
-            state.dimensions.map(|(w, h)| format!("{w} × {h}")), width - 1.));
+        let content_width = (width - 1.).max(1.);
+        let height = (content_width / state.aspect).max(40.);
+        let information = prefs().info.then(|| {
+            native_preview::information(
+                &session.path,
+                state.dimensions.map(|(w, h)| format!("{w} × {h}")),
+                width - 1.,
+            )
+        });
         let play = session.clone();
         let mute = session.clone();
         let owner = cx.entity().downgrade();
-        Some(div().id("video-inspector").w_full().h_full().min_h_0().flex().flex_col().bg(rgb(t.sidebar))
+        Some(div().id("video-inspector").flex_none().w(px(width)).h_full().min_h_0().flex().flex_col().bg(rgb(t.sidebar))
             .border_l_1().border_color(rgb(t.border))
             .child(div().flex_none().flex().items_center().gap_2().px_3().py_2()
                 .child(div().flex_1().min_w_0().truncate().child(path_label(&session.path)))
@@ -295,10 +327,11 @@ impl Schnauz {
                 div().flex_1().min_h_0().flex().items_center().justify_center().p_4()
                     .child("This video format cannot be played by macOS. Double-click the file to open it in another app.").into_any_element()
             } else {
-                div().id("video-preview-scroll").flex_1().min_h_0().overflow_y_scroll()
-                    .child(div().flex().flex_col().gap_3()
+                div().id("video-preview-scroll").w(px(content_width)).flex_1().min_h_0().overflow_y_scroll()
+                    .child(div().w(px(content_width)).flex_none().flex().flex_col().gap_3()
+                        .when(!state.ready,|d|d.child(div().w(px(content_width)).px_3().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_dim)).child("Loading video…")))
                         .child(gpui::canvas(|bounds, _, _| bounds, move |_, bounds, window, _| session.paint(bounds, window))
-                            .w_full().h(px(height)))
+                            .flex_none().w(px(content_width)).h(px(height)))
                         .children(information))
                     .into_any_element()
             }).into_any_element())

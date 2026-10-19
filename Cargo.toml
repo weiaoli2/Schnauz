@@ -1,6 +1,6 @@
 [package]
 name = "schnauz"
-version = "0.5.9"
+version = "0.5.11"
 edition = "2021"
 description = "A native, project-first Mac file manager with an interactive terminal"
 license = "MIT"
@@ -8,7 +8,7 @@ repository = "https://github.com/weiaoli2/Schnauz"
 publish = false
 
 [features]
-ui-checks = []
+ui-checks = ["gpui-terminal/ui-checks"]
 
 [dependencies]
 gpui-terminal = { path = "vendor/gpui-terminal" }
@@ -16,6 +16,7 @@ portable-pty = "0.9"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 futures = "0.3"
 gpui = "0.2.2"
 chrono = "0.4"

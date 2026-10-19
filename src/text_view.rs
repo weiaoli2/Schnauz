@@ -29,9 +29,21 @@ define_class!(
     impl ZoomScrollView {
         #[unsafe(method(scrollWheel:))]
         fn wheel(&self, event: &objc2_app_kit::NSEvent) {
+            if !event.modifierFlags().contains(objc2_app_kit::NSEventModifierFlags::Shift) {
+                let clip=self.contentView();
+                let mut bounds=clip.bounds();
+                let step=if event.hasPreciseScrollingDeltas() {1.} else {self.verticalLineScroll()};
+                bounds.origin.y-=event.scrollingDeltaY()*step;
+                let bounds=clip.constrainBoundsRect(bounds);
+                clip.scrollToPoint(bounds.origin);
+                self.reflectScrolledClipView(&clip);
+                return;
+            }
+            // AppKit may remap Shift-wheel motion onto the horizontal axis.
+            let delta = if event.scrollingDeltaY() != 0. {event.scrollingDeltaY()} else {event.scrollingDeltaX()};
             let delta = if event.hasPreciseScrollingDeltas() {
-                event.scrollingDeltaY()
-            } else { event.scrollingDeltaY() * 20. };
+                delta
+            } else { delta * 20. };
             self.zoom(delta as f32);
         }
     }
@@ -44,6 +56,7 @@ impl ZoomScrollView {
             // This private scroll view always owns our read-only NSTextView.
             let text = unsafe { &*(&*view as *const NSView).cast::<NSTextView>() };
             let size = UI_FONT_SIZE as f64 * scale as f64;
+            self.setVerticalLineScroll(size * 1.2);
             let font = NSFont::fontWithName_size(&NSString::from_str("Menlo"), size)
                 .unwrap_or_else(|| NSFont::monospacedSystemFontOfSize_weight(size, 0.));
             text.setFont(Some(&font));
@@ -89,6 +102,7 @@ impl Session {
         let scroll: Retained<ZoomScrollView> =
             unsafe { msg_send![super(allocated), initWithFrame: frame] };
         scroll.setHasVerticalScroller(true);
+        scroll.setVerticalLineScroll(UI_FONT_SIZE as f64 * 1.2);
         scroll.setHasHorizontalScroller(false);
         scroll.setAutohidesScrollers(true);
         scroll.setDocumentView(Some(&text));
@@ -385,7 +399,78 @@ pub(super) fn smoke_test() -> Result<String, String> {
         {
             return Err("Resize changed text or selection".into());
         }
-        Ok("Native text preview: read-only, file-name font size, Unicode selection, Copy All, wheel zoom and resize passed".into())
+        // Dispatch real native scroll events to our own view only, never to
+        // the system event queue or a user's window. No accessibility access.
+        #[repr(C)]
+        struct CGEvent {
+            _opaque: [u8; 0],
+        }
+        unsafe impl objc2::RefEncode for CGEvent {
+            const ENCODING_REF: objc2::Encoding =
+                objc2::Encoding::Pointer(&objc2::Encoding::Struct("__CGEvent", &[]));
+        }
+        #[link(name = "CoreGraphics", kind = "framework")]
+        unsafe extern "C" {
+            fn CGEventCreateScrollWheelEvent(
+                source: *const std::ffi::c_void,
+                units: u32,
+                count: u32,
+                first_wheel: i32,
+                ...
+            ) -> *mut CGEvent;
+            fn CGEventSetFlags(event: *mut CGEvent, flags: u64);
+        }
+        #[link(name = "CoreFoundation", kind = "framework")]
+        unsafe extern "C" {
+            fn CFRelease(value: *const std::ffi::c_void);
+        }
+        let wheel = |shift: bool, delta: i32| -> Result<Retained<objc2_app_kit::NSEvent>, String> {
+            unsafe {
+                let raw = CGEventCreateScrollWheelEvent(std::ptr::null(), 1, 1, delta);
+                if raw.is_null() {
+                    return Err("Cannot create synthetic wheel event".into());
+                }
+                CGEventSetFlags(
+                    raw,
+                    if shift {
+                        objc2_app_kit::NSEventModifierFlags::Shift.bits() as u64
+                    } else {
+                        0
+                    },
+                );
+                let event: Option<Retained<objc2_app_kit::NSEvent>> =
+                    msg_send![objc2::class!(NSEvent),eventWithCGEvent:raw];
+                CFRelease(raw.cast());
+                event.ok_or("Cannot wrap synthetic wheel event".into())
+            }
+        };
+        let long = Session::new(
+            PathBuf::from("long-fixture.txt"),
+            Arc::new(text_preview::TextPreview {
+                text: (0..200).map(|i| format!("Line {i}\n")).collect(),
+                truncated: false,
+            }),
+        )
+        .ok_or("Cannot create scroll fixture")?;
+        long.scroll.setFrameSize(NSSize::new(240., 120.));
+        long.text.setFrameSize(NSSize::new(240., 4000.));
+        long.scroll
+            .contentView()
+            .scrollToPoint(NSPoint::new(0., 200.));
+        let before = long.scroll.contentView().bounds().origin.y;
+        let ordinary = wheel(false, -3)?;
+        long.scroll.scrollWheel(&ordinary);
+        if long.text.font().unwrap().pointSize() != UI_FONT_SIZE as f64 {
+            return Err("Ordinary wheel changed text size".into());
+        }
+        if long.scroll.contentView().bounds().origin.y == before {
+            return Err(format!("Ordinary wheel failed to scroll native text: delta {}, scrolling delta {}, doc {:?}, clip {:?}",ordinary.deltaY(),ordinary.scrollingDeltaY(),long.text.frame(),long.scroll.contentView().bounds()));
+        }
+        long.scroll.scrollWheel(&*wheel(true, 1)?);
+        if long.text.font().unwrap().pointSize() <= UI_FONT_SIZE as f64 {
+            return Err("Shift-wheel failed to zoom native text".into());
+        }
+        Ok("Native text preview: read-only, file-name font size, Unicode selection, Copy All, Shift-wheel zoom and resize passed".into())
     })();
     unsafe {
         let _: () = msg_send![&*board, releaseGlobally];

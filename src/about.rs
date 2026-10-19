@@ -20,7 +20,7 @@ fn resource(name: &str, fallback: &str) {
 }
 
 impl Render for About {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme();
         static LOGO: OnceLock<Option<Arc<RenderImage>>> = OnceLock::new();
         let logo = LOGO
@@ -42,6 +42,7 @@ impl Render for About {
                 .child(div().flex().flex_col().gap_1()
                     .child(div().text_size(px(28.)).font_weight(FontWeight::BOLD).child("Schnauz"))
                     .child(div().text_color(rgb(t.text_muted)).text_size(px(11.)).child(format!("Version {} · Made for Mac", env!("CARGO_PKG_VERSION"))))))
+            .child(updates::controls(f32::from(window.viewport_size().width)-40.,cx))
             .child(div().flex_none().flex().flex_col().gap_1()
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("Developed by Oliver Weber"))
                 .child(div().text_size(px(11.)).text_color(rgb(t.text_muted)).child("Design & product direction · Oliver Weber"))
@@ -103,6 +104,8 @@ pub(super) fn open_about(cx: &mut App) {
             let view = cx.new(|cx| {
                 cx.observe_global::<ThemeGlobal>(|_, cx| cx.notify())
                     .detach();
+                cx.observe_global::<PrefsGlobal>(|_,cx|cx.notify()).detach();
+                cx.observe_global::<updates::State>(|_,cx|cx.notify()).detach();
                 About {
                     focus: cx.focus_handle(),
                     copied: false,
@@ -113,4 +116,26 @@ pub(super) fn open_about(cx: &mut App) {
         },
     );
     cx.activate(true);
+}
+
+#[cfg(feature = "ui-checks")]
+pub(super) fn check_updates(cx: &mut App) {
+    let window=cx.open_window(WindowOptions {
+        show:false,focus:false,
+        window_bounds:Some(WindowBounds::Windowed(Bounds::new(point(px(-4000.),px(-4000.)),size(px(520.),px(600.))))),
+        ..Default::default()
+    },|_,cx|cx.new(|cx|About {focus:cx.focus_handle(),copied:false})).unwrap();
+    for _ in 0..3 {cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap();}
+    let source=ui_checks::recorded_text("update-source");
+    assert_eq!(source.text(),"Updates are checked via GitHub.");
+    assert!(f32::from(source.bounds().size.width)>100.);
+    assert!(f32::from(ui_checks::recorded_bounds("update-controls").size.width)>400.);
+    if cx.global::<updates::State>().ahead_of.is_some() {
+        assert!(ui_checks::recorded_text("update-status").text().contains("newer than the latest GitHub release"));
+    }
+    let original=prefs();assert!(!original.check_updates_at_startup);
+    let mut p=original;p.check_updates_at_startup=true;apply_prefs(p,cx);
+    assert!(load_prefs().check_updates_at_startup);
+    apply_prefs(original,cx);assert!(!load_prefs().check_updates_at_startup);
+    cx.update_window(*window,|_,w,_|w.remove_window()).unwrap();
 }

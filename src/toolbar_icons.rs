@@ -30,6 +30,7 @@ pub(super) enum Icon {
     Cloud,
     Home,
     Calendar,
+    Check,
 }
 
 thread_local! { static APPLE_SHARE: RefCell<HashMap<[u32; 4], Arc<RenderImage>>> = RefCell::new(HashMap::new()); }
@@ -130,6 +131,7 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
                 }};
             }
             match icon {
+                Icon::Check => { line!(4,10;8,14;16,5); }
                 Icon::Calendar => {
                     rect!(3, 4, 14, 13);
                     line!(3,8;17,8);

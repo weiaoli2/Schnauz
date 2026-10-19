@@ -43,7 +43,7 @@ const UI_SMALL_FONT_SIZE: f32 = 11.0;
 
 // Menu-bar actions. OpenSettings/Quit are app-level; the rest are dispatched to
 // the focused explorer window and handled in `Schnauz::render`'s root.
-actions!(schnauz, [OpenAbout, OpenSettings, Quit]);
+actions!(schnauz, [OpenAbout, OpenSettings, CheckForUpdates, Quit]);
 actions!(
     schnauz,
     [
@@ -104,6 +104,8 @@ mod folder_views;
 mod list_ui;
 mod native_menus;
 mod file_apps;
+mod updates;
+mod tab_projects;
 mod toolbar_icons;
 use folder_views::{Column, ListLayout, ViewMode};
 use toolbar_icons::{ui_icon, Icon};
@@ -137,6 +139,8 @@ use cache::Cache;
 /// User-toggleable features.
 #[derive(Clone, Copy)]
 struct Prefs {
+    /// Explicit opt-in: public GitHub release check, once at app startup.
+    check_updates_at_startup: bool,
     /// Show a file preview in the inspector when a file is selected.
     preview: bool,
     /// Show ‹ › page arrows on multi-page PDF previews in the inspector.
@@ -185,6 +189,7 @@ struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         Prefs {
+            check_updates_at_startup: false,
             preview: true,
             preview_pages: true,
             preview_width: 420,
@@ -215,6 +220,7 @@ impl gpui::Global for PrefsGlobal {}
 
 thread_local! {
     static ACTIVE_PREFS: RefCell<Prefs> = const { RefCell::new(Prefs {
+        check_updates_at_startup: false,
         preview: true,
         preview_pages: true,
         preview_width: 420,
@@ -1439,6 +1445,7 @@ struct Schnauz {
     project_load_error: Option<String>,
     file_access_intro: Option<file_access::Intro>,
     file_app_choice: Option<file_apps::Choice>,
+    tab_project_move: Option<tab_projects::Dialog>,
     project_sessions: HashMap<Option<u64>, schnauz::ProjectSession>,
     project_dialog: Option<String>,
     project_dialog_error: Option<String>,
@@ -1483,6 +1490,7 @@ impl Schnauz {
             cx.notify();
         })
         .detach();
+        cx.observe_global::<updates::State>(|_, cx| cx.notify()).detach();
         cx.observe_global::<nextcloud::State>(|this, cx| {
             if let Some(notice) = cx.global::<nextcloud::State>().notice.clone() {
                 this.set_notice(notice, cx);
@@ -1708,6 +1716,7 @@ impl Schnauz {
             saved_session: String::new(),
             file_access_intro: None,
             file_app_choice: None,
+            tab_project_move: None,
             projects, project_load_error, project_sessions: HashMap::new(),
             project_dialog: None, project_dialog_error: None, new_text_file: None,
             info_panel: None,
@@ -4928,7 +4937,7 @@ impl Schnauz {
             }
         }
         if let Some(folder) = folder.filter(|p|p.is_dir()) {
-            if !matches!(target, SidebarTarget::Favourite(_) | SidebarTarget::Common(_)) && folder != home_dir() { items.push(self.project_visibility_menu(projects::Shortcut::local(folder.clone(), projects::Section::Folders))); }
+            if !matches!(target, SidebarTarget::Favourite(_) | SidebarTarget::Common(_) | SidebarTarget::Tab(_, _)) && folder != home_dir() { items.push(self.project_visibility_menu(projects::Shortcut::local(folder.clone(), projects::Section::Folders))); }
             items.push(MenuNode::Sep);
             let view_folder = folder.clone();
             let view_pane = match &target { SidebarTarget::NavBar(p) | SidebarTarget::Tab(p, _) => *p, _ => self.active_pane };
@@ -4992,6 +5001,13 @@ impl Schnauz {
                 );
             }
             SidebarTarget::Tab(pane, tab) => {
+                let tab_id=self.panes[pane].tabs[tab].id;
+                items.push(mi("Move to Project…",move|this,window,cx|this.open_tab_project_move(tab_id,window,cx)));
+                let shortcut=projects::Shortcut {path:self.panes[pane].tabs[tab].current_dir.clone(),kind:projects::Section::Folders,server:self.panes[pane].tabs[tab].remote.clone()};
+                let mut favourites=self.project_visibility_menu(shortcut);
+                if let MenuNode::Sub {label,..}=&mut favourites { *label="Add to Favourites…".into(); }
+                items.push(favourites);
+                items.push(MenuNode::Sep);
                 items.push(
                     mi("New Tab", move |this, _, cx| {
                         this.close_sidebar_menu(cx);
@@ -5384,6 +5400,11 @@ impl Schnauz {
         let ks = &ev.keystroke;
         let cmd = ks.modifiers.platform;
         let key = ks.key.as_str();
+        if self.tab_project_move.is_some() {
+            self.handle_tab_project_key(ev, window, cx);
+            cx.stop_propagation();
+            return;
+        }
         if self.file_app_choice.is_some() {
             if key == "escape" { self.file_app_choice = None; cx.notify(); }
             else if key == "enter" { self.finish_file_app_choice(true, cx); }
@@ -5485,6 +5506,24 @@ impl Schnauz {
         // flyouts, Enter invokes, Esc closes — and every other key is swallowed
         // so keybindings can't fire underneath it.
         if self.native_menu_pending { return; }
+
+        // Text editing owns the clipboard while the search field has focus,
+        // independent of file-operation shortcuts and installed Quick Actions.
+        if self.palette_open && (!self.file_search.inline || self.file_search.editing) && cmd {
+            match key {
+                "c" | "x" => {
+                    self.copy_query_selection(key == "x", cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "v" => {
+                    self.paste_query(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                _ => {}
+            }
+        }
 
         if (!self.palette_open || (self.search_in_pane(self.active_pane) && !self.file_search.editing))
             && self.run_quick_action_key(&canon_keystroke(ks), window, cx) {
@@ -5670,12 +5709,6 @@ impl Schnauz {
             "backspace" => {
                 self.palette_backspace();
                 self.refresh_palette(cx);
-            }
-            "v" if cmd => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    self.palette_insert(text.trim());
-                    self.refresh_palette(cx);
-                }
             }
             _ => {
                 if cmd {
@@ -9550,6 +9583,7 @@ impl Render for Schnauz {
             root = root.child(self.render_project_dialog(cx));
         }
         if self.file_app_choice.is_some() { root = root.child(self.render_file_app_choice(cx)); }
+        if self.tab_project_move.is_some() { root = root.child(self.render_tab_project_move(cx)); }
         if self.file_access_intro.is_some() {
             root = root.child(self.render_file_access_intro(cx));
         }
@@ -12754,6 +12788,7 @@ fn save_prefs(p: &Prefs) {
         body.push_str(&format!("preview_width={}\ntools_width={}\n",p.preview_width,p.tools_width));
         body.push_str(&format!("drive_warning={}\ndrive_critical={}\ndrive_free_percent={}\n", p.drive_warning, p.drive_critical, p.drive_free_percent));
         body.push_str(&format!("file_access_intro_seen={}\n", p.file_access_intro_seen));
+        body.push_str(&format!("check_updates_at_startup={}\n",p.check_updates_at_startup));
         let _ = fs::write(&file, body);
     }
 }
@@ -12810,6 +12845,7 @@ fn load_prefs() -> Prefs {
                     continue;
                 };
                 let on = v.trim() == "true";
+                if k.trim()=="check_updates_at_startup" {p.check_updates_at_startup=on;continue;}
                 match k.trim() {
                     "preview" => p.preview = on,
                     "preview_pages" => p.preview_pages = on,
@@ -13170,6 +13206,7 @@ fn main() {
         cloud_locations::initialize(&home_dir());
         cx.set_global(nextcloud::State::load());
         cx.set_global(todoist::Global::load());
+        cx.set_global(updates::State::default());
 
         // Load key bindings.
         let saved_keymap = load_keymap();
@@ -13205,6 +13242,7 @@ fn main() {
                 name: "Schnauz".into(),
                 items: vec![
                     MenuItem::action("About Schnauz", OpenAbout),
+                    MenuItem::action("Check for Updates…", CheckForUpdates),
                     MenuItem::separator(),
                     MenuItem::action("Settings…", OpenSettings),
                     MenuItem::separator(),
@@ -13251,8 +13289,10 @@ fn main() {
         cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
         cx.on_action(|_: &OpenSettings, cx: &mut App| open_settings_window(cx));
         cx.on_action(|_: &OpenAbout, cx: &mut App| about::open_about(cx));
+        cx.on_action(|_: &CheckForUpdates, cx: &mut App| {updates::check(cx);about::open_about(cx);});
 
         open_main_window(cx);
+        if saved_prefs.check_updates_at_startup { updates::check(cx); }
         cx.activate(true);
     });
 }

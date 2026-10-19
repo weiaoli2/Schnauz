@@ -130,7 +130,13 @@ impl Schnauz {
         }
         if let Err(error) = self.persist_library(candidate, cx) {
             self.set_notice(error, cx);
+            return;
         }
+        let destination = if targets.len() > 1 { "all projects".into() }
+            else if let Some(Some(id)) = targets.first() {
+                self.projects.items.iter().find(|p|p.id==*id).map(|p|p.name.clone()).unwrap_or_default()
+            } else { "Personal".into() };
+        self.set_notice(format!("{} project Favourites · {destination}",if add {"Added to"} else {"Removed from"}),cx);
         cx.notify();
     }
 

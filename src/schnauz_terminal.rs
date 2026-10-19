@@ -233,6 +233,8 @@ pub(super) struct Session {
     pub ssh: Option<crate::ssh_sync::Link>,
 }
 impl Session {
+    #[cfg(feature = "ui-checks")]
+    pub(super) fn fixture_pid(&self) -> u32 { self.process.shell_pid.unwrap() }
     pub(super) fn ssh_record(&self) -> &Path {
         &self.process.ssh_request
     }
@@ -366,6 +368,7 @@ impl Schnauz {
             scrollback: 10000,
             line_height_multiplier: 1.15,
             padding: Edges::all(px(8.0)),
+            copy_on_select: true,
             colors: ColorPalette::builder()
                 .background(0x15, 0x18, 0x22)
                 .foreground(0xdc, 0xe1, 0xec)
