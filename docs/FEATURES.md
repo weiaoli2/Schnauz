@@ -499,3 +499,16 @@ A locally newer developer build shows an amber info badge instead, with an About
 warning naming the installed and latest published versions. No downgrade is offered.
 Checks do not install updates or restart the app or terminals. The same manual
 check is available in the Schnauz app menu and Settings → General → Version.
+
+### Floating Todoist window (local test stand)
+
+Use the small pin in the task pane's upper-right corner to detach it. There is
+one shared floating window across all Schnauz browser windows, following the
+active project. It stays above normal windows and follows you across Spaces.
+Compact shows the first open task; Expand restores the full task list and size.
+Use its pin to dock it again, or choose Dock Here in another browser window.
+Show Floating Tasks brings the existing window forward. Tasks keep working when
+the original browser closes, without retaining that browser's terminals.
+
+The task pane uses a neutral outline pin while docked and a crossed pin while
+floating. Hovering identifies the current state and the Detach/Dock action.

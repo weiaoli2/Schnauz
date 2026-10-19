@@ -25,9 +25,9 @@ you need close at hand and expensive work started only when you ask for it.
 | What you need | What Schnauz brings |
 | --- | --- |
 | **Your project workspace** | Each project remembers its own favourites, pinned files, tabs and layout. Common stays available across projects, and all windows share the active project. |
-| **A seamless real terminal** | A persistent interactive PTY alongside your files. Local folders sync at an idle prompt; running CLI tools keep control. Folder navigation retains your terminal and its work. |
+| **A seamless real terminal** | Each tab owns a persistent interactive PTY. Move tabs between projects without restarting their terminals. Select text to copy it automatically, with visible scrollback navigation. |
 | **Paste a path and get there** | Paste a folder path into the file browser to open it. Paste a file path to open its folder and select the file. Text inputs and the terminal keep ordinary paste. |
-| **Todoist in context** | See, add and complete tasks for the matching project. Reuse or create a same-named Todoist project; background updates keep browsing free. |
+| **Todoist in context** | See, add and complete tasks for the matching project. Detach one floating task window, keep just the first task visible, or dock it in another browser window. |
 | **SSH in the current folder** | Start an interactive terminal directly in an SSH folder, or follow directories from `ssh host`. Existing authenticated transports can be reused without replacing their running sessions. |
 | **Visible copy progress** | A compact footer bar shows local and SSH copy progress, the current file and cancellation, without covering your files. |
 | **Smooth file dragging** | Hover a tab or folder to open it during a drag. Move normally, or hold Command to copy with a green + and a clear item count. |
@@ -48,23 +48,23 @@ Folder preferences live in central settings, rather than scattering configuratio
 files through your projects. Todoist and Nextcloud are optional; their credentials
 stay in macOS Keychain.
 
-## Download for Mac — 0.5.5 preview
+## Download for Mac — 0.5.9 preview
 
 **macOS 14 Sonoma or later.** Choose the build for your Mac:
 
 | Mac | Download |
 | --- | --- |
-| Apple Silicon — M1 and newer | [Apple Silicon DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.5.5/Schnauz-0.5.5-macos-arm64.dmg) |
-| Intel | [Intel DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.5.5/Schnauz-0.5.5-macos-x86_64.dmg) |
+| Apple Silicon — M1 and newer | [Apple Silicon DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.5.9/Schnauz-0.5.9-macos-arm64.dmg) |
+| Intel | [Intel DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.5.9/Schnauz-0.5.9-macos-x86_64.dmg) |
 
 Open the disk image and drag **Schnauz.app** to **Applications**. Checksums and
-release notes accompany the [release](https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.5).
+release notes accompany the [release](https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.9).
 Explore the app on [TechGuyZone](https://techguyzone.com/apps/).
 
 This is an **early preview**, signed with an Apple Development certificate and
 **not Apple-notarized**. See [security and verification](SECURITY.md) for signature,
 checksum and first-launch information. The app explains macOS file-access
-permissions; macOS and you control any grants. There is no automatic updater.
+permissions; macOS and you control any grants. Optional startup update checks are off by default. Enable them in About Schnauz; checks use GitHub and offer the download for your installed architecture. Installation stays manual.
 
 ## Build it yourself
 

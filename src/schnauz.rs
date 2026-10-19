@@ -496,7 +496,6 @@ impl Schnauz {
             self.sync_terminal_directory(pane);
         }
         self.saved_session = self.session_string();
-        self.todoist.scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.ensure_todoist(false, cx);
         cx.notify();
     }
@@ -689,12 +688,20 @@ impl Schnauz {
                     .tooltip(tip("Show or hide the preview panel · ⌘⇧I"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.show_file_preview(cx))),
             )
-            .when(cx.global::<todoist::Global>().account.is_some(), |d| d.child(schnauz_button("schnauz-todoist", "Todoist", self.todoist.open)
+            .when(cx.global::<todoist::Global>().account.is_some(), |d| d.child(schnauz_button("schnauz-todoist", if todoist_window::is_floating(cx) {"Show Floating Tasks"} else {"Todoist"}, self.todoist.open)
                 .tooltip(tip("Todoist tasks for the current project"))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    if this.todoist.open { this.todoist.open = false; cx.notify(); }
+                    if this.todoist.open { this.todoist.open = false; todoist_window::visibility_changed(cx); cx.notify(); }
                     else { this.open_todoist(cx); }
                 }))))
+            .when(todoist_window::is_floating(cx),|d|d.child(
+                schnauz_button("todoist-dock-here","Dock Here",false)
+                    .tooltip(tip("Dock Todoist in this browser window"))
+                    .on_click(cx.listener(|_,_:&ClickEvent,_,cx|{
+                        let browser=cx.weak_entity();
+                        cx.defer(move |cx|todoist_window::dock_here(browser,cx));
+                    }))
+            ))
             .into_any_element()
     }
 

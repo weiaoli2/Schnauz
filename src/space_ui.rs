@@ -47,6 +47,7 @@ impl Schnauz {
         }
         self.dismiss_space_map = false;
         self.todoist.open = false;
+        todoist_window::visibility_changed(cx);
         let id = NEXT_INSPECTION.fetch_add(1, Ordering::Relaxed);
         let cancel = Arc::new(AtomicBool::new(false));
         self.space_map = Some(State {

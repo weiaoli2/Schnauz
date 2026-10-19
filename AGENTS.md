@@ -13,6 +13,10 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - Retain the original MIT LICENSE and attribution.
 - Schnauz credits: developer, design and product direction Oliver Weber;
   implementation assistance Codex; original Shuffle code Jaime Guzman.
+  Include `Co-authored-by: Codex <codex@openai.com>` in future commit messages,
+  as requested by Oliver. The local `.git/hooks/commit-msg` hook adds it
+  automatically without duplicating the trailer. Preserve published history
+  and release tags; do not commit or publish until Oliver requests it.
   Keep `CREDITS.txt`, the source header and README consistent, and ship the
   credits alongside the unchanged upstream and third-party license notices.
 - About Schnauz (app menu and idle mascot click) credits Oliver and offers optional “Coffee for Cookie”
@@ -415,7 +419,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The current local version is 0.5.11; the published version is 0.5.9.
+  no per-build app copies or releases. The current local version is 0.5.14; the published version is 0.5.9.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -606,3 +610,24 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   browser windows must show/reuse the same floater rather than detach duplicates.
   Preserve the checkpoint for rollback. Publish a later release only after the
   new integration has passed testing, including Oliver's live workflow review.
+
+- Todoist uses one shared controller independent of browsers, with weak browser
+  references only. A small upper-right pin detaches a singleton floating window;
+  all browser panes close. Show Floating Tasks reuses it, Dock Here targets that
+  browser, and the floater pin returns to its origin or another surviving browser.
+  Follow the shared active project without changing browser/terminal ownership.
+  Compact shows the first open task; Expand restores the previous full size.
+  Native floating level, no hide-on-deactivate, all Spaces and eligible other-app
+  full-screen/Stage Manager participation are explicit AppKit configuration.
+  Refresh while the floater is open even if another app is active. Account
+  disconnect closes it; writes retain their captured account/project guards.
+  Keep per-window scroll handles and show errors without hiding the compact task.
+  Native pin/collapse/close QA uses hidden, disposable windows and synthetic tasks.
+- The per-window native file-drop subclass restores its original GPUI class before
+  deallocation. AppKit's existing KVO forwarding otherwise throws an unregistered
+  _windowLayerContext observer exception when a browser is destroyed. Exercise
+  actual browser destruction between event-loop turns, not merely hide/remove.
+
+- Todoist pin controls use two neutral outline macOS symbols: pin while docked,
+  pin.slash while floating. Keep normal text/secondary colour, never accent blue;
+  hover tooltips name the current state and the Detach/Dock Todoist action.

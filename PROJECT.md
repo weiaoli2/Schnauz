@@ -642,3 +642,81 @@ with the existing Apple Development certificate; packaged version and deep/stric
 signature checks pass. No live windows, terminals or SSH sessions were restarted.
 The pre-Todoist checkpoint is an annotated v0.5.11 source tag, not a GitHub Release.
 The next Todoist change uses a small pin at the panel's upper-right to detach it.
+
+## Local 0.5.12 — detachable Todoist test stand
+
+The pre-change source is committed as 93e1c7d and tagged v0.5.11 on GitHub main;
+no GitHub Release or DMGs were published. Keep that checkpoint for rollback.
+
+Todoist's task cache, helper requests and linking now live in one shared controller
+which owns no browser or terminal. The upper-right pin detaches a single floating
+window. All browser task panes close; Show Floating Tasks reuses that same window,
+and Dock Here returns it to the chosen browser. Its own pin returns to the origin
+or another surviving browser. Closing a browser does not retain its PTYs and does
+not close the detached tasks. Closing the floater leaves tasks closed. Account
+disconnect closes it too. The window follows the global active project and keeps
+Add/complete operations bound to their captured account/project, including after
+project switches. Existing pagination, backoff and stale-read guards remain.
+
+Compact shows the first open task; Expand restores the previous full size. Normal
+full mode keeps sections, subtasks, Add task, Refresh, Relink and Open in Todoist.
+Short transient results and cached-data errors also appear in the detached pane;
+compact messages stay one line with a tooltip. Each window has its own scroll
+handle. AppKit floating level/all Spaces/no hide on deactivation and macOS 13+
+CanJoinAllApplications keep it over eligible other applications/full-screen spaces.
+
+Native window destruction during QA exposed an existing browser drop subclass
+bug: AppKit's _windowLayerContext KVO forwarding threw an unregistered-observer
+exception in NSWindow dealloc. LLDB on the disposable test process identified it.
+Restore the original GPUI window class before deallocation; no exception masking
+or global GPUI-class changes. Existing drag-copy/move/hover tests still pass.
+
+Final validation passed: 93 Rust tests, offline Nextcloud/Todoist/composer tests,
+and the entire hidden real-GPUI suite, including a real native pin click, actual
+AppKit floating level/all-Spaces flags, compact first/next task and actual detail
+text bounds with an error, global project switches, singleton behavior across two
+browsers, Dock Here, and destroying the originating browser without retaining it.
+Existing terminal identity/tab-move/drag-copy/move/hover and text/video preview
+checks remain green. Dependency notices verified for 497 dependencies (361 texts).
+The optimized Schnauz.app 0.5.12 is built and signed with the existing Apple
+Development certificate; packaged --version and deep/strict signature verification
+pass. No live app/window, terminal or SSH session was restarted; no live account
+or Keychain credentials were used for QA. Real account workflow, Spaces/full-screen
+behavior and subjective UI feel remain Oliver's manual test.
+A public release stays deferred until Oliver tests this behavior in his workflow.
+
+## Local 0.5.13 — distinct Todoist pin states
+
+Oliver confirmed the detached window works and requested clearer, quieter pins.
+Use native macOS pin.fill for the docked pane and pin.slash for the floating
+window, in the theme's neutral secondary colour with matching subtle hover
+backgrounds. Tooltips identify Docked/Detach Todoist and Floating/Dock Todoist.
+No change to window/terminal/project ownership or the shared singleton behavior.
+
+0.5.13 validation passed: five Todoist cache/routing tests and the complete
+isolated native/UI suite, including the actual pin click, detach/dock, compact
+view, project switching, browser destruction and unchanged drag/terminal flows.
+The optimized Schnauz.app 0.5.13 is built with the stable Apple Development
+signer. Packaged version and deep/strict signature checks pass. No live app,
+terminal or SSH session was restarted; no new GitHub Release was published.
+
+## Local 0.5.14 — lighter docked pin
+
+Oliver requested an outline instead of the heavy filled docked pin. Use macOS
+pin rather than pin.fill, keeping the neutral colour, size, tooltip and existing
+pin.slash floating state. No behavior changes.
+
+Optimized 0.5.14 build and stable Apple Development signing passed. Packaged
+--version and deep/strict signature verification passed. Live windows and
+terminal/SSH sessions were not restarted.
+
+## 0.5.14 publication requested — 2026-10-19
+
+Oliver approved the working Todoist window and outline pin, then requested a
+commit and release. This supersedes the temporary post-checkpoint release hold.
+Prepare both signed architecture-specific DMGs via release.sh and publish an
+early GitHub prerelease after verification. English release notes include all
+changes since public 0.5.9: clipboard/terminal scrolling, project-tab moves with
+PTY continuity, text/video preview fixes, opt-in GitHub updates and floating
+Todoist. Keep v0.5.11 and all existing public releases unchanged. Website and
+video production are unrelated working files and are excluded from publication.

@@ -72,6 +72,8 @@ impl Schnauz {
         schnauz::toggle_inspector(cx);
         cx.notify();
     }
+}
+impl crate::todoist_window::Tasks {
     pub(super) fn render_todoist(&self, width: f32, cx: &Context<Self>) -> AnyElement {
         let t = theme();
         let link = self.todoist_link(cx);
@@ -109,7 +111,7 @@ impl Schnauz {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Todoist"),
             );
-        if link.is_some() {
+        if link.is_some() && !self.compact {
             header = header
                 .child(
                     button("todoist-relink", "Relink…")
@@ -132,12 +134,40 @@ impl Schnauz {
                     ),
                 );
         }
+        let detach_host = self.host.clone();
+        let close_host = self.host.clone();
+        if !self.floating {
+            header = header.child(
+                div()
+                    .id("todoist-detach")
+                    .relative()
+                    .size(px(24.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .rounded_md()
+                    .hover(|d| d.bg(rgb(t.hover)))
+                    .children(ui_checks::probe("todoist-pin"))
+                    .child(ui_icon(Icon::PinDocked, 16., rgb(t.text_muted)))
+                    .tooltip(tip("Docked · Detach Todoist"))
+                    .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
+                        let handle = window.window_handle();
+                        let host = detach_host.clone();
+                        cx.defer(move |cx| {
+                            let _ = cx.update_window(handle, |_, window, cx| {
+                                crate::todoist_window::detach(host, window, cx)
+                            });
+                        });
+                    })),
+            );
+        }
         header = header.child(
             button("todoist-close", "×")
                 .tooltip(tip("Close Todoist tasks"))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.todoist.open = false;
-                    cx.notify();
+                .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
+                    crate::todoist_window::close_panel(close_host.clone(), window, cx);
                 })),
         );
         let mut panel = div()
@@ -153,7 +183,7 @@ impl Schnauz {
             .bg(rgb(t.bg))
             .text_color(rgb(t.text))
             .children(ui_checks::probe("todoist-pane"))
-            .child(header);
+            .when(!self.floating, |panel| panel.child(header));
         if cx.global::<Global>().account.is_none() {
             return panel
                 .child(status(
@@ -178,6 +208,11 @@ impl Schnauz {
                 self.todoist.link_errors.get(&self.projects.active).cloned()
                     .unwrap_or_else(|| format!("No linked Todoist project yet. Schnauz uses the same project name: {local_name}."))
             };
+            if self.compact {
+                return panel
+                    .child(compact_status(width, message))
+                    .into_any_element();
+            }
             return panel
                 .child(status(width, message))
                 .child(
@@ -202,8 +237,8 @@ impl Schnauz {
                 .flex_none()
                 .min_w_0()
                 .px_4()
-                .pt_3()
-                .pb_2()
+                .pt(px(if self.compact { 4. } else { 12. }))
+                .pb(px(if self.compact { 4. } else { 8. }))
                 .flex()
                 .items_center()
                 .gap_2()
@@ -212,53 +247,82 @@ impl Schnauz {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(px(18.))
+                        .text_size(px(if self.compact { 12. } else { 18. }))
                         .font_weight(FontWeight::BOLD)
                         .child(name.to_string()),
                 )
-                .child(
-                    button("todoist-project-web", "Open in Todoist").on_click(cx.listener(
-                        move |this, _: &ClickEvent, _, cx| {
+                .when(!self.compact, |heading| {
+                    heading.child(button("todoist-project-web", "Open in Todoist").on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| {
                             if let Err(error) = open_target("project", &project_id) {
                                 this.set_notice(error, cx);
                             }
-                        },
-                    )),
-                ),
+                        }),
+                    ))
+                }),
         );
         let key = (link.account_id.clone(), link.project_id.clone());
         let Some(cache) = self.todoist.caches.get(&key) else {
+            if self.compact {
+                return panel
+                    .child(compact_status(width, "Loading tasks…"))
+                    .into_any_element();
+            }
             return panel
                 .child(status(width, "Loading tasks…"))
                 .child(self.todoist_add_row(width, cx))
                 .into_any_element();
         };
-        if let Some(error) = &cache.error {
-            panel = panel.child(status(
-                width,
-                format!(
-                    "{error}{}",
-                    if cache.data.is_some() {
-                        " Showing cached tasks."
-                    } else {
-                        ""
-                    }
-                ),
-            ));
+        if let Some(error) = self.notice.as_ref().or(cache.error.as_ref()) {
+            let message = format!(
+                "{error}{}",
+                if cache.error.is_some() && self.notice.is_none() && cache.data.is_some() {
+                    " Showing cached tasks."
+                } else {
+                    ""
+                }
+            );
+            panel = panel.child(if self.compact {
+                compact_status(width, message)
+            } else {
+                status(width, message)
+            });
         } else if cache.busy {
             panel = panel.child(
                 div()
                     .w(px(width))
                     .flex_none()
                     .px_4()
-                    .py_1()
                     .text_size(px(UI_SMALL_FONT_SIZE))
+                    .h(px(18.))
                     .child("Refreshing…"),
             );
         }
         if cache.data.is_none() {
+            if self.compact {
+                return panel
+                    .child(compact_status(
+                        width,
+                        "No tasks loaded yet. Expand to retry.",
+                    ))
+                    .into_any_element();
+            }
             return panel
                 .child(self.todoist_add_row(width, cx))
+                .into_any_element();
+        }
+        if self.compact {
+            if let Some(row) = cache
+                .rows
+                .iter()
+                .position(|row| matches!(row, Row::Task(_, _)))
+            {
+                return panel
+                    .children(self.todoist_rows(&key, row..row + 1, width, cx))
+                    .into_any_element();
+            }
+            return panel
+                .child(status(width, "No open tasks."))
                 .into_any_element();
         }
         // The add row is part of the list: directly below tasks, also when empty.
@@ -433,7 +497,10 @@ impl Schnauz {
                                             .w(px(text_width))
                                             .truncate()
                                             .children(ui_checks::probe("todoist-task-title"))
-                                            .child(task.content.clone()),
+                                            .child(ui_checks::text(
+                                                "todoist-task-content",
+                                                task.content.clone().into(),
+                                            )),
                                     )
                                     .children(secondary.map(|label| {
                                         div()
@@ -451,7 +518,7 @@ impl Schnauz {
                                                     rgb(date_color),
                                                 ))
                                             })
-                                            .child(div().flex_1().min_w_0().truncate().child(label))
+                                            .child(div().flex_1().min_w_0().truncate().child(ui_checks::text("todoist-task-secondary",label)))
                                     }))
                                     .tooltip(tip(task
                                         .description
@@ -471,6 +538,21 @@ impl Schnauz {
             })
             .collect()
     }
+}
+fn compact_status(width: f32, message: impl Into<SharedString>) -> AnyElement {
+    let message: SharedString = message.into();
+    div()
+        .id("todoist-compact-status")
+        .w(px(width))
+        .h(px(18.))
+        .flex_none()
+        .px_4()
+        .text_size(px(UI_SMALL_FONT_SIZE))
+        .text_color(rgb(theme().text_muted))
+        .truncate()
+        .tooltip(tip(message.clone()))
+        .child(message)
+        .into_any_element()
 }
 fn status(width: f32, message: impl Into<SharedString>) -> AnyElement {
     div()

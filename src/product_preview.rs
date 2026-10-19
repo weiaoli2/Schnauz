@@ -116,7 +116,10 @@ pub(super) fn run() {
                     let mut cache=todoist::Cache::default();
                     let mut response=todoist::Response::default();response.success=true;response.snapshot=Some(data);
                     cache.finish_read(response,&format!("preview-{id}"));
-                    b.todoist.caches.insert(("preview-account".into(),format!("preview-{id}")),cache);
+                    todoist_window::shared(cx).update(cx,|tasks,cx| {
+                        tasks.todoist.caches.insert(("preview-account".into(),format!("preview-{id}")),cache);
+                        cx.notify();
+                    });
                 }
                 if initial_scene == 0 || initial_scene == 3 {
                     b.start_fixture_terminal(0,cx);

@@ -400,6 +400,24 @@ impl Cache {
     }
 }
 #[derive(Default)]
+pub(super) struct PaneState {
+    pub open: bool,
+    revision: u64,
+    tasks_request: u64,
+}
+impl PaneState {
+    pub(super) fn observe_account(&mut self, global: &Global) -> (bool, bool) {
+        let changed = self.revision != global.revision;
+        let requested = self.tasks_request != global.tasks_request && global.account.is_some();
+        self.revision = global.revision;
+        self.tasks_request = global.tasks_request;
+        if global.account.is_none() {
+            self.open = false;
+        }
+        (changed, requested)
+    }
+}
+#[derive(Default)]
 pub(super) struct State {
     pub open: bool,
     pub caches: HashMap<Key, Cache>,
@@ -409,7 +427,6 @@ pub(super) struct State {
     pub completions: HashMap<(String, String, String), (Option<String>, String)>,
     pub revision: u64,
     pub tasks_request: u64,
-    pub ticker: bool,
     pub scroll: UniformListScrollHandle,
 }
 impl State {
@@ -454,7 +471,7 @@ impl State {
         request
     }
 }
-impl Schnauz {
+impl crate::todoist_window::Tasks {
     pub(super) fn todoist_link(&self, cx: &App) -> Option<projects::TodoistLink> {
         let link = self.projects.sidebar().todoist.as_ref()?;
         let account = cx.global::<Global>().account.as_ref()?;
@@ -472,6 +489,7 @@ impl Schnauz {
         })
     }
     pub(super) fn ensure_todoist(&mut self, force: bool, cx: &mut Context<Self>) {
+        self.projects = cx.global::<ProjectLibraryGlobal>().0.clone();
         if !self.todoist.open || cx.global::<Global>().busy {
             return;
         }
@@ -509,7 +527,7 @@ impl Schnauz {
                 } else if let Some(remote_name) =
                     cache.data.as_ref().map(|d| d.project.name.clone())
                 {
-                    let mut candidate = this.projects.clone();
+                    let mut candidate = cx.global::<ProjectLibraryGlobal>().0.clone();
                     let ids: Vec<u64> = candidate
                         .items
                         .iter()
@@ -539,6 +557,7 @@ impl Schnauz {
         .detach();
     }
     pub(super) fn link_todoist(&mut self, create: bool, cx: &mut Context<Self>) {
+        self.projects = cx.global::<ProjectLibraryGlobal>().0.clone();
         let Some(account) = cx.global::<Global>().account.as_ref().cloned() else {
             return;
         };
@@ -582,7 +601,7 @@ impl Schnauz {
                     return;
                 }
                 this.todoist.pending.remove(&busy);
-                let mut candidate = this.projects.clone();
+                let mut candidate = cx.global::<ProjectLibraryGlobal>().0.clone();
                 let current_name = origin
                     .and_then(|id| candidate.items.iter().find(|p| p.id == id))
                     .map_or_else(|| "Personal".into(), |p| p.name.clone());
@@ -633,6 +652,7 @@ impl Schnauz {
         task: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        self.projects = cx.global::<ProjectLibraryGlobal>().0.clone();
         let Some(link) = self.todoist_link(cx) else {
             return;
         };
@@ -703,41 +723,28 @@ impl Schnauz {
         })
         .detach();
     }
+}
+impl Schnauz {
+    pub(super) fn ensure_todoist(&mut self, force: bool, cx: &mut Context<Self>) {
+        if !self.todoist.open {
+            return;
+        }
+        crate::todoist_window::shared(cx).update(cx, |tasks, cx| {
+            tasks.todoist.open = true;
+            tasks.ensure_todoist(force, cx);
+        });
+    }
     pub(super) fn open_todoist(&mut self, cx: &mut Context<Self>) {
         if cx.global::<Global>().account.is_none() {
             return;
         }
+        if crate::todoist_window::is_floating(cx) {
+            crate::todoist_window::show_floating(cx);
+            return;
+        }
         self.dismiss_space_map |= self.space_map.is_some();
         self.todoist.open = true;
-        self.todoist.scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.ensure_todoist(false, cx);
-        if !self.todoist.ticker {
-            self.todoist.ticker = true;
-            cx.spawn(async move |this, cx| loop {
-                cx.background_executor()
-                    .timer(Duration::from_secs(30))
-                    .await;
-                let alive = this
-                    .update(cx, |this, cx| {
-                        if !this.todoist.open {
-                            this.todoist.ticker = false;
-                            return false;
-                        }
-                        let active = objc2::MainThreadMarker::new().is_some_and(|m| {
-                            objc2_app_kit::NSApplication::sharedApplication(m).isActive()
-                        });
-                        if active {
-                            this.ensure_todoist(false, cx);
-                        }
-                        true
-                    })
-                    .unwrap_or(false);
-                if !alive {
-                    break;
-                }
-            })
-            .detach();
-        }
         cx.notify();
     }
 }

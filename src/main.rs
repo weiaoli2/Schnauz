@@ -127,6 +127,7 @@ mod nextcloud;
 mod rename_ui;
 mod todoist;
 mod todoist_ui;
+mod todoist_window;
 #[cfg(feature = "ui-checks")]
 mod product_preview;
 mod ui_checks;
@@ -1390,7 +1391,7 @@ struct Schnauz {
     sidebar_bounds: Rc<RefCell<Option<Bounds<gpui::Pixels>>>>,
     common_bounds: Rc<RefCell<Option<Bounds<gpui::Pixels>>>>,
     common_drop_hover: bool,
-    todoist: todoist::State,
+    todoist: todoist::PaneState,
     /// Open "Sort By" dropdown: (pane, x, y) in window coords.
     sort_menu: Option<(usize, f32, f32)>,
     /// Pending "move to Trash" confirmation: (pane, paths).
@@ -1636,6 +1637,7 @@ impl Schnauz {
         if cx.try_global::<ProjectLibraryGlobal>().is_none() {
             cx.set_global(ProjectLibraryGlobal(projects.clone(), project_load_error.clone()));
         }
+        todoist_window::initialize(cx);
         Self {
             panes: vec![Pane { tabs: vec![Tab::at_location(location.path, location.server)], active: 0 }],
             volumes: Vec::new(),
@@ -1689,7 +1691,7 @@ impl Schnauz {
             sidebar_bounds: Rc::new(RefCell::new(None)),
             common_bounds: Rc::new(RefCell::new(None)),
             common_drop_hover: false,
-            todoist: todoist::State::default(),
+            todoist: todoist::PaneState::default(),
             sort_menu: None,
             confirm_delete: None,
             next_load_gen: 0,
@@ -8829,7 +8831,7 @@ impl Schnauz {
         // Preview is independent. Todoist and Disk Usage share only the tools pane.
         if pane + 1 == self.panes.len() {
             let preview = self.render_inspector(cx);
-            let tools = self.render_space_map(cx).or_else(|| self.todoist.open.then(|| self.render_todoist(preview_panel::tools_content_width(self, pane, preview.is_some()), cx)));
+            let tools = self.render_space_map(cx).or_else(|| self.todoist.open.then(|| todoist_window::panel(preview_panel::tools_content_width(self, pane, preview.is_some()),cx)));
             if let Some(panels) = self.render_side_panels(preview, tools, pane, cx) {
                 body_row = body_row.child(panels);
             }

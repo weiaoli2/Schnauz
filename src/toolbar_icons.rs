@@ -31,24 +31,30 @@ pub(super) enum Icon {
     Home,
     Calendar,
     Check,
+    PinDocked,
+    PinFloating,
 }
 
-thread_local! { static APPLE_SHARE: RefCell<HashMap<[u32; 4], Arc<RenderImage>>> = RefCell::new(HashMap::new()); }
+thread_local! { static APPLE_SYMBOLS: RefCell<HashMap<(&'static str, [u32; 4]), Arc<RenderImage>>> = RefCell::new(HashMap::new()); }
 
 pub(super) fn apple_share(color: Rgba) -> Option<Arc<RenderImage>> {
+    apple_symbol("square.and.arrow.up", color)
+}
+fn apple_symbol(name: &'static str, color: Rgba) -> Option<Arc<RenderImage>> {
     let key = [
         color.r.to_bits(),
         color.g.to_bits(),
         color.b.to_bits(),
         color.a.to_bits(),
     ];
-    APPLE_SHARE.with(|cache| {
+    let key = (name, key);
+    APPLE_SYMBOLS.with(|cache| {
         if let Some(image) = cache.borrow().get(&key) {
             return Some(image.clone());
         }
         // Keep Apple's SF Symbol silhouette, including its native proportions.
         let symbol = NSImage::imageWithSystemSymbolName_accessibilityDescription(
-            &NSString::from_str("square.and.arrow.up"),
+            &NSString::from_str(name),
             None,
         )?;
         let configuration =
@@ -75,15 +81,19 @@ pub(super) fn apple_share(color: Rgba) -> Option<Arc<RenderImage>> {
 }
 
 pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
-    if matches!(icon, Icon::Share) {
-        if let Some(image) = apple_share(color) {
+    let symbol = match icon {
+        Icon::Share => apple_share(color),
+        Icon::PinDocked => apple_symbol("pin", color),
+        Icon::PinFloating => apple_symbol("pin.slash", color),
+        _ => None,
+    };
+    if let Some(image) = symbol {
             return img(ImageSource::Render(image))
                 .w(px(size))
                 .h(px(size))
                 .object_fit(ObjectFit::Contain)
                 .flex_none()
                 .into_any_element();
-        }
     }
     gpui::canvas(
         |bounds, _, _| bounds,
@@ -131,6 +141,11 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
                 }};
             }
             match icon {
+                Icon::PinDocked | Icon::PinFloating => {
+                    line!(7,3;13,3;12,8;15,11;5,11;8,8;7,3);
+                    line!(10,11;10,17);
+                    if matches!(icon, Icon::PinFloating) { line!(3,3;17,17); }
+                },
                 Icon::Check => { line!(4,10;8,14;16,5); }
                 Icon::Calendar => {
                     rect!(3, 4, 14, 13);

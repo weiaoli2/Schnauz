@@ -35,8 +35,8 @@ mod drag_checks;
 mod clipboard_checks;
 
 #[cfg(feature = "ui-checks")]
-struct Fixture {
-    browser: gpui::Entity<Schnauz>,
+pub(super) struct Fixture {
+    pub(super) browser: gpui::Entity<Schnauz>,
 }
 #[cfg(feature = "ui-checks")]
 impl Render for Fixture {
@@ -149,7 +149,10 @@ pub(super) fn run() {
                 // Start unmeasured, exactly like a newly opened real window.
                 browser.todoist.open = true;
                 let data: todoist::Snapshot = serde_json::from_value(serde_json::json!({"project":{"id":"fixture-project","name":"Fixture"},"tasks":[],"sections":[]})).unwrap();
-                browser.todoist.caches.insert(("fixture-account".into(), "fixture-project".into()), todoist::Cache { data:Some(data), ..Default::default() });
+                todoist_window::shared(cx).update(cx,|tasks,cx| {
+                    tasks.todoist.caches.insert(("fixture-account".into(), "fixture-project".into()), todoist::Cache { data:Some(data), ..Default::default() });
+                    cx.notify();
+                });
                 browser
             });
             cx.new(|_| Fixture { browser })
@@ -173,10 +176,13 @@ pub(super) fn run() {
                         "tasks":[{"id":"one","project_id":"fixture-project","content":"Upgrade the website","due":{"date":chrono::Local::now().date_naive().to_string()}},
                                  {"id":"two","project_id":"fixture-project","content":"Review the app"}]
                     })).unwrap();
-                    let cache = browser.todoist.caches.get_mut(&("fixture-account".into(), "fixture-project".into())).unwrap();
+                    todoist_window::shared(cx).update(cx,|tasks,cx| {
+                    let cache = tasks.todoist.caches.get_mut(&("fixture-account".into(), "fixture-project".into())).unwrap();
                     // Exercise the same decoded-helper-response -> cache path as production.
                     let mut response = todoist::Response::default(); response.success = true; response.snapshot = Some(data); cache.finish_read(response, "fixture-project");
                     if phase == 1 { cache.error = Some("Cannot reach Todoist. Cached tasks may be out of date.".into()); }
+                    cx.notify();
+                    });
                     browser.notice = Some("Nothing to undo — a long status message stays on one line".into());
                     cx.notify();
                 });
@@ -225,7 +231,7 @@ pub(super) fn run() {
             check_updates(window,cx);
             check_tab_project_dialog(window,cx);
             check_video(window,cx);
-            drag_checks::run(window, cleanup, cx);
+            todoist_window::check(window,cx,move |cx|drag_checks::run(window,cleanup,cx));
         }
     });
 }

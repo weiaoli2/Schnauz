@@ -168,6 +168,16 @@ extern "C-unwind" fn submit(this: &AnyObject, _: Sel, info: &AnyObject) -> objc2
     ended();
     result
 }
+// AppKit registers internal KVO forwarding before our per-window subclass is
+// installed. Restore its original class before NSWindow tears those observers
+// down; otherwise closing a browser can throw an unregistered-observer exception.
+extern "C-unwind" fn dealloc_owned_window(this: &AnyObject, _: Sel) {
+    let parent=this.class().superclass().expect("owned drop window superclass");
+    unsafe {
+        AnyObject::set_class(this,parent);
+        let _:()=objc2::msg_send![super(this,parent),dealloc];
+    }
+}
 pub(super) fn install(window: &Window) {
     let Some(ptr) = ns_view_ptr(window) else {
         return;
@@ -202,6 +212,10 @@ pub(super) fn install(window: &Window) {
                 let mut builder =
                     ClassBuilder::new(&name, parent).expect("unique browser drop class");
                 unsafe {
+                    builder.add_method(
+                        objc2::sel!(dealloc),
+                        dealloc_owned_window as extern "C-unwind" fn(_, _),
+                    );
                     builder.add_method(
                         objc2::sel!(draggingEntered:),
                         entered as extern "C-unwind" fn(_, _, _) -> _,

@@ -3,6 +3,16 @@
 Official repository: https://github.com/weiaoli2/Schnauz (public).
 Current release: **v0.5.9**, public Apple Silicon + Intel early preview.
 
+## Authorized release preparation — 0.5.14
+
+On 2026-10-19 Oliver approved the floating Todoist window and final outline pin,
+then explicitly requested a commit and public release with the accumulated fixes.
+Publish 0.5.14 as an early prerelease with Apple Silicon and Intel DMGs, English
+notes covering every change since public 0.5.9, MPL component sources and checksums.
+Use the existing Apple Development signer and state that it is not notarized.
+Preserve previous releases/tags, the v0.5.11 checkpoint and all live sessions.
+Website/video production folders remain outside the source commit and release.
+
 ## Published release — 0.5.9
 
 Oliver explicitly requested publication of 0.5.9 with both DMGs on 2026-10-18,
