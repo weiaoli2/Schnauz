@@ -1,7 +1,25 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Current release: **v0.5.9**, public Apple Silicon + Intel early preview.
+Current release: **v0.5.14**, public Apple Silicon + Intel early preview.
+
+## Published release — 0.5.14
+
+Published on 2026-10-19 at
+https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.14 from source
+5b26dd7fcc296acd9e950a7fbadf5331f9bd31cb. Both signed DMGs, the exact MPL
+source ZIP and SHA256SUMS.txt match all four uploaded GitHub asset digests.
+The downloaded GitHub source archive matches the local source tag exactly
+(1725 files), excluding website/video work, local settings and build caches.
+Apple Silicon ran natively; Intel's native text-preview smoke test ran under
+Rosetta, not physical Intel hardware. Every helper's architecture and certificate
+signature passed, and readonly-mounted DMGs match the verified app bundles.
+93 Rust tests plus offline native and complete hidden GPUI checks passed.
+The public unauthenticated update endpoint exposes both correctly named DMGs.
+Apple Development signed, not notarized; published as an early prerelease.
+Receipts: dist/0.5.14/{LOCAL-,SOURCE-,RELEASE-}VERIFICATION.json.
+This request is complete; future versions need a new user request. Do not replace
+these artifacts or move this tag; retain the earlier v0.5.11 checkpoint too.
 
 ## Authorized release preparation — 0.5.14
 
@@ -29,7 +47,7 @@ text-preview smoke test passed under Rosetta. Verification receipt:
 dist/0.5.9/RELEASE-VERIFICATION.json. This publication request is complete; future
 versions need a new request. Never overwrite these assets or move the tag.
 
-## Current status — 0.5.5 published
+## Earlier published release — 0.5.5
 
 On 2026-10-18 Oliver resumed GitHub publication after the transfer footer and
 stable tab-drag feedback fixes. He requested a concise, attractive overview,
@@ -118,7 +136,7 @@ the Schnauz origin; the Shuffle upstream remote is read-only reference material.
    profile under /private/tmp/Schnauz-Website-Demo; never substitute it for the
    real app's profile. The web kit stays frozen unless Oliver requests changes.
 2. Review and commit the fixes locally. Confirm the intended Cargo version
-   (currently 0.5.5) in both Cargo.toml and Cargo.lock. Never reuse an old published version for changed artifacts. Do not move
+   in both Cargo.toml and Cargo.lock. Never reuse an old published version for changed artifacts. Do not move
    any existing tag or overwrite already published assets in later releases.
 3. Run ./test.sh. Reuse the existing Apple Silicon and Intel targets and caches.
    Run the existing native text-preview smoke check on both release binaries;
@@ -140,7 +158,7 @@ the Schnauz origin; the Shuffle upstream remote is read-only reference material.
    Upload all artifacts together, verify the draft and then publish it as a
    prerelease. No new repository, updater, account setup or screenshots needed.
 
-The publication commands below require a user-authorized release. 0.5.5 is
+The publication commands below require a user-authorized release. 0.5.14 is
 already published. For a newly authorized future version, run from the repository
 after committing and verifying its fixes:
 

@@ -720,3 +720,23 @@ changes since public 0.5.9: clipboard/terminal scrolling, project-tab moves with
 PTY continuity, text/video preview fixes, opt-in GitHub updates and floating
 Todoist. Keep v0.5.11 and all existing public releases unchanged. Website and
 video production are unrelated working files and are excluded from publication.
+
+## Published 0.5.14 — 2026-10-19
+
+https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.14
+
+Source commit 5b26dd7fcc296acd9e950a7fbadf5331f9bd31cb, annotated tag v0.5.14.
+Published as an early prerelease with signed Apple Silicon and Intel DMGs,
+exact MPL component sources, SHA256SUMS.txt and English notes covering changes
+since public 0.5.9. All four uploaded asset digests and sizes match local files.
+GitHub's source ZIP matches the tagged local archive exactly (1725 files).
+Every app/helper architecture and certificate signature passed, and both DMGs
+were mounted readonly and compared against the verified app bundles. ARM ran
+natively; Intel native text-preview checks passed under Rosetta, not physical
+Intel hardware. The complete 93-test Rust suite and native/GPUI fixtures passed.
+The unauthenticated update-check endpoint exposes both exact architecture DMGs.
+Apple Development signed, not notarized. Receipts in dist/0.5.14 include local,
+source and public-release verification. README now points to the public downloads.
+Website/video work, credentials and local settings were excluded. No live app,
+terminal or SSH session was restarted. Earlier releases and v0.5.11 are preserved.
+This request is complete; later releases require fresh authorization.

@@ -419,7 +419,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The current local version is 0.5.14; the published version is 0.5.9.
+  no per-build app copies or releases. The current local version is 0.5.14; the published version is 0.5.14.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -631,3 +631,12 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
 - Todoist pin controls use two neutral outline macOS symbols: pin while docked,
   pin.slash while floating. Keep normal text/secondary colour, never accent blue;
   hover tooltips name the current state and the Detach/Dock Todoist action.
+
+- Oliver requested and approved the 0.5.14 public release on 2026-10-19.
+  Published https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.14, source
+  5b26dd7. Both DMGs, MPL sources and SHA256SUMS match all GitHub digests;
+  source ZIP, helper architectures/signatures, mounted installers and native ARM /
+  Rosetta Intel text-preview checks passed. It remains Apple Development signed,
+  not notarized, and an early prerelease. Receipts live in dist/0.5.14.
+  This publication request is complete. Future releases need a new request;
+  preserve existing tags/assets, including v0.5.11, and all live sessions.
