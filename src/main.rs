@@ -1383,7 +1383,7 @@ struct Schnauz {
     browser_sizes: Rc<RefCell<[f32; 2]>>,
     video_preview: Option<Rc<video_preview::Session>>,
     text_view: Option<Rc<text_view::Session>>,
-    info_pending: RefCell<HashSet<PathBuf>>,
+    info_pending: RefCell<HashMap<PathBuf, Arc<AtomicBool>>>,
     pdf_pending: RefCell<HashSet<(PathBuf,usize)>>,
     query: String,
     /// Text-cursor position in `query`, as a char index (0..=char count).
@@ -1585,19 +1585,22 @@ impl Schnauz {
             let mut maintenance = Instant::now();
             loop {
                 cx.background_executor().timer(Duration::from_millis(250)).await;
-                let dirs = match this.update(cx, |this, _| {
-                    this.panes.iter().map(|p| {
+                let (dirs, previews) = match this.update(cx, |this, _| {
+                    let dirs = this.panes.iter().map(|p| {
                         let tab = p.active_tab();
                         if tab.remote.is_some() || (tab.network.is_some() && !tab.network_connected) { return None; }
                         Some(tab.current_dir.clone())
-                    }).collect::<Vec<_>>()
-                }) { Ok(dirs) => dirs, Err(_) => break };
-                let wanted = dirs.iter().flatten().cloned().collect();
+                    }).collect::<Vec<_>>();
+                    let previews = this.watched_preview_paths();
+                    (dirs, previews)
+                }) { Ok(paths) => paths, Err(_) => break };
+                let wanted = dirs.iter().flatten().cloned().chain(previews.iter().cloned()).collect();
                 let (returned, changed) = cx.background_spawn(async move {
                     let changed = watcher.changes(wanted); (watcher, changed)
                 }).await;
                 watcher = returned;
                 if this.update(cx, |this,cx| {
+                    this.refresh_changed_previews(&changed, cx);
                     for (pane,dir) in dirs.into_iter().enumerate() {
                         let Some(root) = dir else {continue;};
                         if pane >= this.panes.len() || this.tab(pane).current_dir != root {continue;}
@@ -1696,7 +1699,7 @@ impl Schnauz {
             browser_sizes: Rc::new(RefCell::new([0.; 2])),
             video_preview: None,
             text_view: None,
-            info_pending: RefCell::new(HashSet::new()),
+            info_pending: RefCell::new(HashMap::new()),
             pdf_pending: RefCell::new(HashSet::new()),
             query: String::new(),
             query_cursor: 0,
@@ -3677,14 +3680,7 @@ impl Schnauz {
 
     /// After an in-place edit, drop stale caches and refresh the listing.
     fn refresh_after_edit(&mut self, pane: usize, path: PathBuf, cx: &mut Context<Self>) {
-        if let Some(cancel)=self.preview_pending.borrow_mut().remove(&path) {cancel.store(true,Ordering::Release);}
-        TEXT_PREVIEW_CACHE.with(|c| { c.borrow_mut().remove(&path); });
-        PREVIEW_CACHE.with(|c| {
-            c.borrow_mut().remove(&path);
-        });
-        INFO_CACHE.with(|c| {
-            c.borrow_mut().remove(&path);
-        });
+        self.invalidate_preview(&path);
         self.refresh_pane(pane, cx);
         if self.tab(pane).anchor.as_deref() == Some(path.as_path()) {
             self.ensure_preview(path.clone(), false, cx);

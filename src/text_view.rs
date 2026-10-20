@@ -478,3 +478,74 @@ pub(super) fn smoke_test() -> Result<String, String> {
     session.deactivate();
     result
 }
+
+
+/// The real watcher -> async cache -> attached native text view path, without an editor app.
+#[cfg(feature = "ui-checks")]
+pub(super) fn check_external_edits(
+    window: gpui::WindowHandle<ui_checks::Fixture>, cx: &mut App,
+    done: impl FnOnce(&mut App) + 'static,
+) {
+    let root = config_dir().unwrap().join("external-preview-edit");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("notes.txt");
+    fs::write(&path, "old text").unwrap();
+    let (pane, old_active) = window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+        let pane = b.active_pane;
+        let old_active = b.panes[pane].active;
+        b.panes[pane].tabs.push(Tab::new(root.clone()));
+        b.panes[pane].active = b.panes[pane].tabs.len() - 1;
+        b.select_entry(pane, path.clone(), cx);
+        (pane, old_active)
+    })).unwrap();
+    cx.spawn(async move |cx| {
+        for (stage, expected) in ["old text", "new text", "atomic replacement", "final rapid edit"].into_iter().enumerate() {
+            match stage {
+                1 => fs::write(&path, expected).unwrap(), // same-length, in-place save
+                2 => {
+                    let replacement = root.join("save.tmp");
+                    fs::write(&replacement, expected).unwrap();
+                    fs::rename(replacement, &path).unwrap();
+                },
+                3 => {
+                    fs::write(&path, "intermediate edit").unwrap();
+                    fs::write(&path, expected).unwrap();
+                },
+                _ => {},
+            }
+            let deadline = Instant::now() + Duration::from_secs(8);
+            loop {
+                cx.background_executor().timer(Duration::from_millis(50)).await;
+                let matched = cx.update(|cx| {
+                    cx.update_window(*window, |_, w, cx| { w.refresh(); w.draw(cx).clear(); }).unwrap();
+                    window.update(cx, |f, _, cx| {
+                        let b = f.browser.read(cx);
+                        b.text_view.as_ref().is_some_and(|session| session.path == path
+                            && session.text.string().to_string() == expected)
+                    }).unwrap()
+                }).unwrap();
+                if matched { break; }
+                assert!(Instant::now() < deadline, "External edit stage {stage} never reached native NSTextView: {expected}");
+            }
+        }
+        let source = cx.update(|cx| window.update(cx, |f, _, cx| {
+            f.browser.read(cx).text_view.as_ref().unwrap().source.clone()
+        }).unwrap()).unwrap();
+        // Unrelated changes must not replace the native session/selection.
+        fs::write(root.join("unrelated.txt"), "unrelated").unwrap();
+        cx.background_executor().timer(Duration::from_millis(1400)).await;
+        cx.update(|cx| {
+            window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+                b.sync_text_preview();
+                assert!(Arc::ptr_eq(&source, &b.text_view.as_ref().unwrap().source));
+                assert_eq!(b.text_view.as_ref().unwrap().text.string().to_string(), "final rapid edit");
+                b.panes[pane].tabs.pop();
+                b.panes[pane].active = old_active;
+                b.saved_session = b.session_string();
+                cx.notify();
+            })).unwrap();
+            println!("PASS actual selected text preview refresh after same-length in-place save, atomic replacement and rapid edits; unchanged native text after unrelated folder change; no editor launched");
+            done(cx);
+        }).unwrap();
+    }).detach();
+}

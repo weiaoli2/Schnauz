@@ -117,7 +117,7 @@ pub(super) fn run(
             })).unwrap();
             paint(window,cx);
             println!("PASS title/search top alignment, window-centered active-project strip with thin divider and compact spacing, native project-chip switching and preserved owned terminal/session/PID");
-            done(cx);
+            text_view::check_external_edits(window, cx, done);
         }).unwrap();
     }).detach();
 }

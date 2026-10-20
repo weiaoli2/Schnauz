@@ -1135,3 +1135,28 @@ test.csv, profiles and build caches. Use dist/0.8.0 and preserve prior tags/asse
 offline native service/form fixtures and the complete hidden GPUI/AppKit suite.
 Shared-label cases cover files/folders, all projects, clearing, stale-edit
 rejection, provider separation and JSON persistence. No live accounts used.
+
+
+## Corrected release 0.8.1 — selected preview follows external saves
+
+Before the 0.8.0 draft was published, Oliver reported stale text after opening a
+selected file in an editor and saving it. Folder vnode events do not reliably
+report in-place writes, and listing refresh did not invalidate preview caches.
+The watcher now includes only explicitly selected local preview paths, alongside
+visible folders. File events invalidate cached text/image/info and cancel pending
+preview/info work, then reload asynchronously. Atomic replacement reattaches the
+file vnode; unrelated folder activity does not reset a native text selection.
+No recursive scanning or protected-folder probes; SSH previews stay on their
+existing explicit remote path. A hidden native UI regression verifies actual
+NSTextView content after same-length overwrite, atomic save and rapid edits.
+
+Full ./test.sh passed (102 application tests, 60 terminal tests, offline native
+fixtures and the extended hidden-window suite). Tag v0.8.0 / 8ae32d2 and its draft
+are preserved as unpublished preparation. Continue the authorized release with
+0.8.1 builds/notes in dist/0.8.1, without restarting live sessions.
+
+Final 0.8.1 hidden UI checks passed on the final watcher update. The setup-dialog
+regression now compares project identities/settings and all favourite references
+separately from ordinary background tab-layout autosaves, avoiding a timing-only
+assertion while preserving the data-safety checks. External-save QA launches no
+editor and uses only disposable files.

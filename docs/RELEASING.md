@@ -1,8 +1,15 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Release in preparation: **v0.8.0**, public Apple Silicon + Intel early preview.
+Release in preparation: **v0.8.1**, public Apple Silicon + Intel early preview.
 Previous published release: **v0.5.14**.
+
+## Corrected candidate — 0.8.1
+
+Oliver reported stale previews during the 0.8.0 draft upload, before publication.
+The ongoing release request now includes the selected-file preview refresh fix.
+Preserve v0.8.0 and its draft; publish 0.8.1 with both verified architectures and
+updated notes. Do not move the existing tag or publish the superseded draft.
 
 ## Authorized release — 0.8.0
 

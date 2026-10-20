@@ -1,4 +1,4 @@
-//! macOS vnode notifications for visible folders; no repeated directory hashing.
+//! macOS vnode notifications for visible folders and selected previews; no directory hashing.
 use std::{
     collections::{HashMap, HashSet},
     ffi::CString,
@@ -117,6 +117,7 @@ impl Watcher {
                             .is_some_and(|f| f.as_raw_fd() as usize == event.ident)
                         {
                             changed.insert(path.clone());
+                            watch.mtime = modified(path);
                             if event.fflags
                                 & (libc::NOTE_DELETE | libc::NOTE_RENAME | libc::NOTE_REVOKE)
                                 != 0

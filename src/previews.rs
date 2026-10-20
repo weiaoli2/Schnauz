@@ -2,6 +2,37 @@
 use super::*;
 
 impl Schnauz {
+    /// Watch only selected local previews; never scan a folder for preview changes.
+    pub(super) fn watched_preview_paths(&self) -> HashSet<PathBuf> {
+        if !prefs().preview && !prefs().info { return HashSet::new(); }
+        self.panes.iter().map(Pane::active_tab)
+            .filter(|t| t.remote.is_none() && (t.network.is_none() || t.network_connected) && t.selection.len() == 1)
+            .flat_map(|t| t.selection.iter().cloned()).collect()
+    }
+
+    pub(super) fn invalidate_preview(&self, path: &Path) {
+        if let Some(cancel) = self.preview_pending.borrow_mut().remove(path) { cancel.store(true, Ordering::Release); }
+        if let Some(cancel) = self.info_pending.borrow_mut().remove(path) { cancel.store(true, Ordering::Release); }
+        TEXT_PREVIEW_CACHE.with(|c| { c.borrow_mut().remove(path); });
+        PREVIEW_CACHE.with(|c| { c.borrow_mut().remove(path); });
+        INFO_CACHE.with(|c| { c.borrow_mut().remove(path); });
+        PDF_PAGE_CACHE.with(|c| c.borrow_mut().retain(|(p, _), _| p != path));
+        PDF_COUNT_CACHE.with(|c| { c.borrow_mut().remove(path); });
+    }
+
+    pub(super) fn refresh_changed_previews(&self, changed: &HashSet<PathBuf>, cx: &mut Context<Self>) {
+        for path in self.watched_preview_paths() {
+            if !changed.contains(&path) { continue; }
+            self.invalidate_preview(&path);
+            self.ensure_preview(path.clone(), false, cx);
+            if prefs().preview && prefs().preview_pages && is_pdf(&path) {
+                self.ensure_pdf_page(path.clone(), self.preview_page, cx);
+            }
+            self.ensure_info(path, cx);
+            cx.notify();
+        }
+    }
+
     pub(super) fn cancel_unused_previews(&self) {
         let wanted: HashSet<PathBuf> = self
             .panes
@@ -22,14 +53,18 @@ impl Schnauz {
     pub(super) fn ensure_info(&self, path: PathBuf, cx: &mut Context<Self>) {
         if !prefs().info
             || lookup_info(&path).is_some()
-            || !self.info_pending.borrow_mut().insert(path.clone())
+            || self.info_pending.borrow().contains_key(&path)
         {
             return;
         }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.info_pending.borrow_mut().insert(path.clone(), cancel.clone());
         cx.spawn(async move |this, cx| {
             let p = path.clone();
             let info = cx.background_spawn(async move { gather_info(&p) }).await;
             let _ = this.update(cx, |this, cx| {
+                if cancel.load(Ordering::Acquire) || !this.info_pending.borrow().get(&path)
+                    .is_some_and(|current| Arc::ptr_eq(current, &cancel)) { return; }
                 this.info_pending.borrow_mut().remove(&path);
                 INFO_CACHE.with(|c| c.borrow_mut().insert(path, info));
                 cx.notify();

@@ -481,7 +481,16 @@ pub(super) fn check(
             cx.update(|cx| {
                 assert!(!cx.global::<State>().pending);
                 assert!(!dialog.isVisible());assert!(app.modalWindow().is_none());
-                assert!(cx.global::<ProjectLibraryGlobal>().0==before.1,"Setup choice cannot delete saved projects or favourites");
+                // Normal background layout autosaves may run while the dialog is open.
+                // Compare project identities/settings and references independently of tabs.
+                let current = &cx.global::<ProjectLibraryGlobal>().0;
+                assert_eq!(current.items.iter().map(|p| (p.id, &p.name, &p.sidebar)).collect::<Vec<_>>(),
+                    before.1.items.iter().map(|p| (p.id, &p.name, &p.sidebar)).collect::<Vec<_>>(),
+                    "Setup choice cannot delete or change projects or their favourites");
+                assert_eq!(current.personal_sidebar, before.1.personal_sidebar);
+                assert_eq!(current.common_shortcuts, before.1.common_shortcuts);
+                assert_eq!(current.common_web_links, before.1.common_web_links);
+                assert_eq!(current.active, before.1.active);
                 if button==2 {assert_eq!(fs::read(config_file("startup-setup.json").unwrap()).ok(),before.0);}
                 else {
                     assert_eq!(startup_setup::load().unwrap().unwrap().restore,button==0);
