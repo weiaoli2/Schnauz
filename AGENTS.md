@@ -419,7 +419,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The current local version is 0.8.1; the published version is 0.5.14.
+  no per-build app copies or releases. The current local version is 0.8.1; the published version is 0.8.1.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -800,3 +800,10 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   series build as 0.8.1 under the ongoing release request. Selected local file
   vnode watches must refresh cached preview/info for in-place and atomic saves,
   cancel stale workers and preserve native text selection on unrelated redraws.
+
+- Published 0.8.1 on 2026-10-20, source c8a4275, at
+  https://github.com/weiaoli2/Schnauz/releases/tag/v0.8.1. Both DMGs, MPL sources,
+  checksums and GitHub source archive verified; ARM native / Intel Rosetta smoke
+  checks passed. Apple Development signed, not notarized, early prerelease.
+  v0.8.0 remains a superseded unpublished draft. Receipts: dist/0.8.1. Request
+  complete; future publication needs a new request. Preserve all tags/sessions.

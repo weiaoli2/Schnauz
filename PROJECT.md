@@ -1160,3 +1160,17 @@ regression now compares project identities/settings and all favourite references
 separately from ordinary background tab-layout autosaves, avoiding a timing-only
 assertion while preserving the data-safety checks. External-save QA launches no
 editor and uses only disposable files.
+
+
+Published 0.8.1 on 2026-10-20:
+https://github.com/weiaoli2/Schnauz/releases/tag/v0.8.1
+Source: c8a427520bf53ddbf32f8421cdd59075f0f877da. Both signed DMGs, exact MPL sources and SHA256SUMS
+match all four GitHub asset digests. The public unauthenticated release endpoint
+exposes both builds, and the GitHub source archive matches all 1741 tagged files.
+All helpers and both app bundles passed architecture/signature checks; mounted
+installers match the verified bundles/notes. ARM ran natively, Intel under Rosetta
+on Apple Silicon, not physical Intel hardware. Apple Development signed,
+unnotarized early prerelease. Receipts: dist/0.8.1/{LOCAL-,SOURCE-,DRAFT-,RELEASE-}VERIFICATION.json.
+v0.8.0 / 8ae32d2 and its clearly superseded draft remain unpublished and intact.
+No running app, terminal or SSH session was restarted. This publication request
+is complete; future releases require a new request. Preserve both tags/assets.

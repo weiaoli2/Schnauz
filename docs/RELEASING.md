@@ -1,8 +1,22 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Release in preparation: **v0.8.1**, public Apple Silicon + Intel early preview.
+Current release: **v0.8.1**, public Apple Silicon + Intel early preview.
 Previous published release: **v0.5.14**.
+
+## Published release — 0.8.1
+
+Published 2026-10-20 at https://github.com/weiaoli2/Schnauz/releases/tag/v0.8.1,
+source c8a427520bf53ddbf32f8421cdd59075f0f877da. Both DMGs, exact MPL component sources and checksum
+asset match GitHub SHA-256 digests, including the unauthenticated public listing.
+GitHub source archive matches all 1741 tagged files. Every helper architecture
+and stable certificate signature passed; readonly-mounted installers match the
+verified apps and install notes. ARM smoke checks ran natively; Intel ran under
+Rosetta on Apple Silicon, not physical Intel hardware. Apple Development signed,
+not notarized, early prerelease. Receipts are in dist/0.8.1.
+The 0.8.0 tag/draft is retained as superseded unpublished preparation. The ongoing
+release request is complete. Future publication requires a new request; never
+move existing tags, overwrite assets or restart live sessions.
 
 ## Corrected candidate — 0.8.1
 
