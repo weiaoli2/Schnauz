@@ -3,6 +3,67 @@
 //! passwords, agent state or live connections are read for profile discovery.
 use super::*;
 
+/// Ephemeral progress owned by one tab/load; never persisted or timed out early.
+#[derive(Clone)]
+pub(super) struct Progress(Arc<Mutex<String>>, Arc<AtomicBool>);
+impl Progress {
+    pub(super) fn new() -> Self {
+        Self(
+            Arc::new(Mutex::new("Checking SSH settings…".into())),
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+    pub(super) fn set(&self, stage: &str) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = stage.into();
+    }
+    pub(super) fn finish(&self) {
+        self.1.store(true, Ordering::Release);
+    }
+    pub(super) fn pending(&self) -> bool {
+        !self.1.load(Ordering::Acquire)
+    }
+    pub(super) fn label(&self, server: &SftpServer) -> String {
+        format!(
+            "{} · {}",
+            self.0.lock().unwrap_or_else(|e| e.into_inner()),
+            server.display()
+        )
+    }
+}
+
+impl Schnauz {
+    pub(super) fn start_ssh_progress(&mut self, pane: usize, cx: &mut Context<Self>) -> Progress {
+        let progress = Progress::new();
+        let tab = self.tab_mut(pane);
+        tab.ssh_progress = Some(progress.clone());
+        let id = tab.id;
+        let gen = tab.load_gen;
+        cx.notify();
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            let keep = this.update(cx, |this, cx| {
+                let pending = this.panes.iter().flat_map(|p| &p.tabs).any(|t| {
+                    t.id == id
+                        && t.load_gen == gen
+                        && t.remote.is_some()
+                        && t.ssh_progress.as_ref().is_some_and(Progress::pending)
+                });
+                if pending {
+                    cx.notify();
+                }
+                pending
+            });
+            if !matches!(keep, Ok(true)) {
+                break;
+            }
+        })
+        .detach();
+        progress
+    }
+}
+
 pub(super) fn valid_alias(target: &str) -> Option<&str> {
     let alias = target.rsplit('@').next()?;
     (!alias.is_empty()
@@ -209,6 +270,25 @@ pub(super) fn error_message(stderr: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn progress_is_shared_per_request_and_completion_stops_it() {
+        let server = SftpServer {
+            host: "fixture.invalid".into(),
+            ..Default::default()
+        };
+        let first = Progress::new();
+        let worker = first.clone();
+        let replacement = Progress::new();
+        assert!(first.label(&server).starts_with("Checking SSH settings…"));
+        worker.set("Connecting…");
+        assert!(first.label(&server).starts_with("Connecting…"));
+        worker.finish();
+        assert!(!first.pending());
+        assert!(
+            replacement.pending(),
+            "An old completion cannot clear another request"
+        );
+    }
     #[test]
     fn old_favourite_recovers_unique_alias_with_original_port_and_user() {
         let server = SftpServer {

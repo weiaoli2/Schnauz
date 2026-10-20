@@ -7,6 +7,7 @@ if [ ! -d "$APP" ]; then
     echo 'Run ./build.sh first.' >&2
     exit 1
 fi
+python3 scripts/check_bundle_contents.py "$APP"
 codesign --verify --deep --strict "$APP"
 STAGING=$(mktemp -d "${TMPDIR:-/tmp}/schnauz-dmg.XXXXXX")
 trap 'rm -rf "$STAGING"' EXIT

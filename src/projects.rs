@@ -19,6 +19,8 @@ pub(crate) struct SavedTab {
     pub filter: EntryFilter,
     #[serde(default)]
     pub show_hidden: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::Location>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -44,7 +46,7 @@ impl Layout {
             let mut tabs = Vec::new();
             let mut active = 0;
             for (tab_index, tab) in pane.tabs.iter().enumerate() {
-                if tab.path.is_absolute() && tab.path.is_dir() {
+                if tab.path.is_absolute() && (tab.network.is_some() || tab.path.is_dir()) {
                     if tab_index <= pane.active {
                         active = tabs.len();
                     }
@@ -98,23 +100,51 @@ pub(crate) enum Section {
 pub(crate) struct Shortcut {
     pub path: PathBuf,
     pub kind: Section,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub alias: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub add_on: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<SftpServer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<crate::network::Location>,
 }
 impl Shortcut {
     pub fn local(path: PathBuf, kind: Section) -> Self {
         Self {
             path,
             kind,
+            alias: String::new(),
+            add_on: String::new(),
             server: None,
+            network: None,
+        }
+    }
+
+    pub fn display_name(&self) -> String {
+        let name = if self.alias.trim().is_empty() {
+            crate::path_label(&self.path)
+        } else {
+            self.alias.trim().to_string()
+        };
+        if self.add_on.trim().is_empty() {
+            name
+        } else {
+            format!("{name} ({})", self.add_on.trim())
         }
     }
 
     pub fn is_home(&self) -> bool {
-        self.server.is_none() && self.kind == Section::Folders && self.path == crate::home_dir()
+        self.server.is_none() && self.network.is_none() && self.kind == Section::Folders && self.path == crate::home_dir()
     }
 
     pub fn same_place(&self, other: &Self) -> bool {
+        match (&self.network,&other.network) {
+            (Some(a),Some(b))=>return a.same_place(b),
+            (None,None)=>{},
+            _=>return false,
+        }
+
         self.path == other.path
             && match (&self.server, &other.server) {
                 (None, None) => true,
@@ -130,10 +160,21 @@ pub(crate) fn same_server(a: &SftpServer, b: &SftpServer) -> bool {
         && a.port == b.port
 }
 
+/// A named HTTP(S) bookmark with an optional per-link browser application.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct WebLink {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser: Option<PathBuf>,
+}
+
 /// Nonsecret project shortcuts and account routing. Connections remain in Settings.
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub(crate) struct Sidebar {
     pub shortcuts: Vec<Shortcut>,
+    pub web_links: Vec<WebLink>,
     pub servers: Vec<SftpServer>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub todoist: Option<TodoistLink>,
@@ -165,6 +206,9 @@ fn update_shortcuts(shortcuts: &mut Vec<Shortcut>, mut shortcut: Shortcut, add: 
     }
     if let Some(index) = shortcuts.iter().position(|s| s.same_place(&shortcut)) {
         if add {
+            // Re-adding a destination must preserve its label.
+            shortcut.alias = shortcuts[index].alias.clone();
+            shortcut.add_on = shortcuts[index].add_on.clone();
             shortcuts[index] = shortcut;
         } else {
             shortcuts.remove(index);
@@ -172,6 +216,79 @@ fn update_shortcuts(shortcuts: &mut Vec<Shortcut>, mut shortcut: Shortcut, add: 
     } else if add {
         shortcuts.push(shortcut);
     }
+}
+
+/// Validate the captured reference, then label the same destination everywhere.
+pub(crate) fn edit_shortcut_label(
+    library: &mut Library, project: Option<u64>, common: bool,
+    original: &Shortcut, alias: &str, add_on: &str,
+) -> Result<(), String> {
+    if original.is_home() {
+        return Err("Home cannot have an alias.".into());
+    }
+    let alias = alias.trim();
+    let add_on = add_on.trim();
+    if [alias, add_on].iter().any(|s| s.chars().count() > 200 || s.chars().any(char::is_control)) {
+        return Err("Use up to 200 characters per field, without line breaks.".into());
+    }
+    let shortcuts = if common {
+        &mut library.common_shortcuts
+    } else {
+        &mut library.sidebar_for_mut(project).ok_or("This project no longer exists.")?.shortcuts
+    };
+    let item = shortcuts.iter_mut().find(|s| s.same_place(original) && s.kind == original.kind)
+        .ok_or("This favourite was removed. Add it again before editing its label.")?;
+    if item.alias != original.alias || item.add_on != original.add_on {
+        return Err("This label changed in another window. Open the editor again.".into());
+    }
+    for item in library.common_shortcuts.iter_mut()
+        .chain(library.personal_sidebar.shortcuts.iter_mut())
+        .chain(library.items.iter_mut().flat_map(|p| p.sidebar.shortcuts.iter_mut()))
+        .filter(|s| s.same_place(original))
+    {
+        item.alias = alias.into();
+        item.add_on = add_on.into();
+    }
+    Ok(())
+}
+
+/// Move an existing item relative to another without changing its identity.
+pub(crate) fn reorder<T>(items: &mut Vec<T>, from: usize, target: usize, after: bool) -> bool {
+    if from == target {
+        return false;
+    }
+    let insertion = target + usize::from(after);
+    let insertion = insertion - usize::from(from < insertion);
+    if insertion == from {
+        return false;
+    }
+    let item = items.remove(from);
+    items.insert(insertion, item);
+    true
+}
+
+pub(crate) fn reorder_shortcuts(
+    items: &mut Vec<Shortcut>,
+    source: &Shortcut,
+    target: &Shortcut,
+    after: bool,
+) -> bool {
+    if source.is_home() || target.is_home() || source.kind != target.kind {
+        return false;
+    }
+    let Some(from) = items
+        .iter()
+        .position(|s| s.kind == source.kind && s.same_place(source))
+    else {
+        return false;
+    };
+    let Some(to) = items
+        .iter()
+        .position(|s| s.kind == target.kind && s.same_place(target))
+    else {
+        return false;
+    };
+    reorder(items, from, to, after)
 }
 
 // Read old sidebar sections once. New saves contain only the unified shortcuts.
@@ -183,6 +300,7 @@ impl<'de> Deserialize<'de> for Sidebar {
         #[serde(default)]
         struct Stored {
             shortcuts: Vec<Shortcut>,
+            web_links: Vec<WebLink>,
             locations: Vec<PathBuf>,
             cloud: Vec<PathBuf>,
             server_folders: Vec<PathBuf>,
@@ -194,6 +312,7 @@ impl<'de> Deserialize<'de> for Sidebar {
         let old = Stored::deserialize(deserializer)?;
         let mut sidebar = Self {
             shortcuts: Vec::new(),
+            web_links: old.web_links,
             servers: old.servers,
             todoist: old.todoist,
             todoist_create_request: old.todoist_create_request,
@@ -259,6 +378,8 @@ pub(crate) struct Library {
     #[serde(default = "default_common_shortcuts")]
     pub common_shortcuts: Vec<Shortcut>,
     #[serde(default)]
+    pub common_web_links: Vec<WebLink>,
+    #[serde(default)]
     sidebar_migrated: bool,
 }
 
@@ -271,12 +392,29 @@ impl Default for Library {
             personal_layout: None,
             personal_sidebar: Sidebar::default(),
             common_shortcuts: default_common_shortcuts(),
+            common_web_links: Vec::new(),
             sidebar_migrated: false,
         }
     }
 }
 
 impl Library {
+    pub fn web_links(&self, project: Option<u64>, common: bool) -> Option<&Vec<WebLink>> {
+        if common { Some(&self.common_web_links) } else { self.sidebar_for(project).map(|s| &s.web_links) }
+    }
+    pub fn web_links_mut(&mut self, project: Option<u64>, common: bool) -> Option<&mut Vec<WebLink>> {
+        if common { Some(&mut self.common_web_links) } else { self.sidebar_for_mut(project).map(|s| &mut s.web_links) }
+    }
+    pub fn reorder_project(&mut self, source: u64, target: u64, after: bool) -> bool {
+        let Some(from) = self.items.iter().position(|p| p.id == source) else {
+            return false;
+        };
+        let Some(to) = self.items.iter().position(|p| p.id == target) else {
+            return false;
+        };
+        reorder(&mut self.items, from, to, after)
+    }
+
     pub fn set_common_shortcut(&mut self, shortcut: Shortcut, add: bool) {
         update_shortcuts(&mut self.common_shortcuts, shortcut, add);
     }
@@ -516,6 +654,114 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn shortcut_labels_apply_everywhere_and_preserve_destinations() {
+        use super::*;
+        let original: Shortcut = serde_json::from_str(r#"{"path":"/fixture/reports","kind":"folder"}"#).unwrap();
+        assert_eq!(original.display_name(), "reports");
+        let mut library = Library::default();
+        library.personal_sidebar.shortcuts.push(original.clone());
+        library.common_shortcuts = vec![original.clone()];
+        edit_shortcut_label(&mut library, None, false, &original, "  Work  ", "  2026  ").unwrap();
+        let edited = library.personal_sidebar.shortcuts[0].clone();
+        assert_eq!(edited.display_name(), "Work (2026)");
+        assert_eq!(edited.path, original.path);
+        assert!(edited.same_place(&original));
+        assert_eq!(library.common_shortcuts[0].display_name(), "Work (2026)");
+        assert!(edit_shortcut_label(&mut library, None, false, &original, "stale", "").is_err());
+        library.personal_sidebar.set_shortcut(original.clone(), true);
+        assert_eq!(library.personal_sidebar.shortcuts[0].display_name(), "Work (2026)");
+        let restored: Library = serde_json::from_str(&serde_json::to_string(&library).unwrap()).unwrap();
+        assert_eq!(restored.personal_sidebar.shortcuts, library.personal_sidebar.shortcuts);
+        edit_shortcut_label(&mut library, None, false, &edited, "", "Archive").unwrap();
+        let no_alias = library.personal_sidebar.shortcuts[0].clone();
+        assert_eq!(no_alias.display_name(), "reports (Archive)");
+        edit_shortcut_label(&mut library, None, false, &no_alias, "", "").unwrap();
+        assert_eq!(library.personal_sidebar.shortcuts[0].display_name(), "reports");
+        edit_shortcut_label(&mut library, None, true, &original, "Shared", "").unwrap();
+        assert_eq!(library.common_shortcuts[0].display_name(), "Shared");
+        assert!(edit_shortcut_label(&mut library, Some(u64::MAX), false, &original, "", "").is_err());
+        let mut remote = original.clone();
+        remote.server = Some(SftpServer { host: "fixture.invalid".into(), ..Default::default() });
+        library.personal_sidebar.shortcuts.push(remote.clone());
+        edit_shortcut_label(&mut library, None, false, &remote, "Remote", "SSH").unwrap();
+        assert_eq!(library.personal_sidebar.shortcuts[1].display_name(), "Remote (SSH)");
+        assert_eq!(library.personal_sidebar.shortcuts[0].display_name(), "Shared");
+        assert!(edit_shortcut_label(&mut library, None, false, &original, "bad\nlabel", "").is_err());
+        library.personal_sidebar.shortcuts.clear();
+        assert!(edit_shortcut_label(&mut library, None, false, &original, "", "").is_err());
+    }
+
+    #[test]
+    fn shared_labels_cover_files_projects_and_provider_identity() {
+        use super::*;
+        for kind in [Section::Folders, Section::Files] {
+            let original = Shortcut::local("/fixture/shared".into(), kind);
+            let mut library = Library::default();
+            let project = 1;
+            library.items.push(Project { id: project, name: "Other".into(),
+                layout: Layout { panes: Vec::new(), active_pane: 0, split_ratio: 0.5 },
+                sidebar: Sidebar::default() });
+            library.personal_sidebar.shortcuts = vec![original.clone()];
+            library.common_shortcuts = vec![original.clone()];
+            let mut remote = original.clone();
+            remote.server = Some(SftpServer { host: "fixture.invalid".into(), ..Default::default() });
+            library.items[0].sidebar.shortcuts = vec![original.clone(), remote.clone()];
+            edit_shortcut_label(&mut library, Some(project), false, &original, "Shared", "Archive").unwrap();
+            assert_eq!(library.personal_sidebar.shortcuts[0].display_name(), "Shared (Archive)");
+            assert_eq!(library.common_shortcuts[0].display_name(), "Shared (Archive)");
+            assert_eq!(library.items[0].sidebar.shortcuts[0].display_name(), "Shared (Archive)");
+            assert_eq!(library.items[0].sidebar.shortcuts[1], remote);
+            let before = library.clone();
+            assert!(edit_shortcut_label(&mut library, None, true, &original, "Stale", "").is_err());
+            assert_eq!(library, before, "Stale edits must not change any project");
+            let edited = library.common_shortcuts[0].clone();
+            edit_shortcut_label(&mut library, None, true, &edited, "", "").unwrap();
+            assert_eq!(library.personal_sidebar.shortcuts[0], original);
+            assert_eq!(library.items[0].sidebar.shortcuts[0], original);
+            // Remote destinations share labels too, while keeping local paths separate.
+            library.common_shortcuts.push(remote.clone());
+            edit_shortcut_label(&mut library, Some(project), false, &remote, "Remote", "SSH").unwrap();
+            assert_eq!(library.common_shortcuts[1].display_name(), "Remote (SSH)");
+            assert_eq!(library.items[0].sidebar.shortcuts[1].display_name(), "Remote (SSH)");
+            assert_eq!(library.personal_sidebar.shortcuts[0], original);
+            let restored: Library = serde_json::from_slice(&serde_json::to_vec(&library).unwrap()).unwrap();
+            assert_eq!(restored, library);
+        }
+    }
+
+    #[test]
+    fn manual_order_roundtrips_and_preserves_identity_and_project_state() {
+        use super::*;
+        let a = Shortcut::local("/a".into(), Section::Folders);
+        let b = Shortcut::local("/b".into(), Section::Folders);
+        let file = Shortcut::local("/f.txt".into(), Section::Files);
+        let mut remote = a.clone();
+        remote.server = Some(SftpServer { host: "fixture.invalid".into(), user: "fixture".into(), ..Default::default() });
+        let mut items = vec![a.clone(), file.clone(), remote.clone(), b.clone()];
+        assert!(reorder_shortcuts(&mut items, &b, &a, false));
+        assert_eq!(items, vec![b.clone(), a.clone(), file.clone(), remote.clone()]);
+        assert!(reorder_shortcuts(&mut items, &b, &remote, true));
+        assert_eq!(items, vec![a.clone(), file.clone(), remote.clone(), b.clone()]);
+        assert!(!reorder_shortcuts(&mut items, &file, &a, false));
+        assert!(!reorder_shortcuts(&mut items, &a, &a, true));
+        assert!(!reorder_shortcuts(&mut items, &a, &Shortcut::local(crate::home_dir(), Section::Folders), false));
+        let mut library = Library::default();
+        library.common_shortcuts = items;
+        let layout = Layout { panes: vec![SavedPane { tabs: vec![SavedTab { path: std::env::temp_dir(), view: "List".into(), sort: "Name".into(), ascending: true, filter: EntryFilter::All, show_hidden: false, network:None }], active: 0 }], active_pane: 0, split_ratio: 0.5 };
+        let first = library.create("First", layout.clone()).unwrap();
+        let second = library.create("Second", layout).unwrap();
+        let original = library.clone();
+        assert!(library.reorder_project(second, first, false));
+        assert_eq!(library.active, original.active);
+        assert_eq!(library.items[1], original.items[0]);
+        assert_eq!(library.items[0], original.items[1]);
+        assert!(!library.reorder_project(second, second, true));
+        assert!(!library.reorder_project(u64::MAX, first, true));
+        let restored: Library = serde_json::from_str(&serde_json::to_string(&library).unwrap()).unwrap();
+        assert_eq!(library, restored);
+    }
+
+    #[test]
     fn common_defaults_migrate_once_and_removals_survive_project_switch_and_reload() {
         let mut library = Library::default();
         let defaults = library.common_shortcuts.clone();
@@ -641,7 +887,7 @@ mod tests {
             sort: "name".into(),
             ascending: false,
             filter: EntryFilter::Folders,
-            show_hidden: false,
+            show_hidden: false, network:None,
         }
     }
 
@@ -1054,6 +1300,9 @@ mod tests {
             path: path.clone(),
             kind: Section::Folders,
             server: Some(server.clone()),
+            network:None,
+            alias: String::new(),
+            add_on: String::new(),
         };
         let mut sidebar = Sidebar::default();
         sidebar.set_shortcut(remote.clone(), true);

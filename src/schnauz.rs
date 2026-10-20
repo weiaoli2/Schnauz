@@ -32,6 +32,7 @@ pub(super) fn capture_panes_layout(source: &[Pane], source_active: usize, source
                         ascending: tab.sort_asc,
                         filter: tab.entry_filter,
                         show_hidden: tab.show_hidden,
+                        network:tab.network.clone(),
                     });
                 }
             }
@@ -307,13 +308,14 @@ impl Schnauz {
                     .bg(rgb(t.surface))
                     .children(buttons),
             )
-            .child(
-                toolbar_icons::toolbar_button("reload-folder", pane, Icon::Reload, false, true, "Reload folder · ⌘R")
+            .when(tab.remote.is_some(), |d| d.child(
+                toolbar_icons::toolbar_button("reload-folder", pane, Icon::Reload, false, true, "Reload SSH folder · ⌘R")
+                    .relative().children(ui_checks::probe("ssh-reload-control"))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.active_pane = pane;
                         this.run_key_action(KeyAction::Refresh, window, cx);
                     })),
-            )
+            ))
             .child(div().flex_1())
             .when(tab.remote.is_none(), |d| d.child(
                 div().id(("inspect-storage", pane)).h(px(26.)).px_2().flex().items_center().gap_2().rounded_md().cursor_pointer()
@@ -351,7 +353,7 @@ impl Schnauz {
                     .tabs
                     .iter()
                     .map(|saved| {
-                        let mut tab = Tab::new(saved.path.clone());
+                        let mut tab = Tab::at_network_location(saved.path.clone(),None,saved.network.clone());
                         tab.view = view_mode_from_key(&saved.view).unwrap_or(ViewMode::List);
                         tab.sort_key = sort_key_from_name(&saved.sort).unwrap_or(SortKey::None);
                         tab.sort_asc = saved.ascending;
@@ -577,7 +579,10 @@ impl Schnauz {
         self.hbar_drag = None;
         self.preview_page = 0;
         if self.panes.len() == 1 {
-            let mut pane = Pane::new(self.active_tab().current_dir.clone());
+            let source=self.active_tab();
+            let mut tab=Tab::at_network_location(source.current_dir.clone(),source.remote.clone(),source.network.clone());
+            tab.network_connected=source.network_connected;
+            let mut pane = Pane{tabs:vec![tab],active:0};
             pane.tabs[0].remote = self.active_tab().remote.clone();
             pane.tabs[0].view = self.active_tab().view;
             pane.tabs[0].entry_filter = self.active_tab().entry_filter;
@@ -608,100 +613,229 @@ impl Schnauz {
 
     pub(super) fn render_schnauz_toolbar(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
-        let filter = self.active_tab().entry_filter;
-        let filtered = filter != EntryFilter::All;
+        let filtered = self.active_tab().entry_filter != EntryFilter::All;
         let tint = filter_tint(t);
-        let project = self
-            .projects
-            .active
-            .and_then(|id| self.projects.items.iter().find(|project| project.id == id));
+        let first =
+            div()
+                .flex()
+                .items_start()
+                .gap_2()
+                .h(px(34.))
+                .flex_none()
+                .w_full()
+                .pl(px(88.))
+                .pr_4()
+                .child(
+                    div()
+                        .w(px(132.))
+                        .h(px(30.))
+                        .flex_none()
+                        .flex()
+                        .items_start()
+                        .gap_1()
+                        .child(
+                            div()
+                                .relative()
+                                .mt_1()
+                                .text_size(px(14.))
+                                .line_height(px(20.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .children(ui_checks::probe("schnauz-title"))
+                                .child("Schnauz"),
+                        )
+                        .child(self.render_search_mascot(cx))
+                        .child(
+                            div()
+                                .id("schnauz-version")
+                                .mt_2()
+                                .text_size(px(9.))
+                                .text_color(Theme::alpha(t.text, 0x99))
+                                .tooltip(tip(format!("Schnauz {}", env!("CARGO_PKG_VERSION"))))
+                                .child(env!("CARGO_PKG_VERSION")),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .mt_1()
+                        .child(self.render_file_search(cx)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .mt_1()
+                        .child(
+                            schnauz_button(
+                                "schnauz-split",
+                                if self.panes.len() > 1 {
+                                    "Join panes"
+                                } else {
+                                    "Split view"
+                                },
+                                false,
+                            )
+                            .tooltip(tip("Split or join panes · ⌘⇧D"))
+                            .on_click(cx.listener(
+                                |this, _: &ClickEvent, _, cx| this.toggle_schnauz_split(cx),
+                            )),
+                        )
+                        .child(
+                            schnauz_button(
+                                "schnauz-terminal",
+                                "Terminal",
+                                self.active_tab().terminal_open,
+                            )
+                            .tooltip(tip("Open a full terminal in this folder"))
+                            .on_click(cx.listener(
+                                |this, _: &ClickEvent, window, cx| this.toggle_terminal(window, cx),
+                            )),
+                        )
+                        .child(
+                            schnauz_button("schnauz-preview", "Preview", prefs().preview)
+                                .tooltip(tip("Show or hide the preview panel · ⌘⇧I"))
+                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    this.show_file_preview(cx)
+                                })),
+                        )
+                        .when(cx.global::<todoist::Global>().account.is_some(), |d| {
+                            d.child(
+                                schnauz_button(
+                                    "schnauz-todoist",
+                                    if todoist_window::is_floating(cx) {
+                                        "Show Floating Tasks"
+                                    } else {
+                                        "Todoist"
+                                    },
+                                    self.todoist.open,
+                                )
+                                .tooltip(tip("Todoist tasks for the current project"))
+                                .on_click(cx.listener(
+                                    |this, _: &ClickEvent, _, cx| {
+                                        if this.todoist.open {
+                                            this.todoist.open = false;
+                                            todoist_window::visibility_changed(cx);
+                                            cx.notify();
+                                        } else {
+                                            this.open_todoist(cx);
+                                        }
+                                    },
+                                )),
+                            )
+                        })
+                        .when(todoist_window::is_floating(cx), |d| {
+                            d.child(
+                                schnauz_button("todoist-dock-here", "Dock Here", false)
+                                    .tooltip(tip("Dock Todoist in this browser window"))
+                                    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                                        let browser = cx.weak_entity();
+                                        cx.defer(move |cx| todoist_window::dock_here(browser, cx));
+                                    })),
+                            )
+                        }),
+                );
         div()
             .relative()
             .flex_none()
             .flex()
-            .items_center()
-            .gap_2()
+            .flex_col()
             .w_full()
-            .h(px(TITLEBAR_H))
-            .pl(px(88.0))
-            .pr_4()
+            .h(px(BROWSER_HEADER_H))
+            .pt_1()
             .bg(rgb(if filtered { tint } else { t.sidebar }))
             .border_b_1()
             .border_color(rgb(if filtered { t.accent } else { t.border }))
-            .child(
+            .child(first)
+            .child(div().relative().flex_none().h(px(1.)).mx_4().mt(px(1.)).mb(px(2.))
+                .bg(Theme::alpha(t.border,0x80))
+                .children(ui_checks::probe("project-row-divider")))
+            .child(self.render_active_projects(cx))
+            .pb(px(2.))
+            .into_any_element()
+    }
+
+    pub(super) fn active_project_chips(&self, cx: &App) -> Vec<(Option<u64>, String)> {
+        std::iter::once((None, "Personal".to_string()))
+            .chain(
+                self.projects
+                    .items
+                    .iter()
+                    .map(|p| (Some(p.id), p.name.clone())),
+            )
+            .filter(|(id, _)| self.project_is_open(*id, cx))
+            .collect()
+    }
+
+    fn render_active_projects(&self, cx: &Context<Self>) -> AnyElement {
+        let projects = self.active_project_chips(cx);
+        let ids = projects.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let stamp = (self.projects.active, ids);
+        if self.project_strip_state.borrow().as_ref() != Some(&stamp) {
+            if let Some(index) = projects
+                .iter()
+                .position(|(id, _)| *id == self.projects.active)
+            {
+                self.project_strip_scroll.scroll_to_item(index);
+            }
+            *self.project_strip_state.borrow_mut() = Some(stamp);
+        }
+        let count=projects.len();
+        div()
+            .id("active-project-strip")
+            .relative()
+            .flex_none()
+            .w_full()
+            .h(px(17.))
+            .px_4()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .overflow_x_scroll()
+            .track_scroll(&self.project_strip_scroll)
+            .children(projects.into_iter().enumerate().map(|(index, (id, name))| {
+                let current = self.projects.active == id;
                 div()
-                    .flex()
-                    .flex_col()
-                    .w(px(132.0))
+                    .id(SharedString::from(format!("active-project-{id:?}")))
+                    .relative()
                     .flex_none()
-                    .child(
-                        div().flex().items_center().gap_1()
-                            .child(div().text_size(px(14.0)).font_weight(FontWeight::SEMIBOLD).child("Schnauz"))
-                            .child(self.render_search_mascot(cx))
-                            .child(div().id("schnauz-version").text_size(px(9.)).text_color(Theme::alpha(t.text, 0x99))
-                                .tooltip(tip(format!("Schnauz {}", env!("CARGO_PKG_VERSION"))))
-                                .child(env!("CARGO_PKG_VERSION"))),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(10.0))
-                            .truncate()
-                            .text_color(rgb(t.text_muted))
-                            .child(if filtered {
-                                format!("{} · Filter active", filter.description())
-                            } else {
-                                project
-                                    .map(|w| w.name.clone())
-                                    .unwrap_or_else(|| "Personal".into())
-                            }),
-                    ),
-            )
-            .child(self.render_file_search(cx))
-            .child(
-                schnauz_button(
-                    "schnauz-split",
-                    if self.panes.len() > 1 {
-                        "Join panes"
-                    } else {
-                        "Split view"
-                    },
-                    false,
-                )
-                .tooltip(tip("Split or join panes · ⌘⇧D"))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_schnauz_split(cx))),
-            )
-            .child(
-                schnauz_button(
-                    "schnauz-terminal",
-                    "Terminal",
-                    self.active_tab().terminal_open,
-                )
-                .tooltip(tip("Open a full terminal in this folder"))
-                .on_click(
-                    cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.toggle_terminal(window, cx)
-                    }),
-                ),
-            )
-            .child(
-                schnauz_button("schnauz-preview", "Preview", prefs().preview)
-                    .tooltip(tip("Show or hide the preview panel · ⌘⇧I"))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.show_file_preview(cx))),
-            )
-            .when(cx.global::<todoist::Global>().account.is_some(), |d| d.child(schnauz_button("schnauz-todoist", if todoist_window::is_floating(cx) {"Show Floating Tasks"} else {"Todoist"}, self.todoist.open)
-                .tooltip(tip("Todoist tasks for the current project"))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    if this.todoist.open { this.todoist.open = false; todoist_window::visibility_changed(cx); cx.notify(); }
-                    else { this.open_todoist(cx); }
-                }))))
-            .when(todoist_window::is_floating(cx),|d|d.child(
-                schnauz_button("todoist-dock-here","Dock Here",false)
-                    .tooltip(tip("Dock Todoist in this browser window"))
-                    .on_click(cx.listener(|_,_:&ClickEvent,_,cx|{
-                        let browser=cx.weak_entity();
-                        cx.defer(move |cx|todoist_window::dock_here(browser,cx));
+                    // Auto margins center a short row and collapse to zero on overflow,
+                    // keeping every chip reachable through the existing scroll handle.
+                    .when(index+1<count, |d|d.mr_1())
+                    .when(index==0, |d|d.ml_auto())
+                    .when(index+1==count, |d|d.mr_auto())
+                    .h(px(17.))
+                    .max_w(px(180.))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .min_w_0()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(rgb(if current { CHROME_HIGHLIGHT } else { theme().border }))
+                    .bg(rgb(if current { CHROME_HIGHLIGHT } else { theme().surface }))
+                    .text_color(rgb(if current { 0xffffff } else { theme().text }))
+                    .text_size(px(UI_SMALL_FONT_SIZE))
+                    .line_height(px(15.))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(rgb(if current { CHROME_HIGHLIGHT_HOVER } else { theme().hover })))
+                    .when(current, |s| {
+                        s.children(ui_checks::probe("current-project-chip"))
+                    })
+                    .child(div().min_w_0().truncate().child(name.clone()))
+                    .tooltip(tip(format!("Switch to {name}")))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        window.focus(&this.focus);
+                        if let Some(id) = id {
+                            this.restore_project(id, cx);
+                        } else {
+                            this.restore_personal(cx);
+                        }
                     }))
-            ))
+                    .into_any_element()
+            }))
             .into_any_element()
     }
 
@@ -746,6 +880,7 @@ impl Schnauz {
                     t.text_muted
                 }))
                 .hover(|s| s.bg(rgb(t.hover)))
+                .child(project_activity_dot(self.project_is_open(None, cx)))
                 .child(ui_icon(Icon::Home, 15., rgb(t.text)))
                 .child("Personal")
                 .tooltip(tip("Your general browsing tabs and favourites"))
@@ -758,8 +893,7 @@ impl Schnauz {
         for project in &self.projects.items {
             let id = project.id;
             let active = self.projects.active == Some(id);
-            items.push(
-                div()
+            let row = div()
                     .id(SharedString::from(format!("project-{id}")))
                     .mx_2()
                     .px_2()
@@ -772,6 +906,7 @@ impl Schnauz {
                     .when(active, |s| s.bg(rgb(t.selected)))
                     .hover(|s| s.bg(rgb(t.hover)))
                     .text_color(rgb(if active { t.accent } else { t.text_muted }))
+                    .child(project_activity_dot(self.project_is_open(Some(id), cx)))
                     .child(ui_icon(Icon::Project, 15., rgb(t.text)))
                     .child(
                         div()
@@ -797,8 +932,8 @@ impl Schnauz {
                             cx.stop_propagation();
                         }),
                     )
-                    .into_any_element(),
-            );
+                    .into_any_element();
+            items.push(self.sortable_row(row, project_sidebar::SidebarOrder::Project(id), project.name.clone(), format!("project-order-{id}"), cx));
         }
     }
 
@@ -937,8 +1072,10 @@ impl Schnauz {
         } else {
             format!("{} selected · {count_label}", tab.selection.len())
         };
+        let network_status=self.network_status.as_deref().or_else(||tab.network_loading.then_some("Loading network folder…"));
+        let ssh_status = tab.remote.as_ref().and_then(|server| tab.ssh_progress.as_ref().filter(|p| p.pending()).map(|p| p.label(server)));
         let drag_status = self.file_drag.label();
-        let status = drag_status.as_deref().map(|text| (text, false)).or_else(|| self.notice.as_deref().map(|text| (text, false)))
+        let status = drag_status.as_deref().map(|text| (text, false)).or_else(|| network_status.map(|text|(text,false))).or_else(|| ssh_status.as_deref().map(|text| (text, false))).or_else(|| self.notice.as_deref().map(|text| (text, false)))
             .or_else(|| self.remote_error.as_deref().map(|text| (text, true)))
             .or_else(|| self.file_search.stopped.then_some(("Search stopped · Results may be incomplete", false)));
         let left = div().flex_1().min_w_0().flex().items_center().gap_3().overflow_hidden()
@@ -952,6 +1089,8 @@ impl Schnauz {
                     .h(px(21.)).px_2().gap_1().rounded_md()
                     .bg(rgb(0x3478c5)).text_color(rgb(0xffffff))
                     .tooltip(tip(text.to_string()))
+                    .when(network_status.is_some(), |badge| badge.relative().children(ui_checks::probe("footer-network-progress")))
+                    .when(ssh_status.is_some(), |badge| badge.relative().children(ui_checks::probe("footer-ssh-progress")))
                     .child(div().min_w_0().truncate().child(text.to_string()))
                     .when(dismiss_remote, |badge| badge.child(
                         div().id("footer-remote-dismiss").flex_none().size(px(16.))
@@ -1028,10 +1167,12 @@ pub(super) fn schnauz_button(
 ) -> gpui::Stateful<gpui::Div> {
     let t = theme();
     let compact = id == "schnauz-split";
+    let toolbar_toggle=matches!(id,"schnauz-terminal"|"schnauz-preview"|"schnauz-todoist"|"todoist-dock-here");
+    let accent=if toolbar_toggle {CHROME_HIGHLIGHT}else{t.accent};
     div()
         .id(id)
         .flex_none()
-        .h(px(30.0))
+        .h(px(if toolbar_toggle {TOOLBAR_CONTROL_H}else{30.}))
         .px_2()
         .when(compact, |d| d.w(px(32.)).px_0())
         .rounded_lg()
@@ -1042,11 +1183,11 @@ pub(super) fn schnauz_button(
         .text_size(px(UI_SMALL_FONT_SIZE))
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
-        .bg(rgb(if accented { t.accent } else { t.surface }))
+        .bg(rgb(if accented { accent } else { t.surface }))
         .text_color(rgb(if accented { 0xffffff } else { t.text_muted }))
         .hover(move |s| {
             s.bg(if accented {
-                Theme::alpha(t.accent, 0xdd)
+                if toolbar_toggle {rgb(CHROME_HIGHLIGHT_HOVER)}else{Theme::alpha(accent, 0xdd)}
             } else {
                 rgb(t.hover)
             })
@@ -1064,4 +1205,13 @@ pub(super) fn toggle_inspector(cx: &mut App) {
     next.preview = !next.preview;
     next.info = next.preview;
     apply_prefs(next, cx);
+}
+
+fn project_activity_dot(open: bool) -> AnyElement {
+    div()
+        .flex_none()
+        .size(px(5.))
+        .rounded_full()
+        .when(open, |s| s.bg(rgb(0x34c759)))
+        .into_any_element()
 }

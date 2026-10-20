@@ -1,6 +1,9 @@
 //! Credits and optional support, opened explicitly from Schnauz's app menu.
 use super::*;
 
+const WEBSITE_URL: &str = "https://techguyzone.com/apps/schnauz/";
+const GITHUB_URL: &str = "https://github.com/weiaoli2/Schnauz";
+
 const PAYPAL_ADDRESS: &str = "o@freedom-net.de";
 const COFFEE_URL: &str = "https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=o%40freedom-net.de&item_name=Coffee%20for%20Cookie%20-%20Schnauz&amount=2.50&currency_code=USD&no_shipping=1";
 
@@ -42,6 +45,17 @@ impl Render for About {
                 .child(div().flex().flex_col().gap_1()
                     .child(div().text_size(px(28.)).font_weight(FontWeight::BOLD).child("Schnauz"))
                     .child(div().text_color(rgb(t.text_muted)).text_size(px(11.)).child(format!("Version {} · Made for Mac", env!("CARGO_PKG_VERSION"))))))
+            .child(div().flex_none().flex().items_center().gap_4()
+                .child(div().id("about-website").relative().h(px(26.)).flex().items_center().cursor_pointer()
+                    .text_color(rgb(t.accent)).hover(|d|d.underline()).tooltip(tip(WEBSITE_URL))
+                    .children(ui_checks::probe("about-website-link"))
+                    .child("Schnauz website")
+                    .on_click(|_,_,cx|cx.open_url(WEBSITE_URL)))
+                .child(div().id("about-github").relative().h(px(26.)).flex().items_center().cursor_pointer()
+                    .text_color(rgb(t.accent)).hover(|d|d.underline()).tooltip(tip(GITHUB_URL))
+                    .children(ui_checks::probe("about-github-link"))
+                    .child("GitHub")
+                    .on_click(|_,_,cx|cx.open_url(GITHUB_URL))))
             .child(updates::controls(f32::from(window.viewport_size().width)-40.,cx))
             .child(div().flex_none().flex().flex_col().gap_1()
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("Developed by Oliver Weber"))
@@ -126,6 +140,11 @@ pub(super) fn check_updates(cx: &mut App) {
         ..Default::default()
     },|_,cx|cx.new(|cx|About {focus:cx.focus_handle(),copied:false})).unwrap();
     for _ in 0..3 {cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap();}
+    let website=ui_checks::recorded_bounds("about-website-link");
+    let github=ui_checks::recorded_bounds("about-github-link");
+    assert!(f32::from(website.size.width)>90. && f32::from(github.size.width)>35.);
+    assert!(website.right()<github.origin.x && website.origin.y==github.origin.y);
+    assert!(f32::from(github.right())<500.);
     let source=ui_checks::recorded_text("update-source");
     assert_eq!(source.text(),"Updates are checked via GitHub.");
     assert!(f32::from(source.bounds().size.width)>100.);

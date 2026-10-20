@@ -11,7 +11,7 @@ pub(super) struct Geometry {
 impl TerminalView {
     pub(super) fn scrollbar_geometry(&self) -> Geometry {
         use alacritty_terminal::grid::Dimensions;
-        let (history, offset, visible) = self.state.with_term(|term| {
+        let (history, offset, visible) = self.displayed_state().with_term(|term| {
             (
                 term.total_lines() - term.screen_lines(),
                 term.grid().display_offset(),
@@ -66,7 +66,7 @@ impl TerminalView {
         let top = (y - f32::from(self.bounds.get().origin.y) - 2. - grab).clamp(0., travel);
         let offset = ((1. - top / travel) * g.history as f32).round() as usize;
         let delta = offset as i64 - g.offset as i64;
-        self.state.with_term_mut(|term| {
+        self.displayed_state().with_term_mut(|term| {
             term.scroll_display(Scroll::Delta(
                 delta.clamp(i32::MIN as i64, i32::MAX as i64) as i32
             ))

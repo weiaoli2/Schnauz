@@ -32,7 +32,7 @@ pub(super) fn frames(
 
 impl Schnauz {
     pub(super) fn native_preview_blocked(&self) -> bool {
-        self.file_app_choice.is_some()
+        self.network_connecting || self.weblink_editor_open || self.file_app_choice.is_some()
             || self.tab_project_move.is_some()
             || self.file_access_intro.is_some()
             || self.confirm_delete.is_some()

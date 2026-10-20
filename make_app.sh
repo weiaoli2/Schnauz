@@ -83,6 +83,10 @@ xcrun swiftc "${SWIFT_ARGS[@]}" native/nextcloud/Core.swift native/nextcloud/mai
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/nextcloudctl"
 xcrun swiftc "${SWIFT_ARGS[@]}" native/todoist/Core.swift native/todoist/Composer.swift native/todoist/main.swift -o "$APP/Contents/MacOS/todoistctl"
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/todoistctl"
+xcrun swiftc -parse-as-library "${SWIFT_ARGS[@]}" native/weblinks/Form.swift native/weblinks/main.swift -o "$APP/Contents/MacOS/weblinkctl"
+codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/weblinkctl"
+xcrun swiftc -parse-as-library "${SWIFT_ARGS[@]}" native/network/Core.swift native/network/System.swift native/network/Form.swift native/network/main.swift -o "$APP/Contents/MacOS/networkctl"
+codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/networkctl"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -102,6 +106,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSHumanReadableCopyright</key><string>Schnauz © Oliver Weber. Based on Shuffle © Jaime Guzman. MIT license.</string>
 </dict></plist>
 PLIST
+python3 scripts/check_bundle_contents.py "$APP"
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" --identifier local.schnauz.app "$APP"
 codesign --verify --deep --strict "$APP"
 for executable in "$APP"/Contents/MacOS/*; do

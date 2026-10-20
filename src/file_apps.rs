@@ -81,6 +81,9 @@ pub(super) struct Choice {
     extension: String,
     error: Option<String>,
 }
+#[cfg(feature = "ui-checks")]
+thread_local! { pub(super) static OPEN_CAPTURE: RefCell<Option<Vec<PathBuf>>> = const { RefCell::new(None) }; }
+
 impl Choice {
     fn remember(&self, always: bool) -> Result<(), String> {
         if always {
@@ -128,6 +131,11 @@ impl Schnauz {
         }
     }
     fn launch_file(&mut self, path: PathBuf, app: Option<PathBuf>, cx: &mut Context<Self>) {
+        #[cfg(feature = "ui-checks")]
+        if OPEN_CAPTURE.with(|capture| {
+            let mut capture = capture.borrow_mut();
+            if let Some(paths) = capture.as_mut() { paths.push(path.clone()); true } else { false }
+        }) { return; }
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {

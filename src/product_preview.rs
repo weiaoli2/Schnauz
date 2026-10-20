@@ -39,7 +39,7 @@ pub(super) fn run() {
             sort: "name".into(),
             ascending: true,
             filter: EntryFilter::All,
-            show_hidden: false,
+            show_hidden: false, network:None,
         };
         let tabs = vec![
             saved(directory.clone()),

@@ -287,16 +287,48 @@ pub fn mouse_button_report(
     // Bit 2: Shift, Bit 3: Alt, Bit 4: Control
     let button_value = button_code | modifiers;
 
-    // SGR format uses 1-based indexing
-    let col = point.column.0 + 1;
-    let row = point.line.0 + 1;
+    Some(encode_report(button_value, pressed, point, mode))
+}
 
-    // SGR format: ESC [ < button ; col ; row M/m
-    // M for press, m for release
-    let action = if pressed { b'M' } else { b'm' };
-
-    let sequence = format!("\x1b[<{};{};{}{}", button_value, col, row, action as char);
-    Some(sequence.into_bytes())
+// Match the protocol the application enabled. Sending SGR to an application
+// expecting legacy reports can turn mouse packets into literal prompt text.
+fn encode_report(button: u8, pressed: bool, point: AlacPoint, mode: TermMode) -> Vec<u8> {
+    let col = point.column.0;
+    let row = point.line.0.max(0) as usize;
+    if mode.contains(TermMode::SGR_MOUSE) {
+        return format!(
+            "\x1b[<{};{};{}{}",
+            button,
+            col + 1,
+            row + 1,
+            if pressed { 'M' } else { 'm' }
+        )
+        .into_bytes();
+    }
+    let limit = if mode.contains(TermMode::UTF8_MOUSE) {
+        2015
+    } else {
+        223
+    };
+    if col >= limit || row >= limit {
+        return Vec::new();
+    }
+    let mut report = b"\x1b[M".to_vec();
+    report.push(32 + if pressed { button } else { 3 | (button & 28) });
+    for value in [col + 33, row + 33] {
+        if mode.contains(TermMode::UTF8_MOUSE) {
+            let mut utf8 = [0; 4];
+            report.extend_from_slice(
+                char::from_u32(value as u32)
+                    .unwrap()
+                    .encode_utf8(&mut utf8)
+                    .as_bytes(),
+            );
+        } else {
+            report.push(value as u8);
+        }
+    }
+    report
 }
 
 /// Generate scroll wheel report escape sequence.
@@ -344,18 +376,12 @@ pub fn scroll_report(
         // Button codes for scroll: 64 = wheel up, 65 = wheel down
         let button_code = if delta > 0 { 64 } else { 65 };
         let button_value = button_code | modifiers;
-
-        // SGR format uses 1-based indexing
-        let col = point.column.0 + 1;
-        let row = point.line.0 + 1;
-
-        // Mouse wheel events are always "pressed" (M), never released
-        let sequence = format!("\x1b[<{};{};{}M", button_value, col, row);
-        return Some(sequence.into_bytes());
+        let sequence = encode_report(button_value, true, point, mode);
+        return Some(sequence.repeat(delta.unsigned_abs().min(32) as usize));
     }
 
-    // If in alternate screen mode but no mouse reporting, send arrow keys
-    if mode.contains(TermMode::ALT_SCREEN) {
+    // DECRST 1007 explicitly disables translating the wheel into cursor keys.
+    if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
         return Some(scroll_to_arrow_keys(delta, mode));
     }
 
@@ -565,7 +591,7 @@ mod tests {
     #[test]
     fn test_mouse_button_report_left_click() {
         let point = AlacPoint::new(Line(5), Column(10));
-        let mode = TermMode::MOUSE_REPORT_CLICK;
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
 
         let bytes = mouse_button_report(MouseButton::Left, true, point, 0, mode);
         assert!(bytes.is_some());
@@ -580,7 +606,7 @@ mod tests {
     #[test]
     fn test_mouse_button_report_right_release() {
         let point = AlacPoint::new(Line(0), Column(0));
-        let mode = TermMode::MOUSE_REPORT_CLICK;
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
 
         let bytes = mouse_button_report(MouseButton::Right, false, point, 0, mode);
         assert!(bytes.is_some());
@@ -593,7 +619,7 @@ mod tests {
     #[test]
     fn test_mouse_button_report_with_modifiers() {
         let point = AlacPoint::new(Line(0), Column(0));
-        let mode = TermMode::MOUSE_REPORT_CLICK;
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
         let modifiers = encode_modifiers(true, true, true); // Shift + Alt + Ctrl = 28
 
         let bytes = mouse_button_report(MouseButton::Left, true, point, modifiers, mode);
@@ -616,27 +642,27 @@ mod tests {
     #[test]
     fn test_scroll_report_mouse_mode() {
         let point = AlacPoint::new(Line(5), Column(10));
-        let mode = TermMode::MOUSE_REPORT_CLICK;
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
 
         // Scroll up
         let bytes = scroll_report(3, point, 0, mode);
         assert!(bytes.is_some());
         let sequence = String::from_utf8(bytes.unwrap()).unwrap();
         // Wheel up = button 64
-        assert_eq!(sequence, "\x1b[<64;11;6M");
+        assert_eq!(sequence, "\x1b[<64;11;6M".repeat(3));
 
         // Scroll down
         let bytes = scroll_report(-2, point, 0, mode);
         assert!(bytes.is_some());
         let sequence = String::from_utf8(bytes.unwrap()).unwrap();
         // Wheel down = button 65
-        assert_eq!(sequence, "\x1b[<65;11;6M");
+        assert_eq!(sequence, "\x1b[<65;11;6M".repeat(2));
     }
 
     #[test]
     fn test_scroll_report_alternate_screen() {
         let point = AlacPoint::new(Line(0), Column(0));
-        let mode = TermMode::ALT_SCREEN;
+        let mode = TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL;
 
         // Scroll up in alternate screen = arrow up keys
         let bytes = scroll_report(3, point, 0, mode);
@@ -649,7 +675,7 @@ mod tests {
     #[test]
     fn test_scroll_report_alternate_screen_app_cursor() {
         let point = AlacPoint::new(Line(0), Column(0));
-        let mode = TermMode::ALT_SCREEN | TermMode::APP_CURSOR;
+        let mode = TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL | TermMode::APP_CURSOR;
 
         // Scroll down with app cursor mode
         let bytes = scroll_report(-2, point, 0, mode);
@@ -657,6 +683,62 @@ mod tests {
         let sequence = bytes.unwrap();
         // Should be 2 arrow down sequences in app cursor format
         assert_eq!(sequence, b"\x1bOB\x1bOB");
+    }
+
+    #[test]
+    fn disabled_alternate_scroll_cannot_inject_cursor_keys() {
+        let point = AlacPoint::new(Line(0), Column(0));
+        assert_eq!(scroll_report(-3, point, 0, TermMode::ALT_SCREEN), None);
+    }
+    #[test]
+    fn mouse_reports_follow_legacy_utf8_and_sgr_modes() {
+        let point = AlacPoint::new(Line(0), Column(0));
+        let legacy = TermMode::MOUSE_REPORT_CLICK;
+        assert_eq!(
+            mouse_button_report(MouseButton::Left, true, point, 0, legacy).unwrap(),
+            b"\x1b[M !!"
+        );
+        assert_eq!(
+            mouse_button_report(MouseButton::Right, false, point, 0, legacy).unwrap(),
+            b"\x1b[M#!!"
+        );
+        assert_eq!(
+            scroll_report(2, point, 0, legacy).unwrap(),
+            b"\x1b[M`!!\x1b[M`!!"
+        );
+        let wide = AlacPoint::new(Line(300), Column(300));
+        assert!(
+            mouse_button_report(MouseButton::Left, true, wide, 0, legacy)
+                .unwrap()
+                .is_empty()
+        );
+        let utf8 = mouse_button_report(
+            MouseButton::Left,
+            true,
+            wide,
+            0,
+            legacy | TermMode::UTF8_MOUSE,
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(utf8).unwrap(),
+            format!(
+                "\x1b[M {}{}",
+                char::from_u32(333).unwrap(),
+                char::from_u32(333).unwrap()
+            )
+        );
+        assert_eq!(
+            mouse_button_report(
+                MouseButton::Left,
+                true,
+                wide,
+                0,
+                legacy | TermMode::SGR_MOUSE
+            )
+            .unwrap(),
+            b"\x1b[<0;301;301M"
+        );
     }
 
     #[test]

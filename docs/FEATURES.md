@@ -14,7 +14,10 @@ See [CREDITS.txt](../CREDITS.txt) for the full attribution.
 
 **Schnauz → About Schnauz**, or clicking the sitting Schnauzer beside the app name,
 shows the developer credit, original code attribution,
-credits and bundled licenses. Optional **Coffee for Cookie · US$2.50** support opens
+credits and bundled licenses. **Schnauz website** opens
+[the app page](https://techguyzone.com/apps/schnauz/), and **GitHub** opens
+[the public source repository](https://github.com/weiaoli2/Schnauz). Links open
+only when clicked. Optional **Coffee for Cookie · US$2.50** support opens
 PayPal for **o@freedom-net.de**; the address can also be copied. This is voluntary
 support for Oliver and his schnauzer Cookie. The button uses PayPal's documented
 [Payments Standard variables](https://developer.paypal.com/api/nvp-soap/paypal-payments-standard/integration-guide/Appx-websitestandard-htmlvariables/)
@@ -36,6 +39,16 @@ with a suggested USD 2.50 amount; the user completes any payment on PayPal.
 - **Reload folder** beside those controls re-reads the current local or SSH folder
   (⌘R), using the existing refresh action without restarting terminals.
 - Search, split/join panes, preview and project controls in the toolbar.
+- The **globe button immediately right of Search** connects a Windows/NAS **SMB**
+  drive (or AFP). Enter the server name/IP or a share URL, username and password,
+  or choose Guest; macOS lets you select the share. Optional read-only access and
+  a folder picker are available. Each connected share/folder opens in a new tab.
+  Add that tab to Favourites to retain its server/share, user and relative folder.
+  **Remember password in Keychain** is enabled by default; passwords stay in
+  Schnauz's macOS Keychain entry, outside project/session files. Reopening a
+  favourite reconnects even if the mount name changes. Restored disconnected tabs
+  offer Retry; login dialogs do not open automatically at startup. Shares remain
+  mounted when a tab closes; eject them using Finder when finished.
 - **List** and **Icons** with matching vector toolbar controls. Right-click a list
   header or use **View options → List columns** to choose columns. Drag headers to
   reorder and their edges to resize. Wide lists scroll horizontally.
@@ -136,9 +149,58 @@ folder within that project. Folder context menus offer **Open**, **Open in New
 Tab** and **Open in New Window**, including SSH folders and sidebar favourites.
 New windows open the chosen folder without duplicating terminal sessions.
 
+Right-click a saved folder or file in Favourites or Common and choose **Edit alias and
+add-on…**. **Alias** replaces its name in the sidebar; leave it empty to
+keep the original name. **Add-on** is optional text shown in brackets after the
+name, for example `Reports (Archive)` or `Work (Server)`. These labels belong to
+every matching reference across Common and all projects; the actual path stays
+the same. Hover over any folder tab to see its full path (and server for SSH tabs).
+
+**Weblinks** stores named bookmarks in both Common and each project's Favourites.
+Right-click **COMMON** or **FAVOURITES**, choose **Add Weblink…**, enter a name and complete http(s) link, and choose either
+**macOS Default** or a specific installed browser for that bookmark. Click a link
+to open it; right-click for **Edit weblink…**, **Copy link**, or **Remove weblink**.
+Editing also changes its browser choice. Drag bookmarks to reorder them. Browser
+choices and bookmark order persist centrally; system defaults stay unchanged.
+A missing chosen browser asks you to edit the link rather than switching browsers.
+
+The search field aligns with the Schnauz title. Below it, a horizontal row lists
+projects with open tabs or terminals across your windows. The current project
+has a blue background; click another project to switch. Sessions stay open when
+you switch, and the row scrolls horizontally when needed.
+
+When you quit Schnauz, it checks for active processes in project terminals,
+including background project sessions and jobs. A warning identifies the projects
+and processes, with **Cancel** and **Quit Anyway**. Idle shells alone do not prompt.
+This also applies to Quit from the Dock; checking never sends terminal commands.
+
+The reload button beside **All / Folders / Files** appears only for SSH/SFTP.
+Local and locally synced cloud folders keep automatic updates; **⌘R** remains
+available for a manual refresh in every folder.
+
+Click the **PROJECTS** or **COMMON** heading to collapse/expand that group. The
+heading stays visible, with no extra icon, and its state is remembered. Dropping
+a reference on collapsed Common expands it to show the added item.
+
+Drag a folder tab onto Common to share its folder across projects, or elsewhere
+in the expanded sidebar to add it to the captured project's Favourites. The tab
+and its terminal remain open. SSH tabs keep their server identity; these drops
+add references without transferring files or connecting to servers.
+
+Drag projects to change their order. Drag references within a Common or
+Favourites Folders/Files group to reorder them; a thin insertion line marks the
+position. Orders are saved across restarts. Personal and Home stay pinned, and
+the section order stays fixed. These gestures rearrange references without moving
+files. Single-click a sidebar file to reveal it; double-click to open it with its
+configured app (remote files download before opening).
+
+A small green dot before a project icon means it has live tabs or terminals in
+any Schnauz window, including background project sessions. A saved layout alone
+does not light the dot.
+
 The compact sidebar shows **Devices**, **Projects**, **Common**, then **Favourites**.
-Common and Favourites group references under **Folders / Files**, hiding empty
-subsections, with no placeholder
+Common and Favourites group references under **Folders / Files / Weblinks**,
+hiding empty subsections and keeping **Add Weblink…** in the group heading’s context menu, with no placeholder
 messages or + button beside Favourites. Its width follows the visible names,
 with a cap for very long names and full paths in tooltips. Project rows no longer show tab counts. Cloud, Servers,
 Locations and Tagged Items are replaced by this single favourites list.
@@ -512,3 +574,47 @@ the original browser closes, without retaining that browser's terminals.
 
 The task pane uses a neutral outline pin while docked and a crossed pin while
 floating. Hovering identifies the current state and the Detach/Dock action.
+
+
+SSH connections and remote folder loads show immediate progress in the
+bottom-center status bar, including saved SSH favourites. The blue badge names
+the server and reports SSH settings checks, connecting and folder loading. It
+clears when the operation finishes; connection errors retain their dismiss button.
+
+
+The terminal's Select text button lets you mark and copy a still view while a
+program such as Codex continues running. Release the mouse to copy; ⌘C also
+copies the selection. Click Live terminal, type, paste with ⌘V or press Escape
+to return to live output. Shift-drag in mouse-reporting/full-screen programs
+also holds a still view, preventing redraws from erasing the selection.
+
+
+Tabs with a live terminal session show the same terminal icon as the toolbar,
+scaled down on the tab's right side before Close. It remains visible when the
+terminal panel is hidden and disappears when the session ends.
+
+SSH tabs also show the globe used on SSH favourite-folder badges. The globe and
+terminal tab indicators are black in light mode and white in dark mode.
+
+
+On quitting Schnauz or closing its last browser window, choose Keep Setup & Quit,
+Start Fresh Next Time or Cancel. Keeping restores browser windows, open projects,
+local/SSH tabs, layouts and terminal panels at the next launch. Terminals start
+fresh in their saved folders; running commands and programs are not resumed.
+Starting fresh opens a clean Personal/Home window while preserving saved projects,
+favourites and preferences. The warning about active terminal work still appears
+before quitting when needed.
+
+
+Active-project chips below Search are centered across the full window. A subtle
+one-point divider and compact spacing separate the rows. When projects exceed
+the available width, horizontal scrolling and selected-project reveal remain.
+
+
+Weblinks in each project's Favourites and shared Common store a name, HTTP(S) URL
+and optional browser. Add weblink… / Edit offers macOS Default or an installed
+browser; the choice belongs to that link, independently of the system default.
+Single-click opens; drag reorders without opening. Menus offer Edit, Copy link and
+Remove. A missing chosen browser reports an error so you can choose another.
+The website kit's FEATURE-STATUS.md lists the additions since its original 0.5.4
+copy, with local-preview/public-release distinctions and unchanged capture dates.

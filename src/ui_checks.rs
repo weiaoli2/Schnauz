@@ -27,8 +27,20 @@ pub(super) fn probe(name: &'static str) -> Option<AnyElement> {
 }
 
 #[cfg(feature = "ui-checks")]
+#[path = "terminal_selection_checks.rs"]
+mod terminal_selection_checks;
+
+#[cfg(feature = "ui-checks")]
 #[path = "drag_checks.rs"]
 mod drag_checks;
+
+#[cfg(feature = "ui-checks")]
+#[path = "project_strip_checks.rs"]
+mod project_strip_checks;
+
+#[cfg(feature = "ui-checks")]
+#[path = "tab_sidebar_checks.rs"]
+mod tab_sidebar_checks;
 
 #[cfg(feature = "ui-checks")]
 #[path = "clipboard_checks.rs"]
@@ -224,6 +236,9 @@ pub(super) fn run() {
             browser.file_app_choice = None; cx.notify();
         })).unwrap();
         if !visible {
+            check_ssh_footer(window,cx);
+            check_reload_visibility(window,cx);
+            check_network(window,cx);
             settings::check_quick_keybinds(cx);
             check_previews(window, cx);
             check_cloud_alias(window, cx);
@@ -231,7 +246,7 @@ pub(super) fn run() {
             check_updates(window,cx);
             check_tab_project_dialog(window,cx);
             check_video(window,cx);
-            todoist_window::check(window,cx,move |cx|drag_checks::run(window,cleanup,cx));
+            web_links::check(window,cx,move |cx|project_sidebar::check_order(window,cx,move |cx|todoist_window::check(window,cx,move |cx|drag_checks::run(window,cleanup,cx))));
         }
     });
 }
@@ -503,4 +518,85 @@ fn check_cloud_alias(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
     assert_eq!(nextcloud::location(&alias.join("Folder/image.png"),cx).unwrap().root,alias.join("Folder"));
     cx.set_global(original);
     println!("PASS Nextcloud alias identity, folder/file cloud badges and connected menu routing; no network, desktop credentials or Keychain accessed");
+}
+
+#[cfg(feature="ui-checks")]
+fn check_reload_visibility(window:gpui::WindowHandle<Fixture>,cx:&mut App) {
+    let original=window.update(cx,|f,_,cx|f.browser.update(cx,|b,_|b.tab_mut(0).remote.take())).unwrap();
+    for remote in [false,true,false] {
+        BOUNDS.with(|all|all.borrow_mut().remove("ssh-reload-control"));
+        window.update(cx,|f,_,cx|f.browser.update(cx,|b,cx| {
+            b.tab_mut(0).remote=remote.then(||SftpServer{host:"fixture.invalid".into(),..Default::default()});cx.notify();
+        })).unwrap();
+        for _ in 0..3 {cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap();}
+        BOUNDS.with(|all|assert_eq!(all.borrow().contains_key("ssh-reload-control"),remote,"Reload button is rendered only for SSH/SFTP"));
+    }
+    window.update(cx,|f,_,cx|f.browser.update(cx,|b,cx|{b.tab_mut(0).remote=original;cx.notify();})).unwrap();
+    println!("PASS actual filter-row reload control visibility for local/SSH/local browsing; no refresh request or network connection");
+}
+
+#[cfg(feature="ui-checks")]
+fn check_ssh_footer(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
+    let progress = ssh_connection::Progress::new();
+    let original = window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+        let tab = b.tab_mut(b.active_pane);
+        let original = (tab.remote.take(), tab.ssh_progress.take());
+        tab.remote = Some(SftpServer { host: "fixture.invalid".into(), ..Default::default() });
+        tab.ssh_progress = Some(progress.clone());
+        cx.notify();
+        original
+    })).unwrap();
+    let body = BOUNDS.with(|all| *all.borrow().get("drag-file-body").unwrap());
+    for stage in ["Checking SSH settings…", "Connecting…", "Connecting / loading folder…"] {
+        progress.set(stage);
+        BOUNDS.with(|all| all.borrow_mut().remove("footer-ssh-progress"));
+        for _ in 0..3 { cx.update_window(*window, |_, w, cx| { w.refresh(); w.draw(cx).clear(); }).unwrap(); }
+        BOUNDS.with(|all| {
+            let all = all.borrow();
+            let badge = all.get("footer-ssh-progress").expect("SSH progress is painted even with an existing notice");
+            let footer = all.get("footer").unwrap();
+            assert!(f32::from(badge.size.width) > 100.);
+            assert!(footer.contains(&badge.origin) && footer.contains(&badge.bottom_right()));
+            assert_eq!(*all.get("drag-file-body").unwrap(), body);
+        });
+    }
+    progress.finish();
+    BOUNDS.with(|all| all.borrow_mut().remove("footer-ssh-progress"));
+    for _ in 0..3 { cx.update_window(*window, |_, w, cx| { w.refresh(); w.draw(cx).clear(); }).unwrap(); }
+    BOUNDS.with(|all| assert!(!all.borrow().contains_key("footer-ssh-progress")));
+    window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+        let tab = b.tab_mut(b.active_pane);
+        (tab.remote, tab.ssh_progress) = original;
+        cx.notify();
+    })).unwrap();
+    println!("PASS SSH progress stages in fixed footer, notice priority and completion cleanup; synthetic progress only, no network");
+}
+
+#[cfg(feature="ui-checks")]
+fn check_network(window:gpui::WindowHandle<Fixture>,cx:&mut App) {
+    let original=window.update(cx,|f,_,cx|f.browser.update(cx,|b,cx| {
+        let pane=b.active_pane;let active=b.panes[pane].active;
+        let root=config_dir().unwrap().join("network-share-fixture");
+        let location=network::Location{url:"smb://fixture.invalid/Share".into(),username:"fixture".into(),guest:false,read_only:false,mount_root:root.clone(),relative:PathBuf::new()};
+        b.panes[pane].tabs.push(Tab::at_network_location(root,None,Some(location.clone())));
+        b.panes[pane].active=b.panes[pane].tabs.len()-1;
+        b.reload_pane(pane,cx); // Restored tabs wait for explicit Retry; no helper or mount.
+        assert!(b.tab(pane).listing_error.is_some());assert!(!b.network_connecting);
+        let shortcut=b.tab_folder_drag(pane,b.panes[pane].active,cx).folder;
+        assert_eq!(shortcut.network,Some(location.clone()));
+        let layout=b.capture_layout();assert_eq!(layout.panes[pane].tabs.last().unwrap().network,Some(location));
+        assert_eq!(layout.available().unwrap().panes[pane].tabs.len(),layout.panes[pane].tabs.len());
+        b.network_status=Some("Connecting to network drive…".into());cx.notify();(pane,active)
+    })).unwrap();
+    for _ in 0..3 {cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap();}
+    BOUNDS.with(|all| {
+        let all=all.borrow();let button=all.get("connect-network-button").expect("Network toolbar control painted");
+        assert!(f32::from(button.size.width)>=24.);
+        let badge=all.get("footer-network-progress").expect("Network status painted");let footer=all.get("footer").unwrap();
+        assert!(footer.contains(&badge.origin)&&footer.contains(&badge.bottom_right()));
+    });
+    window.update(cx,|f,_,cx|f.browser.update(cx,|b,cx| {
+        let (pane,active)=original;b.panes[pane].tabs.pop();b.panes[pane].active=active;b.network_status=None;cx.notify();
+    })).unwrap();
+    println!("PASS network toolbar/footer, disconnected tab Retry, tab drag favourite routing and missing-share session persistence; synthetic paths only, no mounts or Keychain");
 }

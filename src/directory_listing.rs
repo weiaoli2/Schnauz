@@ -70,7 +70,9 @@ pub(super) fn error_panel(error: &ListingError, pane: usize, cx: &Context<Schnau
                 .flex()
                 .gap_2()
                 .child(button("retry-folder", "Retry").on_click(
-                    cx.listener(move |this, _: &ClickEvent, _, cx| this.reload_pane(pane, cx)),
+                    cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        if this.tab(pane).network.is_some()&&!this.tab(pane).network_connected {this.reconnect_network_tab(pane,cx);}else{this.reload_pane(pane,cx);}
+                    }),
                 ))
                 .when(error.permission_denied, |d| {
                     d.child(

@@ -37,6 +37,11 @@ pub(super) struct Expansion {
     added: f32,
 }
 impl Expansion {
+    pub(super) fn saved_added(&self) -> f32 { self.added }
+    pub(super) fn restored(visible:bool,added:f32) -> Self {
+        Self { visible, added:if visible && added.is_finite() {added.clamp(0.,720.)} else {0.} }
+    }
+
     fn update(
         &mut self,
         visible: bool,

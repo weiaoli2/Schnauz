@@ -275,7 +275,7 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
                 let server=b.tab(0).terminal.as_ref().unwrap().ssh.as_ref().unwrap().server.clone();
                 let view=b.tab(0).terminal.as_ref().unwrap().view.entity_id();
                 let tab_id=b.tab(0).id; let count=b.panes[0].tabs.len();
-                let remote=projects::Shortcut{path:"/home/fixture".into(),kind:projects::Section::Folders,server:Some(server.clone())};
+                let remote=projects::Shortcut{network:None,path:"/home/fixture".into(),kind:projects::Section::Folders,server:Some(server.clone()),alias:String::new(),add_on:String::new()};
                 b.open_favourite(projects::Shortcut::local(source.clone(),projects::Section::Folders),cx);
                 assert!(b.tab(0).remote.is_none());
                 assert!(!b.tab(0).terminal.as_ref().unwrap().ssh.as_ref().unwrap().following);
@@ -286,11 +286,11 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
                 assert_eq!(b.tab(0).terminal.as_ref().unwrap().view.entity_id(),view);
                 assert!(b.tab(0).terminal.as_ref().unwrap().ssh.as_ref().unwrap().following);
                 // A different remote folder stays unsynced with the same PTY.
-                b.open_favourite(projects::Shortcut{path:"/other".into(),kind:projects::Section::Folders,server:Some(server)},cx);
+                b.open_favourite(projects::Shortcut{network:None,path:"/other".into(),kind:projects::Section::Folders,server:Some(server),alias:String::new(),add_on:String::new()},cx);
                 assert!(b.tab(0).terminal_open); assert_eq!(b.tab(0).terminal.as_ref().unwrap().id,id);
                 assert!(!b.tab(0).terminal.as_ref().unwrap().ssh.as_ref().unwrap().following);
                 let mut other=b.tab(0).remote.clone().unwrap(); other.host="192.0.2.2".into();
-                b.open_favourite(projects::Shortcut{path:"/elsewhere".into(),kind:projects::Section::Folders,server:Some(other)},cx);
+                b.open_favourite(projects::Shortcut{network:None,path:"/elsewhere".into(),kind:projects::Section::Folders,server:Some(other),alias:String::new(),add_on:String::new()},cx);
                 assert!(b.tab(0).terminal_open); assert_eq!(b.tab(0).terminal.as_ref().unwrap().id,id);
                 b.open_favourite(projects::Shortcut::local(source.clone(),projects::Section::Folders),cx);
                 assert!(b.tab(0).terminal_open && b.tab(0).remote.is_none());
@@ -301,12 +301,16 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
                 assert_eq!(b.panes[0].tabs.len(),count);
                 assert!(b.tab(0).selection.contains(&target.join("a.txt")));
                 crate::tab_projects::check_moves(b, window, cx);
-                // Drop only this owned fixture session, never a live user PTY.
-                b.tab_mut(0).terminal.take(); b.tab_mut(0).terminal_open=false;
             })).unwrap();
             native_file_drag::ended();
             println!("PASS tracking-mode tab/folder dwell, same-folder cancellation and immediate next selection, actual copy/move, and SSH favourite roundtrip retaining the same terminal/tab/view; no live server, account or user session accessed");
-            fs::remove_dir_all(directory).unwrap(); std::process::exit(0);
+            super::terminal_selection_checks::run(window,cx,move |cx| super::tab_sidebar_checks::run(window,cx,move |cx| super::project_strip_checks::run(window,cx,move |cx| startup_setup::check(cx,move |cx| quit_guard::check(window,cx,move |cx| {
+                window.update(cx,|f,_,cx|f.browser.update(cx,|b,_| {
+                    // Drop only this owned fixture session, never a live user PTY.
+                    for pane in &mut b.panes { for tab in &mut pane.tabs { tab.terminal.take(); tab.terminal_open=false; } }
+                })).unwrap();
+                fs::remove_dir_all(directory).unwrap(); std::process::exit(0);
+            })))));
         }).unwrap();
     }).detach();
 }

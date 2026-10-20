@@ -185,6 +185,29 @@ impl TerminalState {
         }
     }
 
+    /// A bounded copy of the current grid for local selection. The live parser
+    /// continues consuming PTY output and answering protocol requests separately.
+    pub(crate) fn selection_snapshot(&self) -> Self {
+        use alacritty_terminal::vte::ansi::Handler;
+        self.with_term(|live| {
+            let mut snapshot = Self::new(
+                live.columns(),
+                live.screen_lines(),
+                self.shell_events.clone(),
+            );
+            snapshot.with_term_mut(|term| {
+                *term.grid_mut() = live.grid().clone();
+                for index in 0..alacritty_terminal::term::color::COUNT {
+                    if let Some(color) = live.colors()[index] {
+                        term.set_color(index, color);
+                    }
+                }
+            });
+            snapshot.process_bytes(b"\x1b[?25l");
+            snapshot
+        })
+    }
+
     /// Process incoming bytes from the PTY.
     ///
     /// This method feeds the bytes through the VTE parser, which will call

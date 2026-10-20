@@ -227,21 +227,103 @@ pub(super) struct Session {
     pub view: Entity<TerminalView>,
     pub cwd: PathBuf,
     pub ready: bool,
+    skip_initial_follow: bool,
     guard: ForegroundSync,
     pub pending: Option<PathBuf>,
     process: Process,
     pub ssh: Option<crate::ssh_sync::Link>,
 }
+/// Read-only snapshot for an explicit quit check, including parked terminals.
+#[derive(Clone)]
+pub(super) struct QuitProbe {
+    master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    exited: Arc<AtomicBool>,
+    shell: u32,
+    command_active: bool,
+}
+impl QuitProbe {
+    pub(super) fn running_names(&self) -> Vec<String> {
+        if self.exited.load(Ordering::Acquire) {
+            return Vec::new();
+        }
+        let foreground = self.master.lock().unwrap().process_group_leader();
+        let mut queue = vec![self.shell as i32];
+        let mut seen = HashSet::new();
+        let mut names = std::collections::BTreeSet::new();
+        // An owned remote PTY may run ssh directly, or a shell may exec Codex.
+        // Those roots are real programs even without a separate child process.
+        let mut root_name = [0u8; 256];
+        if unsafe {
+            libc::proc_name(
+                self.shell as i32,
+                root_name.as_mut_ptr().cast(),
+                root_name.len() as u32,
+            )
+        } > 0
+        {
+            let end = root_name
+                .iter()
+                .position(|b| *b == 0)
+                .unwrap_or(root_name.len());
+            let name = String::from_utf8_lossy(&root_name[..end]).into_owned();
+            if !matches!(
+                name.trim_start_matches('-'),
+                "zsh" | "bash" | "sh" | "ksh" | "fish" | "dash" | "tcsh" | "csh"
+            ) {
+                names.insert(name);
+            }
+        }
+        while let Some(parent) = queue.pop() {
+            if seen.len() >= 2048 || !seen.insert(parent) {
+                continue;
+            }
+            let mut children = [0 as libc::pid_t; 256];
+            let result = unsafe {
+                libc::proc_listchildpids(
+                    parent,
+                    children.as_mut_ptr().cast(),
+                    std::mem::size_of_val(&children) as i32,
+                )
+            };
+            if result < 0 {
+                names.insert("process details unavailable".into());
+                continue;
+            }
+            for pid in children.into_iter().filter(|pid| *pid > 1) {
+                let mut name = [0u8; 256];
+                if unsafe { libc::proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) } > 0
+                {
+                    let end = name.iter().position(|b| *b == 0).unwrap_or(name.len());
+                    names.insert(String::from_utf8_lossy(&name[..end]).into_owned());
+                    queue.push(pid);
+                }
+            }
+        }
+        if names.is_empty()
+            && (self.command_active
+                || foreground.is_some_and(|pid| pid > 1 && pid as u32 != self.shell))
+        {
+            names.insert("shell command".into());
+        }
+        names.into_iter().collect()
+    }
+}
+
 impl Session {
+    pub(super) fn quit_probe(&self) -> Option<QuitProbe> {
+        Some(QuitProbe {master:self.process.master.clone(),exited:self.process.exited.clone(),shell:self.process.shell_pid?,command_active:self.guard.running && !self.ready && self.ssh.is_none()})
+    }
     #[cfg(feature = "ui-checks")]
     pub(super) fn fixture_pid(&self) -> u32 { self.process.shell_pid.unwrap() }
+    #[cfg(feature = "ui-checks")]
+    pub(super) fn fixture_input(&self, bytes: &[u8]) { self.process.input(bytes).unwrap(); }
     pub(super) fn ssh_record(&self) -> &Path {
         &self.process.ssh_request
     }
     pub(super) fn browser_moved_during_ssh(&mut self) {
         self.guard.browser_moved = true;
     }
-    fn exited(&self) -> bool {
+    pub(super) fn exited(&self) -> bool {
         self.process.exited.load(Ordering::Acquire)
     }
     fn request_directory(&mut self, folder: PathBuf) {
@@ -332,6 +414,23 @@ impl Schnauz {
         cx: &mut Context<Self>,
     ) -> bool {
         let cwd = self.tab(pane).current_dir.clone();
+        self.start_terminal_at_impl(pane,self.panes[pane].active,cwd,test_shell,cx)
+    }
+
+    pub(super) fn start_terminal_at(&mut self,pane:usize,index:usize,cwd:PathBuf,cx:&mut Context<Self>) -> bool {
+        #[cfg(feature="ui-checks")]
+        let fixture=startup_setup::fixture_shell();
+        #[cfg(not(feature="ui-checks"))]
+        let fixture=false;
+        let started=self.start_terminal_at_impl(pane,index,cwd,fixture,cx);
+        if started {
+            // Startup prompt hooks must not move a deliberately unsynced browser.
+            let session=self.panes[pane].tabs[index].terminal.as_mut().unwrap();
+            session.skip_initial_follow=true;
+        }
+        started
+    }
+    fn start_terminal_at_impl(&mut self,pane:usize,index:usize,cwd:PathBuf,test_shell:bool,cx:&mut Context<Self>) -> bool {
         let settings = config_dir().unwrap_or_else(std::env::temp_dir);
         let (process, reader) = match spawn_process(&cwd, &settings, test_shell) {
             Ok(pair) => pair,
@@ -340,7 +439,6 @@ impl Schnauz {
                 return false;
             }
         };
-        let index = self.panes[pane].active;
         self.install_terminal(pane, index, cwd, process, reader, None, cx);
         true
     }
@@ -408,11 +506,13 @@ impl Schnauz {
                     });
                 })
         });
+        cx.subscribe(&view, |_, _, _: &gpui_terminal::view::TextSelectionChanged, cx| cx.notify()).detach();
         self.panes[pane].tabs[index].terminal = Some(Session {
             id,
             view,
             cwd,
             ready: false,
+            skip_initial_follow: false,
             guard: ForegroundSync::default(),
             pending: None,
             process,
@@ -499,6 +599,7 @@ impl Schnauz {
                                 }
                                 if tab.terminal_open
                                     && !session.guard.running
+                                    && !session.skip_initial_follow
                                     && session.pending.is_none()
                                 {
                                     tab.current_dir = folder;
@@ -521,6 +622,7 @@ impl Schnauz {
                         ShellEvent::PromptReady => {
                             session.ready = true;
                             let follow = session.guard.prompt_ready()
+                                && !std::mem::take(&mut session.skip_initial_follow)
                                 && tab.terminal_open
                                 && session.pending.is_none();
                             if follow {
@@ -575,13 +677,13 @@ impl Schnauz {
                 }
                 // A foreground app may emit its own cwd reports. Record them
                 // without moving the browser while the app owns the terminal.
-                if !session.guard.running {
+                if !session.guard.running && !session.skip_initial_follow {
                     self.follow_terminal_folder(pane, tab_index, cx);
                 }
             }
             ShellEvent::PromptReady => {
                 session.ready = true;
-                let follow = session.guard.prompt_ready();
+                let follow = session.guard.prompt_ready() && !std::mem::take(&mut session.skip_initial_follow);
                 if tab.terminal_open {
                     session.flush_directory();
                 }
@@ -715,6 +817,21 @@ impl Schnauz {
                         .text_color(rgb(0xaab4cb))
                         .child(div().font_weight(FontWeight::SEMIBOLD).child("Terminal"))
                         .child(div().flex_1().min_w_0().truncate().child(terminal_path))
+                        .child(
+                            div().id(("terminal-select-text", pane)).relative().flex_none().whitespace_nowrap()
+                                .children(ui_checks::probe("terminal-select-text"))
+                                .px_2().cursor_pointer()
+                                .text_color(rgb(if session.view.read(cx).text_selection_active() { 0xa5b4fc } else { 0xaab4cb }))
+                                .hover(|s| s.text_color(rgb(0xffffff)))
+                                .child(if session.view.read(cx).text_selection_active() { "Live terminal" } else { "Select text" })
+                                .tooltip(tip("Select a still view of terminal text while the program keeps running. Type, paste or press Escape to return live."))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    if let Some(session) = this.tab(pane).terminal.as_ref() {
+                                        session.view.update(cx, |view, cx| view.toggle_text_selection(window, cx));
+                                    }
+                                    cx.notify();
+                                })),
+                        )
                         .child(
                             div()
                                 .id(("terminal-sync", pane))
@@ -1134,14 +1251,21 @@ SNZ_SSH_TEST_SHELL=1 SHELL="$SNZ_SSH_TEST_REMOTE_SHELL" /bin/sh -c "$remote"
             events.contains(&ShellEvent::DirectoryChangeFailed)
                 && events.contains(&ShellEvent::PromptReady)
         });
+        let quit_probe=QuitProbe {master:probe.process.master.clone(),exited:probe.process.exited.clone(),shell:probe.process.shell_pid.unwrap(),command_active:false};
+        assert!(quit_probe.running_names().is_empty(),"Idle shell alone must not block quitting");
         // Background jobs can leave a ready prompt but must block recovery.
         probe.command("sleep 30 & SCHNAUZ_TEST_JOB=$!");
         assert!(!probe.process.has_foreground_app());
         assert!(!probe.process.is_idle_shell());
+        let deadline=Instant::now()+Duration::from_secs(2);
+        while !quit_probe.running_names().iter().any(|name|name.contains("sleep")) && Instant::now()<deadline { std::thread::sleep(Duration::from_millis(10)); }
+        assert!(quit_probe.running_names().iter().any(|name|name.contains("sleep")),"Background jobs must warn even at a ready prompt: {:?}",quit_probe.running_names());
         probe.command(
             "kill $SCHNAUZ_TEST_JOB; wait $SCHNAUZ_TEST_JOB 2>/dev/null; unset SCHNAUZ_TEST_JOB",
         );
         assert!(probe.process.is_idle_shell());
+        assert!(quit_probe.running_names().is_empty());
+        drop(quit_probe);
         drop(probe);
         // An idle restart uses the browser's folder and a fresh shell.
         let mut restarted = Probe::start(&start, &root.join("profile"));
@@ -1152,6 +1276,13 @@ SNZ_SSH_TEST_SHELL=1 SHELL="$SNZ_SSH_TEST_REMOTE_SHELL" /bin/sh -c "$remote"
         );
         restarted.command("printf '\\nRESTART_STATE:%s\\n' ${SCHNAUZ_TEST_STATE-unset}");
         assert!(String::from_utf8_lossy(&restarted.output).contains("RESTART_STATE:unset"));
+        let direct=QuitProbe {master:restarted.process.master.clone(),exited:restarted.process.exited.clone(),shell:restarted.process.shell_pid.unwrap(),command_active:false};
+        restarted.process.input(b"exec /bin/sleep 30\r").unwrap();
+        let deadline=Instant::now()+Duration::from_secs(2);
+        while !direct.running_names().iter().any(|name|name.contains("sleep")) && Instant::now()<deadline {std::thread::sleep(Duration::from_millis(10));}
+        assert!(direct.running_names().iter().any(|name|name.contains("sleep")),"A program replacing the shell must also warn (for example exec codex)");
+        assert!(!restarted.process.has_foreground_app(),"Root PID alone cannot distinguish an idle shell from exec");
+        drop(direct);
         drop(restarted);
         fs::remove_dir_all(root).unwrap();
     }

@@ -419,7 +419,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The current local version is 0.5.14; the published version is 0.5.14.
+  no per-build app copies or releases. The current local version is 0.8.0; the published version is 0.5.14.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -640,3 +640,157 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   not notarized, and an early prerelease. Receipts live in dist/0.5.14.
   This publication request is complete. Future releases need a new request;
   preserve existing tags/assets, including v0.5.11, and all live sessions.
+
+- Sidebar projects and references within each Common/Favourites Folders/Files group
+  reorder by internal drag, with an insertion line and central persisted order.
+  Personal, Home and section order remain fixed. Do not turn ordering gestures
+  into file transfers, navigation or terminal commands. Single-click sidebar files
+  reveals/selects; double-click opens via existing app preferences/download flow.
+  A 5 pt green dot precedes project icons with live tabs/terminals across any
+  browser, including parked project sessions; saved layouts alone are inactive.
+  Runtime activity is removed when its owning browser is released.
+
+- Folder tabs can be dragged onto Common or the expanded sidebar to add a typed
+  folder reference to Common or the captured project's Favourites. Freeze folder,
+  server and project in the tab-drag payload; never move/close its tab or PTY,
+  transfer files, read remote metadata or connect. Reuse the small reference-drop
+  hint, without destination tint. Keep tab reordering and drag-to-split intact,
+  rejecting stale tab identities and foreign-window tab moves.
+
+- Oliver requested text-only collapse/expand by clicking PROJECTS and COMMON.
+  Both headings persist while collapsed, with no new disclosure icon. Save their
+  state in collapsed_sections.txt; Common uses the COMMON key, leaving the legacy
+  Folders/Files flags ignored. Dropping a reference on collapsed Common expands
+  it to reveal the result. Favourites and subsection labels retain their existing
+  noncollapsing behavior. Collapsing groups never closes tabs or terminals.
+
+- Keep Common/Favourites compact: main headings use 8 pt top/no bottom padding,
+  with 4 pt above the Folders/Files labels and 2 pt below. Rows stay 24 pt.
+
+- Weblinks is a third sidebar reference type in Common and project Favourites.
+  Each centrally stored bookmark has a stable ID, name, HTTP(S) URL and optional
+  browser app path. Single-click opens; Edit weblink changes name/link/browser;
+  Copy link, Remove and drag ordering are supported. Per-link browsers never
+  change macOS defaults. Discover browsers only on explicit editor opening, not
+  during rendering. Missing chosen browsers require editing, never silently
+  fall back. native/weblinks/ provides native fields and browser choices through
+  signed weblinkctl; keep clipboard shortcuts and preserve failed-save drafts.
+  Capture ownership across project switches and reject stale edits. Use offline
+  fixture forms and intercepted launches in tests; never open real user URLs.
+
+- Quit Schnauz checks only active terminal work, not the mere presence of terminal
+  tabs/idle shells. src/quit_guard.rs scans owned PTY children on an explicit quit
+  request, groups processes by current/parked project across all browser windows,
+  and offers Cancel / Quit Anyway. Include background/suspended jobs; never inject
+  terminal commands or query remote processes for this check. The owned AppKit app
+  delegate subclass also guards Dock Quit, inheriting GPUI's normal shutdown.
+  Tests use fixture PTYs and intercept actual quitting; preserve live sessions.
+- The 62 pt browser toolbar aligns the search field with the Schnauz title and uses
+  the row beneath for active-project chips centered across the full window
+  when they fit, with horizontal scrolling on overflow. Active means live tabs/terminals in
+  any window, matching sidebar dots; saved layouts alone are excluded. Current
+  project has a blue background. Click chips through the existing global project
+  switch, retaining every per-window live PTY. Keep a horizontal scroll handle per
+  window and reveal the selected chip after project/order changes. No header
+  overlap with native window controls, tabs or path/filter bars. Keep a 1 pt
+  subtle divider with 1 pt above and 2 pt below the line between rows, and 2 pt
+  below the project chips to match their top clearance; Settings
+  retains its independent 56 pt header.
+
+- Oliver chose 0.7 for this next feature build; use ordinary version 0.7.0.
+  No publication is implied by the version choice; public release remains 0.5.14.
+  Oliver will test 0.7.0 first; wait for his explicit go-ahead before any release.
+- Show the filter-row reload button only for SSH/SFTP tabs (remote.is_some()).
+  Local and locally synced cloud folders use the existing watcher and hide it.
+  Retain Cmd+R for manual refresh everywhere; do not change refresh transport.
+
+- Saved sidebar folders and files support optional Alias and Add-on through “Edit alias and
+  add-on…” in their context menu. Display alias or original basename, followed
+  by an optional parenthesized add-on. Store both on the typed references in
+  projects.json; changes always update all matching destinations across Common,
+  Personal and every project, without options or confirmation. Preserve paths, server identity,
+  ordering and labels when re-adding a destination. Home remains fixed. Native
+  fields support ordinary clipboard editing; stale editors cannot replace changed
+  labels or recreate removed references. Tab hover shows the full current folder
+  path, with server identity for SSH, without connecting or reading metadata.
+
+- Quit-warning Cancel must close the native dialog, end its modal session and
+  restore normal browser drawing while keeping the app and all programs open.
+  Use a standalone NSAlert rather than a sheet: attaching a sheet to the adapted
+  browser NSWindow conflicts with AppKit's internal KVO bookkeeping. Own the
+  alert through completion and leave AppKit's button response tags intact. Native
+  modal-session polling runs outside GPUI borrows. Regression QA clicks real
+  Cancel buttons and verifies no visible dialog or modal session remains and the
+  same owned terminal/job survives; mocked replies alone cannot check dismissal.
+
+- SSH connection and remote-folder loading progress uses the existing centered
+  footer badge, with server identity. Keep it per tab/load, clear on completion
+  or failure, and show it ahead of stale general notices. Do not start duplicate
+  listings when selecting a pending connection or update a different tab after
+  tab switching/reordering. QA uses synthetic progress, never a live SSH server.
+
+- Terminal Select text holds a bounded local grid snapshot for selecting/copying
+  while a foreground program keeps running and redrawing. The header switches
+  to Live terminal; typing, pasting or Escape returns live. Shift-drag in app
+  mouse/alternate-screen mode also snapshots. Keep processing live PTY output,
+  protocol replies and resizes; never send mouse/scroll input to the program
+  while selecting a snapshot. Cmd+C copies the snapshot selection; Cmd+V resumes
+  and follows the live bracketed-paste mode. Test real AppKit mouse events across
+  a redraw, with captured input and preserved owned session/PID.
+
+- Tabs with a live terminal session show a small neutral terminal vector icon
+  on the right, before Close. Keep it visible when the panel is hidden; ended
+  sessions and tabs without a terminal have no indicator. The icon is informational
+  and keeps ordinary tab selection/drag behavior.
+
+- SSH browser tabs (remote.is_some()) show the same Globe vector icon as the
+  SSH favourite-folder badge, beside any terminal indicator before Close. Both
+  indicators are strictly black in light mode and white in dark mode, including
+  inactive tabs. Browsing a local folder after detaching SSH hides the globe;
+  its live terminal indicator remains independent.
+
+- On Quit or closing the last browser window, ask Keep Setup & Quit / Start Fresh
+  Next Time / Cancel, after any existing active-terminal warning. Standalone
+  native modal sessions must end and hide on every choice. Cancel changes no
+  startup choice; a save failure leaves the app open with an error. Start Fresh
+  never deletes projects, favourites, credentials or folder-view preferences.
+- Explicit Keep saves nonsecret startup-setup.json separately from ordinary
+  project layouts: browser windows/frames, active and parked projects, local/SSH
+  tabs, active tab/pane/splits, view/filter/selection, terminal presence/visibility,
+  height and cwd. Restore fresh processes; never resume commands, output, jobs,
+  environment or old SSH control sockets. Retain original Host aliases, never
+  credentials. Keep authorizes fresh SSH reconnection on the next launch; parked
+  projects restart their terminals when visited. Failed restarts retain their
+  saved intent without automatically retrying each frame. Native QA uses fixture
+  shells/captured remote metadata, never real servers, user startup files or
+  live sessions. Disk Usage remains an explicit scan.
+
+- Network-drive toolbar button opens native SMB/AFP connection/share selection.
+  `src/network.rs` keeps mounted shares as local paths with typed server/share,
+  user and share-relative references; `native/network/` uses public NetFS APIs.
+  Passwords stay exclusively in Schnauz's own macOS Keychain service, never URLs,
+  process arguments, projects or session JSON. Favourites preserve the reference
+  and reconnect explicitly; restored disconnected tabs require Retry, without
+  automatic authentication or mount probes while rendering. Mount/list waits run
+  on dedicated workers. Test using synthetic paths/forms, never live servers or
+  Keychain. Do not unmount a share on cancel or close: other apps may use it.
+
+- Terminal/Preview/Todoist (and floating-task Dock Here) backgrounds match the
+  26 pt Search scope / File-Content groups via TOOLBAR_CONTROL_H. Preserve the
+  existing label/icon sizes; do not change shared dialog-button heights.
+
+- Selected active-project chips and Terminal/Preview/Todoist toolbar toggles share
+  CHROME_HIGHLIGHT blue and the same darker hover blue. Other dialogs retain the
+  configured theme accent; text/icon sizes and neutral inactive controls stay intact.
+
+- Add Weblink… is available by right-clicking COMMON or FAVOURITES, including
+  collapsed Common. No inline add row; hide empty Weblinks subsections. Capture
+  the target scope in the menu and preserve failed drafts for retry there.
+
+- The network-drive globe belongs in each pane’s file action icon bar, before the
+  hidden-items toggle, never beside the top Split view/Terminal controls. Clicking
+  it targets that pane before opening the native connection dialog.
+
+- Oliver authorized GitHub release 0.8.0 on 2026-10-20 after shared alias/add-on
+  labels. Publish both architectures and English notes covering changes since
+  0.5.14; retain Apple Development / unnotarized prerelease disclosure.

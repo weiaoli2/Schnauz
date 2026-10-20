@@ -58,6 +58,8 @@ struct LocalView {
     style: folder_views::FolderView,
     filter: EntryFilter,
     show_hidden: bool,
+    network:Option<network::Location>,
+    network_connected:bool,
 }
 impl LocalView {
     fn capture(tab: &Tab, folder: PathBuf) -> Self {
@@ -69,7 +71,7 @@ impl LocalView {
                 vec![folder.clone()]
             },
             hist_pos: if same { tab.hist_pos } else { 0 },
-            folder,
+            folder:folder.clone(),
             style: folder_views::FolderView {
                 view: tab.view,
                 list: tab.list_layout.clone(),
@@ -79,10 +81,13 @@ impl LocalView {
             },
             filter: tab.entry_filter,
             show_hidden: tab.show_hidden,
+            network:tab.network.as_ref().and_then(|n|n.at_path(&folder)),
+            network_connected:tab.network_connected,
         }
     }
     fn restore(self, tab: &mut Tab) {
         tab.remote = None;
+        tab.network=self.network;tab.network_connected=self.network_connected;
         tab.current_dir = self.folder;
         tab.history = self.history;
         tab.hist_pos = self.hist_pos;
@@ -195,6 +200,7 @@ impl Link {
             ascending: self.local.style.ascending,
             filter: self.local.filter,
             show_hidden: self.local.show_hidden,
+            network:self.local.network.clone(),
         }
     }
 }

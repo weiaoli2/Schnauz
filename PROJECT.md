@@ -1,6 +1,6 @@
 # Schnauz
 
-Last updated: 2026-10-19
+Last updated: 2026-10-20
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -740,3 +740,398 @@ source and public-release verification. README now points to the public download
 Website/video work, credentials and local settings were excluded. No live app,
 terminal or SSH session was restarted. Earlier releases and v0.5.11 are preserved.
 This request is complete; later releases require fresh authorization.
+
+## Local 0.5.15 — sidebar ordering, file opening and project activity
+
+Projects and the references within each Common/Favourites Folders/Files group
+can be manually reordered by dragging. Upper/lower row halves insert before/after,
+with a thin accent line and fixed row geometry. Personal, Home and section order
+remain fixed. Central projects.json keeps the order across restarts and shares it
+between windows. Typed drag data captures the owning project/group; mismatched
+sections, stale items and Home are rejected. Sorting changes references only,
+without browsing, file transfers or terminal input.
+
+Single-clicking a sidebar file still reveals/selects it. Double-click opens through
+the existing Schnauz app choices; remote files use the existing download/open flow.
+A 5 pt green dot before the project icon indicates live tabs/terminals in any
+browser, including parked sessions. Saved layouts alone do not count. Runtime
+activity holds no browser/PTY references and clears when its owner is released.
+
+Validation: all 95 Rust tests and offline native fixtures passed. Hidden AppKit
+pointer tests verify actual sidebar drag/drop, persisted order, no drag navigation,
+and single/double-click file routing with external launch intercepted. Existing
+real-window checks also verify parked activity across two browsers and its cleanup
+when the owning browser is destroyed, alongside unchanged Todoist, native file
+drag, preview and terminal identity regressions. No live settings, accounts,
+Keychain credentials, user windows or terminal/SSH sessions were used for QA.
+No commit or public release requested; published version remains 0.5.14.
+
+The optimized normal Schnauz.app 0.5.15 is built with the existing stable Apple
+Development certificate. Packaged --version and deep/strict certificate signature
+verification passed. The running app, windows, terminals and SSH sessions were
+not restarted. Visual feel and live remote-file interoperability remain manual QA.
+
+## Local 0.5.16 — tab shortcuts and compact collapsible sidebar groups
+
+Dragging a folder tab onto Common or elsewhere in the expanded sidebar now adds
+its folder reference to Common or the captured project's Favourites. The payload
+freezes folder/server/project, plus the owning window and stable tab identity for
+ordinary tab rearrangement. Sidebar drops preserve all live tabs and terminals,
+keep remote Host aliases without live mux ownership, and never scan remote paths,
+transfer files or reconnect. Duplicate references stay deduplicated. Existing
+small drop hints identify Common/Favourites without painting destination rows.
+
+Clicking PROJECTS or COMMON toggles that group with no additional icon and saves
+its state. PROJECTS already had this behavior; it now has a discoverable tooltip
+and actual AppKit click coverage. Collapsed Common remains a reference-drop
+target and expands after a drop. Common/Favourites headings use 8 pt above and
+no bottom padding; Folders/Files use 4 pt above and 2 pt below. Rows remain 24 pt.
+This supersedes the earlier always-expanded whole-Common guidance; individual
+Folders/Files labels and Favourites retain their existing behavior.
+
+Final validation: all 95 Rust tests and the offline native Nextcloud/Todoist/
+composer fixtures passed, followed by the full hidden GPUI/AppKit suite. The new
+fixture clicks PROJECTS/COMMON labels and verifies saved collapse state, drags
+local/SSH tabs to Favourites/Common (including collapsed Common), checks hints,
+deduplication, outside cancellation, saved Host alias/no mux, and unchanged tab,
+terminal view, session and real owned shell PID. Ordinary tab reorder and stale
+payload rejection also pass. No live servers, accounts or user sessions used.
+No commit/publication requested; public release remains 0.5.14.
+
+## Local 0.7.0 — Weblinks, active projects and safe quit
+
+Common and each project's Favourites now include Weblinks, with Add weblink…
+always available. Each bookmark stores a stable ID, display name, HTTP(S) URL and
+optional browser application path in projects.json. Old project files default to
+empty bookmark lists. Single-click opens once; dragging reorders without opening.
+Context menus offer Open, Edit, Copy link and Remove. Edit has native name/link
+fields with normal clipboard shortcuts and a browser picker (macOS Default plus
+registered installed handlers). Browser enumeration occurs only on explicit
+editor opening. Each bookmark's browser choice is independent of system defaults;
+missing chosen browsers produce an actionable footer error without fallback.
+
+The signed native/weblinks/ helper receives/returns form data over stdin/stdout
+and waits on a dedicated worker, preserving responsive file/terminal work. Rust
+validates returned fields, captures the original project/Common destination,
+rejects removed/stale edits and retains forms after save/helper failure for retry.
+Native previews hide while the editor is open. Tests intercept URL launches and
+use synthetic bookmarks, temporary settings and browser-name fixtures.
+
+0.7.0 also guards Quit against active terminal work. A weak browser registry
+captures read-only probes from current and parked project sessions across windows.
+The explicit quit scan reads owned process trees/names off-thread, including
+background/suspended jobs; idle shells do not prompt. A native confirmation groups
+active processes by project with Cancel / Quit Anyway. An owned application
+delegate subclass intercepts Dock termination too, with one explicit authorization
+for normal GPUI shutdown. No terminal input, remote probing, session restart or
+process signal is used by the check. Actual test quitting is intercepted.
+
+The existing 56 pt toolbar now aligns the search field with the Schnauz title.
+A compact horizontal active-project strip replaces the lone project subtitle.
+Chips use the same all-window live tab/session definition as sidebar dots; the
+current project is blue. Clicking uses the existing globally synchronized switch
+and retains all live terminals. Per-window scrolling reveals the current chip
+on project/order changes; no extra toolbar height or browser/header displacement.
+
+Oliver selected version 0.7 for this feature stand; Cargo/app/CLI use 0.7.0.
+The reload icon beside All/Folders/Files now renders only for SSH/SFTP tabs;
+local/cloud browsing keeps automatic watching and Cmd+R still refreshes manually.
+
+Final verification before packaging: all 96 Rust tests passed, plus offline
+Nextcloud/Todoist/composer and native Weblinks form/browser-choice checks. The
+complete hidden GPUI/AppKit suite passed for bookmark click/browser routing,
+reorder persistence, Projects/Common collapse, tab-to-sidebar reference drops,
+remote-only reload visibility, title/search alignment, native active-project
+chip switching and unchanged owned terminal/session/PID. Quit checks cover idle
+shell bypass, foreground/background work, exec replacing a shell, parked project
+labels, the AppKit delegate path, Cancel and explicit Quit Anyway. Actual quitting
+and URL launches are intercepted; no live user process, server, account, credential
+or settings profile is used. Publication is not requested; public remains 0.5.14.
+
+The optimized local Schnauz.app is now packaged as 0.7.0, including weblinkctl,
+signed with the existing Apple Development identity. CLI version and deep/strict
+bundle signature verification passed. Live Schnauz was not restarted and no
+commit, tag or publication was made. Oliver will test this build first; wait for
+his explicit release go-ahead.
+
+
+Local 0.7.1 adds optional Alias and Add-on for saved folder references in project
+Favourites and Common. Right-click → Edit alias and add-on… opens native fields.
+Empty alias uses the folder basename; add-on displays as `Name (Add-on)`.
+Labels persist centrally per reference without renaming folders, changing routing
+or disturbing live tabs/terminals. Re-adding the same destination retains its
+label; stale editors reject changed/removed references. Sidebar sizing and drag
+previews use the displayed label. Hovering a tab shows its full folder path and,
+for SSH tabs, server identity. No publication or live app restart is implied.
+
+0.7.1 verification completed: all 97 Rust tests, offline native services/composer
+checks, the native alias/add-on form checks and complete hidden GPUI/AppKit
+suite passed via ./test.sh. The optimized Schnauz.app was built with the existing
+Apple Development signer; CLI/bundle version 0.7.1 and deep/strict signature
+verification passed. Live app windows, terminals and SSH sessions were not
+restarted. No commit, tag or publication was made.
+
+Local 0.7.2 fixes cancellation of the active-terminal quit warning. It now owns
+one standalone native NSAlert and explicitly ends its application modal session
+and orders the dialog out before clearing the pending guard and refreshing the
+browser windows. Cancel keeps the app and terminal programs running. AppKit owns
+the button response tags; Escape cancels. Modal-session polling happens outside
+GPUI borrows. Native sheets are avoided because attaching one to the dynamically
+adapted browser window exposed an AppKit KVO crash in the real-dialog regression.
+No dependency cache or global AppKit classes were modified.
+
+The complete hidden UI suite passed, including two actual native Cancel button
+clicks, no remaining visible warning/modal session, duplicate-quit prevention,
+repeat quit after Cancel, and identical owned terminal/job/PID. Existing checks
+for idle shells, parked projects, AppKit delegate routing and Quit Anyway remain
+covered. Tests use disposable profiles and fixture terminals; no live user
+windows, terminals, SSH sessions, accounts or settings were changed.
+
+The optimized 0.7.2 Schnauz.app is packaged with the existing Apple Development
+signer. CLI version and deep/strict bundle signature verification passed. The
+live app was not restarted; no commit, tag or release was made.
+
+
+Local 0.7.3 adds immediate SSH connection feedback in the existing bottom-center
+blue footer badge, including saved remote favourites and manual remote reloads.
+It reports Checking SSH settings…, Connecting… and connection/folder loading,
+with the server identity. Progress belongs to the captured tab and load generation,
+clears on completion/failure, and takes precedence over older general notices.
+Tab switches/reordering cannot apply a connection result to a different tab;
+selecting a pending connection does not start another listing. Live terminals
+and SSH authentication/transport behavior are preserved.
+
+Verification: 98 Rust tests and the offline native fixtures passed via ./test.sh.
+The updated hidden-window suite checks synthetic SSH progress stages, footer
+bounds, unchanged file-body geometry, notice priority and completion cleanup,
+without contacting a server or accessing credentials. No publication requested.
+
+The optimized 0.7.3 Schnauz.app is packaged with the existing Apple Development
+signer. Packaged CLI/bundle versions and deep/strict signature verification
+passed. The complete updated hidden UI suite passed. No live app/session was
+restarted, and no commit, tag or public release was made.
+
+
+Local 0.7.4 adds a terminal Select text button for marking/copying text while
+Codex or another foreground TUI owns the mouse or continually redraws. It holds
+a bounded local copy of the current terminal grid and scrollback. The live PTY,
+parser and protocol replies continue normally. The button becomes Live terminal;
+typing, pasting or Escape returns to the live output. Shift-drag in alternate
+screen/mouse-reporting mode uses the same stable selection. Cmd+C copies the
+snapshot; Cmd+V resumes and respects the live bracketed-paste mode.
+
+The new native regression clicks the actual Schnauz header button and sends
+AppKit plain/Shift mouse drags across a screen clear/redraw, checking selected
+text, automatic copy, routed Cmd+C and exact bracketed Cmd+V bytes. Input is
+captured in a test buffer and the original owned fixture session/PID is preserved.
+The complete hidden UI suite passed. No live Codex/SSH session was touched.
+
+0.7.4 final validation: all 98 Rust tests, offline native fixtures and the full
+hidden GPUI/AppKit suite passed via ./test.sh. The optimized Schnauz.app is
+packaged with the existing Apple Development signer; packaged CLI/bundle 0.7.4
+and deep/strict signature verification passed. The currently running app was
+not restarted. No commit, tag or public release was made.
+
+
+Local 0.7.5 reuses the top Terminal button’s vector icon at 11 pt on the right of each tab,
+before Close, while its terminal session is alive. It stays visible with the
+terminal panel hidden and has a Terminal session active tooltip. Tabs without a
+terminal or with an ended session have no indicator. No terminal/session behavior
+changes, live app restart or publication is implied.
+
+0.7.5 validation: the existing complete hidden UI suite passed, including tab
+selection/reordering and terminal identity regressions. The optimized app is
+packaged with the existing Apple Development signer; packaged --version 0.7.5
+and deep/strict bundle signature verification passed. Live sessions were not
+restarted. No commit, tag or public release was made.
+
+
+Local 0.7.6 adds the favourite-folder Globe vector icon to SSH browser tabs,
+beside the terminal indicator before Close. Both indicators are black in light
+mode and white in dark mode, for active and inactive tabs. Globe visibility
+follows the tab's remote browsing state independently of its terminal session.
+No remote reads or connection changes are involved.
+
+0.7.6 packaging verification: optimized normal app build passed, packaged CLI
+reports 0.7.6, and deep/strict stable-certificate signature verification passed.
+This small rendering change reuses existing icons without altering sessions.
+No live app restart, commit, tag or public release was performed.
+
+
+## Local 0.7.7 — keep setup for next start
+
+Quit and closing the final browser window now ask Keep Setup & Quit, Start Fresh
+Next Time or Cancel. The existing warning for active terminal work still comes
+first. The setup dialog is a standalone native modal; every outcome ends its
+session and hides it. Cancel leaves the app and startup choice unchanged. A save
+failure keeps the app open with a footer error. Start Fresh retains all saved
+projects/favourites and preferences and opens Personal/Home next time.
+
+An explicit Keep writes startup-setup.json atomically, separately from the
+ordinary local project-layout autosaves. It remembers browser windows/frames,
+active and parked projects, local/SSH tabs and their order, active panes/tabs,
+splits, views/columns/sorting, type/hidden filters and selections. Terminal panels
+remember presence, hidden/open state, height and cwd. Current-project terminals
+start fresh on launch; parked-project terminals start when that project is
+visited. The original local layout rules during temporary SSH following stay
+unchanged. Saved server routing preserves Host aliases and excludes live sockets
+and credentials. SSH restarts use the normal new-session transport. Commands,
+output, jobs and environment are not resumed. Missing local folders stay visible
+with their normal read error; remote paths are never checked against local files.
+Docked Tasks can restore without adding its window extension a second time;
+Disk Usage scans remain explicit.
+
+Validation: 100 Rust tests and offline native service/composer fixtures passed.
+The full hidden GPUI/AppKit suite passes, including real Keep/Start Fresh/Cancel
+buttons, no residual modal session, unchanged saved projects/favourites and owned
+fixture PID. Restore QA starts separate disposable shells and checks hidden/open
+panels, height, selected tab and distinct shell/browser folders. Remote roundtrip
+fixtures prove no local namesake reads, credential storage or live-socket reuse.
+No live app/window/terminal/SSH session was restarted and no publication requested.
+
+0.7.7 final packaging: optimized Schnauz.app built with the existing Apple
+Development signer; packaged --version 0.7.7 and deep/strict signature verification
+passed. The cold-library startup regression also passes for Keep and Start Fresh,
+retaining all saved project records. The currently running app was left open;
+the new quit prompt becomes available when the user launches 0.7.7. No commit,
+tag or public release was made.
+
+
+## Local 0.7.8 — terminal drawing and network drives
+
+- Terminal text now uses GPUI's own vertical centering once, with explicit
+  content/cell clipping that keeps the right-hand scrollbar clear. Hidden/wide
+  spacer cells cannot overpaint the last line. Wheel input obeys negotiated
+  legacy/UTF-8/SGR mouse reporting, wheel counts and modifiers; alternate-screen
+  arrow scrolling requires ALTERNATE_SCROLL. Shift-wheel browses local history.
+- `src/network.rs` and `native/network/` add a globe toolbar control immediately
+  after Search. The native form supports SMB/AFP, name/IP/share URL, username,
+  secure password, Guest, read-only, optional folder selection and default-on
+  Keychain remembering. Public NetFS presents share selection and mounts the drive.
+  Connected folders open in new tabs; file operations use ordinary mounted paths.
+- Typed network references in Favourites, saved projects and startup setups retain
+  server/share and share-relative paths. Credentials live only in Schnauz's own
+  Keychain service. No password URLs, argv, Rust IPC or saved JSON. A different
+  mount name is remapped on reconnect. Dragging a network tab or its files to
+  Common/Favourites preserves that reference. Network tabs carry the globe badge.
+- Mount/dialog waits and network listings use dedicated workers. Disconnected
+  restored tabs show Retry without automatic login. Errors stay in the pane or
+  existing footer; no automatic unmount and no live session replacement.
+- Validation uses Rust persistence/identity regressions, native offline address,
+  path/credential binding and form geometry fixtures, and actual hidden GPUI
+  toolbar/footer, tab drag and disconnected-session checks. No live SMB server or
+  Keychain is used in tests. A real server login/share selection remains manual QA.
+
+- Release privacy: `scripts/check_bundle_contents.py` enforces an exact bundle
+  file/directory allowlist before signing and DMG creation. Unknown files and
+  symlinks fail packaging, including accidental profiles/settings/session files.
+  Disposable fixtures exercise these rejection paths in `test.sh`. Packaging
+  never reads Keychain or the user's Application Support folder.
+
+- About Schnauz now has explicit Schnauz website and GitHub links below its
+  version heading. Website: https://techguyzone.com/apps/schnauz/ (HTTP 200 after
+  canonical trailing-slash redirect); source: https://github.com/weiaoli2/Schnauz.
+  Only clicking opens a browser; About layout checks cover both link bounds.
+
+0.7.8 final validation: 101 application tests and 60 terminal tests passed, with
+native offline service/form fixtures and the complete hidden-window UI suite.
+About-link changes passed the UI suite again. Bundle privacy rejection fixtures
+passed; final optimized Schnauz.app was signed with the existing Apple Development
+identity, validated against the file allowlist, deep/strict signature checked,
+and reports Schnauz 0.7.8. Live windows/PTYs were not restarted. No commit,
+publication, live SMB connection or credential/Keychain inspection was performed.
+
+
+## Local 0.7.9 — centered project selection and website feature refresh
+
+The active-project row is centered across the whole browser window. Its auto
+margins collapse for horizontal overflow; selection reveal and native chip
+switching retain the existing per-window scroll handle and live terminals. A
+1 pt themed divider, 1 pt space above and 2 pt below separates it from the title /
+Search row. Browser header grows only 4 pt (60 total); Settings keeps its 56 pt
+header. Native traffic-light clearance stays on the first row only. Existing
+hidden-window checks verify centering, separator geometry and owned PTY/PID.
+
+The main website kit is refreshed for the current 0.7 series, including named
+web links / per-link browsers and Schnauz-only file-extension app choices separate
+from Finder defaults. It also includes the other additions since the 0.5.4 kit;
+FEATURE-STATUS.md maps the feature claims and public/local distinction. Original
+0.5.4 screenshots and branding remain unchanged and labeled. Previous kit/ZIP
+preserved under website/Schnauz-Website-Kit-Archive/2026-10-20-before-feature-refresh.
+Refresh the kit checksum manifest and ZIP together; website deployment is separate.
+
+Terminal, Preview and Todoist toolbar buttons (including floating-task Dock Here)
+now use a 26 pt background instead of 30 pt, keeping their text/icon sizes and
+horizontal spacing. Other shared dialog/button styles are unchanged.
+
+Toolbar toggle backgrounds share TOOLBAR_CONTROL_H (26 pt) with the Search
+scope and File/Content groups, matching their overall height while keeping the
+existing text sizes. First-row vertical centering stays consistent.
+
+The current project chip and active Terminal/Preview/Todoist buttons now share
+CHROME_HIGHLIGHT (#3478c5), with the same darker hover blue. This avoids mixing
+project blue and toolbar indigo; other dialog accents follow the existing theme.
+
+0.7.9 final verification: ./test.sh passed all 101 application tests, 60 terminal
+tests and offline native/hidden-window fixtures. The final shared-highlight change
+passed ./test-ui.sh again. The optimized normal Schnauz.app includes the final
+project blue on active toolbar toggles, was signed with the existing Apple
+Development identity, passes deep/strict signature and bundle-privacy checks,
+and reports Schnauz 0.7.9. The 13 website handoff files, relative links, manifest
+and refreshed ZIP were checked; all seven original image/branding files are
+byte-identical to the archived snapshot. No deployment, commit or public release;
+live Schnauz windows, terminals and SSH sessions were not restarted.
+
+## Local 0.7.10 — symmetric project-row spacing
+
+Adds 2 pt below the active-project chips, matching the 2 pt gap above them
+between the row divider and the bottom border. The browser header is now 62 pt;
+Settings retains its independent 56 pt header. Hidden-window layout checks assert
+equal clearance above and below the chips. No live windows or terminals restart.
+
+Validation: ./test-ui.sh passed, including symmetric chip clearance and native
+project switching with preserved terminal PID. Optimized Schnauz.app built with
+the existing certificate, passed deep/strict signature and bundle-content checks,
+and reports 0.7.10. No commit or public release.
+
+## Local 0.7.11 — Add Weblink from section menus
+
+Right-click COMMON or FAVOURITES for Add Weblink…. Removes the inline plus/add
+rows and hides empty Weblinks subsections. Collapsed Common keeps its context
+menu; creation captures Common/current project when the menu opens. Failed-save
+drafts remain available by choosing Add Weblink again. Existing link menus and
+drag ordering remain in place. The network-drive globe moves from the top toolbar into each pane’s file action
+icon bar, between Trash / Add to Favourites and the hidden-items toggle. It
+captures that pane before opening the connection dialog.
+
+Validation: ./test-ui.sh passed with the network control measured in the file
+action row (107 pt below the top), including existing bookmark interaction,
+sidebar ordering and preserved terminal-session checks. Live sessions untouched.
+Optimized Schnauz.app 0.7.11 is packaged with the existing Apple Development
+certificate; deep/strict signature and bundle-content verification passed.
+No commit or publication.
+
+
+## Release 0.8.0 — authorized 2026-10-20
+
+Oliver requested public GitHub release 0.8 with notes and both builds after the
+shared-label change. Cargo/app version is 0.8.0. Alias and add-on edits now update
+all references to the same destination across Common, Personal and every project,
+including files. No scope option or confirmation. Provider identity stays part
+of matching; stale/removed editors cannot mutate other copies. Clearing labels
+also applies everywhere. No paths, order, credentials or live sessions change.
+
+Release scope includes the accumulated 0.6/0.7 work since public 0.5.14: sidebar
+ordering and activity dots, tab reference drops, text-only group collapse,
+Weblinks/native browser choices, active-project header chips, safe Quit and
+optional next-start setup restoration, SSH loading feedback, folder-tab tooltips,
+terminal selection snapshots/drawing/scrolling, tab terminal/SSH indicators,
+network-drive connections and typed references, About links and compact chrome.
+The final network globe is in the file action icon bar; Add Weblink is in the
+Common/Favourites context menus. Source publication excludes website/video work,
+test.csv, profiles and build caches. Use dist/0.8.0 and preserve prior tags/assets.
+
+0.8.0 validation: ./test.sh passed 102 application tests, 60 terminal tests,
+offline native service/form fixtures and the complete hidden GPUI/AppKit suite.
+Shared-label cases cover files/folders, all projects, clearing, stale-edit
+rejection, provider separation and JSON persistence. No live accounts used.

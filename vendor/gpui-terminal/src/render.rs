@@ -68,8 +68,8 @@ use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::Color;
 use gpui::{
-    App, Bounds, Edges, Font, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, Point,
-    SharedString, Size, TextRun, UnderlineStyle, Window, px, quad, transparent_black,
+    App, Bounds, ContentMask, Edges, Font, FontFeatures, FontStyle, FontWeight, Hsla, Pixels,
+    Point, SharedString, Size, TextRun, UnderlineStyle, Window, px, quad, transparent_black,
 };
 
 /// A batched run of text with consistent styling.
@@ -164,6 +164,14 @@ impl BackgroundRect {
 /// - Call `measure_cell` only when font settings change
 /// - The `paint` method is designed to be called every frame
 /// - Background and text batching minimize GPU draw calls
+#[cfg(feature = "ui-checks")]
+#[derive(Clone, Default)]
+pub(crate) struct PaintChecks {
+    pub content: Bounds<Pixels>,
+    pub glyphs: Vec<(usize, usize, char, Point<Pixels>, Bounds<Pixels>)>,
+    pub cursor: Option<Bounds<Pixels>>,
+}
+
 #[derive(Clone)]
 pub struct TerminalRenderer {
     /// Font family name (e.g., "Fira Code", "Menlo")
@@ -183,6 +191,8 @@ pub struct TerminalRenderer {
 
     /// Color palette for resolving terminal colors
     pub palette: ColorPalette,
+    #[cfg(feature = "ui-checks")]
+    pub(crate) paint_checks: std::rc::Rc<std::cell::RefCell<PaintChecks>>,
 }
 
 impl TerminalRenderer {
@@ -226,6 +236,8 @@ impl TerminalRenderer {
             cell_height,
             line_height_multiplier,
             palette,
+            #[cfg(feature = "ui-checks")]
+            paint_checks: Default::default(),
         }
     }
 
@@ -486,196 +498,258 @@ impl TerminalRenderer {
             y: bounds.origin.y + padding.top,
         };
 
-        // Iterate over visible lines
-        for line_idx in 0..num_lines {
-            let line = Line(line_idx as i32 - grid.display_offset() as i32);
+        let content_bounds = Bounds::new(
+            origin,
+            gpui::size(
+                (bounds.size.width - padding.left - padding.right).max(px(0.)),
+                (bounds.size.height - padding.top - padding.bottom).max(px(0.)),
+            ),
+        );
+        #[cfg(feature = "ui-checks")]
+        {
+            *self.paint_checks.borrow_mut() = PaintChecks {
+                content: content_bounds,
+                ..Default::default()
+            };
+        }
+        window.with_content_mask(
+            Some(ContentMask {
+                bounds: content_bounds,
+            }),
+            |window| {
+                // Iterate over visible lines
+                for line_idx in 0..num_lines {
+                    let line = Line(line_idx as i32 - grid.display_offset() as i32);
 
-            // Collect cells for this line
-            let cells: Vec<(usize, Cell)> = (0..num_cols)
-                .map(|col_idx| {
-                    let col = Column(col_idx);
-                    let point = AlacPoint::new(line, col);
-                    let cell = grid[point].clone();
-                    (col_idx, cell)
-                })
-                .collect();
+                    // Collect cells for this line
+                    let cells: Vec<(usize, Cell)> = (0..num_cols)
+                        .map(|col_idx| {
+                            let col = Column(col_idx);
+                            let point = AlacPoint::new(line, col);
+                            let cell = grid[point].clone();
+                            (col_idx, cell)
+                        })
+                        .collect();
 
-            // Layout the row for backgrounds
-            let (backgrounds, _) = self.layout_row(line_idx, cells.iter().cloned(), colors);
+                    // Layout the row for backgrounds
+                    let (backgrounds, _) = self.layout_row(line_idx, cells.iter().cloned(), colors);
 
-            // Paint backgrounds
-            for bg_rect in backgrounds {
-                // Skip if it's the default background color
-                if bg_rect.color == default_bg {
-                    continue;
-                }
+                    // Paint backgrounds
+                    for bg_rect in backgrounds {
+                        // Skip if it's the default background color
+                        if bg_rect.color == default_bg {
+                            continue;
+                        }
 
-                let x = origin.x + self.cell_width * (bg_rect.start_col as f32);
-                let y = origin.y + self.cell_height * (bg_rect.row as f32);
-                let width = self.cell_width * ((bg_rect.end_col - bg_rect.start_col) as f32);
-                let height = self.cell_height;
+                        let x = origin.x + self.cell_width * (bg_rect.start_col as f32);
+                        let y = origin.y + self.cell_height * (bg_rect.row as f32);
+                        let width =
+                            self.cell_width * ((bg_rect.end_col - bg_rect.start_col) as f32);
+                        let height = self.cell_height;
 
-                let rect_bounds = Bounds {
-                    origin: Point { x, y },
-                    size: Size { width, height },
-                };
+                        let rect_bounds = Bounds {
+                            origin: Point { x, y },
+                            size: Size { width, height },
+                        };
 
-                window.paint_quad(quad(
-                    rect_bounds,
-                    px(0.0),
-                    bg_rect.color,
-                    Edges::<Pixels>::default(),
-                    transparent_black(),
-                    Default::default(),
-                ));
-            }
-
-            if let Some(range) = term
-                .selection
-                .as_ref()
-                .and_then(|selection| selection.to_range(term))
-            {
-                for col in 0..num_cols {
-                    if range.contains(AlacPoint::new(line, Column(col))) {
                         window.paint_quad(quad(
-                            Bounds::new(
-                                gpui::point(
-                                    origin.x + self.cell_width * col as f32,
-                                    origin.y + self.cell_height * line_idx as f32,
-                                ),
-                                gpui::size(self.cell_width, self.cell_height),
-                            ),
+                            rect_bounds,
                             px(0.0),
-                            gpui::rgba(0x6584bf88),
-                            Edges::default(),
+                            bg_rect.color,
+                            Edges::<Pixels>::default(),
                             transparent_black(),
                             Default::default(),
                         ));
                     }
-                }
-            }
 
-            // Calculate vertical offset to center text in cell
-            // The multiplier adds extra height; we want to distribute it evenly top/bottom
-            let base_height = self.cell_height / self.line_height_multiplier;
-            let vertical_offset = (self.cell_height - base_height) / 2.0;
+                    if let Some(range) = term
+                        .selection
+                        .as_ref()
+                        .and_then(|selection| selection.to_range(term))
+                    {
+                        for col in 0..num_cols {
+                            if range.contains(AlacPoint::new(line, Column(col))) {
+                                window.paint_quad(quad(
+                                    Bounds::new(
+                                        gpui::point(
+                                            origin.x + self.cell_width * col as f32,
+                                            origin.y + self.cell_height * line_idx as f32,
+                                        ),
+                                        gpui::size(self.cell_width, self.cell_height),
+                                    ),
+                                    px(0.0),
+                                    gpui::rgba(0x6584bf88),
+                                    Edges::default(),
+                                    transparent_black(),
+                                    Default::default(),
+                                ));
+                            }
+                        }
+                    }
 
-            // Paint each character individually at exact cell positions
-            // This ensures perfect alignment for terminal emulation
-            for (col_idx, cell) in cells {
-                let ch = cell.c;
+                    // Paint each character individually at exact cell positions
+                    // This ensures perfect alignment for terminal emulation
+                    for (col_idx, cell) in cells {
+                        let ch = cell.c;
 
-                // Skip empty cells (space or null)
-                if ch == ' ' || ch == '\0' {
-                    continue;
-                }
+                        // Skip empty cells (space or null)
+                        if ch == ' '
+                            || ch == '\0'
+                            || cell.flags.intersects(
+                                Flags::WIDE_CHAR_SPACER
+                                    | Flags::LEADING_WIDE_CHAR_SPACER
+                                    | Flags::HIDDEN,
+                            )
+                        {
+                            continue;
+                        }
 
-                let x = origin.x + self.cell_width * (col_idx as f32);
-                let y = origin.y + self.cell_height * (line_idx as f32) + vertical_offset;
+                        let x = origin.x + self.cell_width * (col_idx as f32);
+                        let y = origin.y + self.cell_height * (line_idx as f32);
 
-                // Get cell colors
-                let fg = if cell.flags.contains(Flags::INVERSE) {
-                    cell.bg
-                } else {
-                    cell.fg
-                };
-                let fg_color = self.palette.resolve(fg, colors);
+                        // Get cell colors
+                        let fg = if cell.flags.contains(Flags::INVERSE) {
+                            cell.bg
+                        } else {
+                            cell.fg
+                        };
+                        let fg_color = self.palette.resolve(fg, colors);
 
-                // Get cell flags for styling
-                let flags = cell.flags;
-                let bold = flags.contains(alacritty_terminal::term::cell::Flags::BOLD);
-                let italic = flags.contains(alacritty_terminal::term::cell::Flags::ITALIC);
-                let underline = flags.contains(alacritty_terminal::term::cell::Flags::UNDERLINE);
+                        // Get cell flags for styling
+                        let flags = cell.flags;
+                        let bold = flags.contains(alacritty_terminal::term::cell::Flags::BOLD);
+                        let italic = flags.contains(alacritty_terminal::term::cell::Flags::ITALIC);
+                        let underline =
+                            flags.contains(alacritty_terminal::term::cell::Flags::UNDERLINE);
 
-                // Create font with styling
-                let font = Font {
-                    family: self.font_family.clone().into(),
-                    features: FontFeatures::default(),
-                    fallbacks: None,
-                    weight: if bold {
-                        FontWeight::BOLD
-                    } else {
-                        FontWeight::NORMAL
-                    },
-                    style: if italic {
-                        FontStyle::Italic
-                    } else {
-                        FontStyle::Normal
-                    },
-                };
+                        // Create font with styling
+                        let font = Font {
+                            family: self.font_family.clone().into(),
+                            features: FontFeatures::default(),
+                            fallbacks: None,
+                            weight: if bold {
+                                FontWeight::BOLD
+                            } else {
+                                FontWeight::NORMAL
+                            },
+                            style: if italic {
+                                FontStyle::Italic
+                            } else {
+                                FontStyle::Normal
+                            },
+                        };
 
-                // Create text run for this single character
-                let mut char_str = ch.to_string();
-                if let Some(extra) = cell.zerowidth() {
-                    for ch in extra {
-                        char_str.push(*ch);
+                        // Create text run for this single character
+                        let mut char_str = ch.to_string();
+                        if let Some(extra) = cell.zerowidth() {
+                            for ch in extra {
+                                char_str.push(*ch);
+                            }
+                        }
+                        let text_run = TextRun {
+                            len: char_str.len(),
+                            font,
+                            color: fg_color,
+                            background_color: None,
+                            underline: if underline {
+                                Some(UnderlineStyle {
+                                    thickness: px(1.0),
+                                    color: Some(fg_color),
+                                    wavy: false,
+                                })
+                            } else {
+                                None
+                            },
+                            strikethrough: None,
+                        };
+
+                        // Shape and paint the character
+                        let text: SharedString = char_str.into();
+                        let shaped_line = window.text_system().shape_line(
+                            text,
+                            self.font_size,
+                            &[text_run],
+                            None,
+                        );
+
+                        // Paint at exact cell position (ignore errors)
+                        // GPUI already centers the baseline within line_height. Mask
+                        // fallback/bold/italic glyphs to their one- or two-cell footprint.
+                        let columns = if flags.contains(Flags::WIDE_CHAR) {
+                            2.
+                        } else {
+                            1.
+                        };
+                        let cell_bounds = Bounds::new(
+                            gpui::point(x, y),
+                            gpui::size(self.cell_width * columns, self.cell_height),
+                        );
+                        window.with_content_mask(
+                            Some(ContentMask {
+                                bounds: cell_bounds,
+                            }),
+                            |window| {
+                                #[cfg(feature = "ui-checks")]
+                                self.paint_checks.borrow_mut().glyphs.push((
+                                    line_idx,
+                                    col_idx,
+                                    ch,
+                                    Point { x, y },
+                                    window.content_mask().bounds,
+                                ));
+                                let _ = shaped_line.paint(
+                                    Point { x, y },
+                                    self.cell_height,
+                                    window,
+                                    _cx,
+                                );
+                            },
+                        );
                     }
                 }
-                let text_run = TextRun {
-                    len: char_str.len(),
-                    font,
-                    color: fg_color,
-                    background_color: None,
-                    underline: if underline {
-                        Some(UnderlineStyle {
-                            thickness: px(1.0),
-                            color: Some(fg_color),
-                            wavy: false,
-                        })
-                    } else {
-                        None
+
+                // Scrollback and programs which hide their cursor must not paint one.
+                if grid.display_offset() != 0
+                    || !term
+                        .mode()
+                        .contains(alacritty_terminal::term::TermMode::SHOW_CURSOR)
+                {
+                    return;
+                }
+                let cursor_point = grid.cursor.point;
+                let cursor_x = origin.x + self.cell_width * (cursor_point.column.0 as f32);
+                let cursor_y = origin.y + self.cell_height * (cursor_point.line.0 as f32);
+
+                let cursor_color = self.palette.resolve(
+                    Color::Named(alacritty_terminal::vte::ansi::NamedColor::Cursor),
+                    colors,
+                );
+
+                let cursor_bounds = Bounds {
+                    origin: Point {
+                        x: cursor_x,
+                        y: cursor_y,
                     },
-                    strikethrough: None,
+                    size: Size {
+                        width: px(2.0),
+                        height: self.cell_height,
+                    },
                 };
 
-                // Shape and paint the character
-                let text: SharedString = char_str.into();
-                let shaped_line =
-                    window
-                        .text_system()
-                        .shape_line(text, self.font_size, &[text_run], None);
-
-                // Paint at exact cell position (ignore errors)
-                let _ = shaped_line.paint(Point { x, y }, self.cell_height, window, _cx);
-            }
-        }
-
-        // Scrollback and programs which hide their cursor must not paint one.
-        if grid.display_offset() != 0
-            || !term
-                .mode()
-                .contains(alacritty_terminal::term::TermMode::SHOW_CURSOR)
-        {
-            return;
-        }
-        let cursor_point = grid.cursor.point;
-        let cursor_x = origin.x + self.cell_width * (cursor_point.column.0 as f32);
-        let cursor_y = origin.y + self.cell_height * (cursor_point.line.0 as f32);
-
-        let cursor_color = self.palette.resolve(
-            Color::Named(alacritty_terminal::vte::ansi::NamedColor::Cursor),
-            colors,
+                #[cfg(feature = "ui-checks")]
+                {
+                    self.paint_checks.borrow_mut().cursor = Some(cursor_bounds);
+                }
+                window.paint_quad(quad(
+                    cursor_bounds,
+                    px(0.0),
+                    cursor_color,
+                    Edges::<Pixels>::default(),
+                    transparent_black(),
+                    Default::default(),
+                ));
+            },
         );
-
-        let cursor_bounds = Bounds {
-            origin: Point {
-                x: cursor_x,
-                y: cursor_y,
-            },
-            size: Size {
-                width: px(2.0),
-                height: self.cell_height,
-            },
-        };
-
-        window.paint_quad(quad(
-            cursor_bounds,
-            px(0.0),
-            cursor_color,
-            Edges::<Pixels>::default(),
-            transparent_black(),
-            Default::default(),
-        ));
     }
 }
 

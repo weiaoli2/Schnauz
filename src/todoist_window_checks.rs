@@ -112,6 +112,11 @@ pub(crate) fn check(
     assert_eq!(ui_checks::recorded_text("todoist-task-content").text(),"Other project task");
     let second=cx.open_window(WindowOptions {show:false,focus:false,window_bounds:Some(WindowBounds::Windowed(Bounds::new(point(px(-4000.),px(-4000.)),size(px(980.),px(600.))))),..Default::default()},|_,cx|cx.new(|cx|Schnauz::new(projects::Shortcut::local(config_dir().unwrap(),projects::Section::Folders),cx))).unwrap();
     let second_browser=cx.update_window(*second,|_,w,_|w.root::<Schnauz>().flatten().unwrap()).unwrap();
+    second_browser.update(cx,|b,cx| {
+        b.project_sessions.insert(Some(u64::MAX - 1), schnauz::ProjectSession { panes:vec![Pane { tabs:vec![Tab::new(config_dir().unwrap())], active:0 }], active_pane:0, split_ratio:0.5 });
+        b.publish_project_activity(cx);
+    });
+    assert!(browser.read(cx).project_is_open(Some(u64::MAX - 1),cx),"A different browser's parked tabs mark the project open");
     cx.update_window(*second,|_,w,cx|detach(Some(second_browser.downgrade()),w,cx)).unwrap();
     assert_eq!(cx.global::<Shared>().floating.unwrap().window_id(),floating.window_id(),"Other windows reuse the sole floater");
     assert!(!second_browser.read(cx).todoist.open);
@@ -134,6 +139,7 @@ pub(crate) fn check(
         cx.background_executor().timer(Duration::from_millis(20)).await;
         cx.update(move |cx| {
     assert!(second_weak.upgrade().is_none(),"Floating task controller must not retain browser/PTY ownership");
+    assert!(!browser.read(cx).project_is_open(Some(u64::MAX - 1),cx),"Closing the last owner clears project activity");
     assert!(is_floating(cx));
     close_floating(cx);
     cx.set_global(ProjectLibraryGlobal(original_library,None));

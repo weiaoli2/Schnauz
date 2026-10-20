@@ -378,6 +378,7 @@ pub type ExitCallback = Box<dyn Fn(&mut Window, &mut Context<TerminalView>)>;
 pub struct TerminalView {
     /// The terminal state managing the grid and VTE parser
     state: TerminalState,
+    selection_snapshot: Option<TerminalState>,
 
     /// The renderer for drawing terminal content
     renderer: TerminalRenderer,
@@ -424,6 +425,9 @@ pub struct TerminalView {
     scroll_remainder: f32,
     exited: bool,
 }
+
+pub struct TextSelectionChanged;
+impl EventEmitter<TextSelectionChanged> for TerminalView {}
 
 impl TerminalView {
     /// Create a new terminal with provided I/O streams.
@@ -533,6 +537,7 @@ impl TerminalView {
 
         Self {
             state,
+            selection_snapshot: None,
             renderer,
             focus_handle,
             stdin_writer,
@@ -743,6 +748,37 @@ impl TerminalView {
         self
     }
 
+    fn displayed_state(&self) -> &TerminalState {
+        self.selection_snapshot.as_ref().unwrap_or(&self.state)
+    }
+
+    /// Select a stable copy of the terminal without sending mouse events to
+    /// the running application, even if it continually redraws its screen.
+    pub fn toggle_text_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selection_snapshot.is_some() {
+            self.resume_live(cx);
+        } else {
+            self.selection_snapshot = Some(self.state.selection_snapshot());
+        }
+        window.focus(&self.focus_handle);
+        cx.emit(TextSelectionChanged);
+        cx.notify();
+    }
+
+    pub fn text_selection_active(&self) -> bool {
+        self.selection_snapshot.is_some()
+    }
+
+    fn resume_live(&mut self, cx: &mut Context<Self>) {
+        if self.selection_snapshot.take().is_some() {
+            cx.emit(TextSelectionChanged);
+        }
+        self.selecting = false;
+        self.selection_origin = None;
+        self.scrollbar_drag = None;
+        cx.notify();
+    }
+
     fn write_input(&mut self, bytes: &[u8]) {
         let mut writer = self.stdin_writer.lock();
         let _ = writer.write_all(bytes);
@@ -759,14 +795,23 @@ impl TerminalView {
             return;
         }
         let key = &event.keystroke;
+        if self.text_selection_active() && key.key == "escape" {
+            self.resume_live(cx);
+            cx.stop_propagation();
+            return;
+        }
         if key.modifiers.platform {
             match key.key.as_str() {
                 "c" => {
-                    if let Some(text) = self.state.with_term(|term| term.selection_to_string()) {
+                    if let Some(text) = self
+                        .displayed_state()
+                        .with_term(|term| term.selection_to_string())
+                    {
                         cx.write_to_clipboard(ClipboardItem::new_string(text));
                     }
                 }
                 "v" => {
+                    self.resume_live(cx);
                     if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
                         let text = text.replace('\x1b', "");
                         let paste = if self.state.mode().contains(TermMode::BRACKETED_PASTE) {
@@ -783,9 +828,10 @@ impl TerminalView {
             }
         } else if key.modifiers.shift && matches!(key.key.as_str(), "pageup" | "pagedown") {
             let amount = self.state.rows() as i32 * if key.key == "pageup" { 1 } else { -1 };
-            self.state
+            self.displayed_state()
                 .with_term_mut(|term| term.scroll_display(Scroll::Delta(amount)));
         } else if let Some(bytes) = keystroke_to_bytes(key, self.state.mode()) {
+            self.resume_live(cx);
             if key.key == "enter"
                 || (key.modifiers.control && matches!(key.key.as_str(), "j" | "m"))
             {
@@ -809,7 +855,7 @@ impl TerminalView {
         let bounds = self.bounds.get();
         let x = f32::from(position.x - bounds.origin.x - self.config.padding.left);
         let y = f32::from(position.y - bounds.origin.y - self.config.padding.top);
-        self.state.with_term(|term| {
+        self.displayed_state().with_term(|term| {
             let col = ((x / f32::from(self.renderer.cell_width)).floor().max(0.0) as usize)
                 .min(term.columns().saturating_sub(1));
             let row = ((y / f32::from(self.renderer.cell_height)).floor().max(0.0) as usize)
@@ -819,6 +865,13 @@ impl TerminalView {
                 Column(col),
             )
         })
+    }
+
+    fn mouse_report_cell(&self, position: Point<Pixels>) -> alacritty_terminal::index::Point {
+        let mut point = self.mouse_cell(position);
+        self.displayed_state()
+            .with_term(|term| point.line.0 += term.grid().display_offset() as i32);
+        point
     }
 
     fn on_mouse_down(
@@ -832,12 +885,32 @@ impl TerminalView {
         if let Some(callback) = &self.shell_callback {
             callback(&crate::shell::ShellEvent::Focused, window, cx);
         }
+        if event.modifiers.shift
+            && !self.text_selection_active()
+            && self.state.mode().intersects(
+                alacritty_terminal::term::TermMode::MOUSE_MODE
+                    | alacritty_terminal::term::TermMode::ALT_SCREEN,
+            )
+        {
+            self.selection_snapshot = Some(self.state.selection_snapshot());
+            cx.emit(TextSelectionChanged);
+        }
         let point = self.mouse_cell(event.position);
         self.selecting = false;
         self.selection_origin = None;
-        if !event.modifiers.shift
-            && let Some(bytes) =
-                crate::mouse::mouse_button_report(event.button, true, point, 0, self.state.mode())
+        if !self.text_selection_active()
+            && !event.modifiers.shift
+            && let Some(bytes) = crate::mouse::mouse_button_report(
+                event.button,
+                true,
+                self.mouse_report_cell(event.position),
+                crate::mouse::encode_modifiers(
+                    event.modifiers.shift,
+                    event.modifiers.alt,
+                    event.modifiers.control,
+                ),
+                self.state.mode(),
+            )
         {
             self.write_input(&bytes);
         } else {
@@ -847,7 +920,7 @@ impl TerminalView {
                 3.. => SelectionType::Lines,
                 _ => SelectionType::Simple,
             };
-            self.state
+            self.displayed_state()
                 .with_term_mut(|term| term.selection = Some(Selection::new(kind, point, side)));
             self.selecting = true;
             self.selection_origin = Some(event.position);
@@ -866,7 +939,7 @@ impl TerminalView {
             {
                 let point = self.mouse_cell(event.position);
                 let side = self.selection_side(event.position);
-                self.state.with_term_mut(|term| {
+                self.displayed_state().with_term_mut(|term| {
                     if let Some(selection) = term.selection.as_mut() {
                         selection.update(point, side);
                     }
@@ -874,7 +947,7 @@ impl TerminalView {
             }
             if self.config.copy_on_select {
                 if let Some(text) = self
-                    .state
+                    .displayed_state()
                     .with_term(|term| term.selection_to_string())
                     .filter(|text| !text.is_empty())
                 {
@@ -883,12 +956,17 @@ impl TerminalView {
             }
         }
         if !self.selecting
+            && !self.text_selection_active()
             && let Some(bytes) = crate::mouse::mouse_button_report(
                 event.button,
                 false,
-                self.mouse_cell(event.position),
-                0,
-                self.state.mode(),
+                self.mouse_report_cell(event.position),
+                crate::mouse::encode_modifiers(
+                    event.modifiers.shift,
+                    event.modifiers.alt,
+                    event.modifiers.control,
+                ),
+                self.displayed_state().mode(),
             )
         {
             self.write_input(&bytes);
@@ -908,7 +986,7 @@ impl TerminalView {
         if self.selecting && event.dragging() {
             let point = self.mouse_cell(event.position);
             let side = self.selection_side(event.position);
-            self.state.with_term_mut(|term| {
+            self.displayed_state().with_term_mut(|term| {
                 if let Some(selection) = term.selection.as_mut() {
                     selection.update(point, side);
                 }
@@ -942,15 +1020,24 @@ impl TerminalView {
         let lines = self.scroll_remainder.trunc() as i32;
         self.scroll_remainder -= lines as f32;
         if lines != 0 {
-            if let Some(bytes) = crate::mouse::scroll_report(
-                lines,
-                self.mouse_cell(event.position),
-                0,
-                self.state.mode(),
-            ) {
+            let report = (!event.modifiers.shift)
+                .then(|| {
+                    crate::mouse::scroll_report(
+                        lines,
+                        self.mouse_report_cell(event.position),
+                        crate::mouse::encode_modifiers(
+                            false,
+                            event.modifiers.alt,
+                            event.modifiers.control,
+                        ),
+                        self.displayed_state().mode(),
+                    )
+                })
+                .flatten();
+            if let Some(bytes) = report {
                 self.write_input(&bytes);
             } else {
-                self.state.with_term_mut(|term| {
+                self.displayed_state().with_term_mut(|term| {
                     term.scroll_display(alacritty_terminal::grid::Scroll::Delta(lines))
                 });
             }
@@ -1121,7 +1208,8 @@ impl Render for TerminalView {
         self.renderer.measure_cell(window);
         let bounds_cell = self.bounds.clone();
         // Get terminal state and renderer for rendering
-        let state_arc = self.state.term_arc();
+        let state_arc = self.displayed_state().term_arc();
+        let live_state_arc = self.state.term_arc();
         let renderer = self.renderer.clone();
         let resize_callback = self.resize_callback.clone();
         let mut padding = self.config.padding;
@@ -1209,14 +1297,19 @@ impl Render for TerminalView {
                         }
 
                         // Resize terminal if dimensions changed
-                        let mut term = state_arc.lock();
-                        let current_cols = term.columns();
-                        let current_rows = term.screen_lines();
+                        let mut live = live_state_arc.lock();
+                        let current_cols = live.columns();
+                        let current_rows = live.screen_lines();
                         if cols != current_cols || rows != current_rows {
                             // Notify the PTY about the resize
                             if let Some(ref callback) = resize_callback {
                                 callback(cols, rows);
                             }
+                            live.resize(TermSize { cols, rows });
+                        }
+                        drop(live);
+                        let mut term = state_arc.lock();
+                        if cols != term.columns() || rows != term.screen_lines() {
                             term.resize(TermSize { cols, rows });
                         }
 

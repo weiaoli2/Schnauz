@@ -187,10 +187,14 @@ impl Schnauz {
             return;
         };
         let folder = self.tab(pane).current_dir.clone();
-        let tab_id = self.tab(pane).id;
+        self.start_remote_terminal_at(pane,self.panes[pane].active,server,folder,None,window,cx);
+    }
+
+    pub(crate) fn start_remote_terminal_at(&mut self,pane:usize,index:usize,server:SftpServer,folder:PathBuf,visible:Option<bool>,window:&mut Window,cx:&mut Context<Self>) {
+        let tab_id = self.panes[pane].tabs[index].id;
         let request = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
         let project = self.projects.active;
-        self.tab_mut(pane).terminal_starting = Some(request);
+        self.panes[pane].tabs[index].terminal_starting = Some(request);
         self.set_notice("Opening SSH terminal…".into(), cx);
         let use_system = prefs().ssh_use_system;
         let settings = config_dir().unwrap_or_else(std::env::temp_dir);
@@ -255,7 +259,8 @@ impl Schnauz {
                                 Some(link),
                                 cx,
                             );
-                            if this.active_pane == p && this.panes[p].active == index {
+                            if let Some(visible)=visible { this.panes[p].tabs[index].terminal_open=visible; }
+                            if visible.is_none() && this.active_pane == p && this.panes[p].active == index {
                                 window.focus(
                                     &this.panes[p].tabs[index]
                                         .terminal

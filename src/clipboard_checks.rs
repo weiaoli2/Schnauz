@@ -51,6 +51,8 @@ impl Drop for SavedClipboard {
     }
 }
 
+pub(super) fn preserve() -> impl Drop { SavedClipboard::new() }
+
 pub(super) fn run(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
     ORIGINAL.with(|saved| *saved.borrow_mut() = Some(SavedClipboard::new()));
     let _restore = RestoreClipboard;

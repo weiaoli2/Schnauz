@@ -1,7 +1,17 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Current release: **v0.5.14**, public Apple Silicon + Intel early preview.
+Release in preparation: **v0.8.0**, public Apple Silicon + Intel early preview.
+Previous published release: **v0.5.14**.
+
+## Authorized release — 0.8.0
+
+On 2026-10-20 Oliver requested release 0.8 with GitHub notes and both builds,
+after shared alias/add-on edits. Publish 0.8.0 as an early prerelease using the
+existing Apple Development certificate, explicitly unnotarized, with notes
+covering changes since 0.5.14. Include both DMGs, MPL sources and SHA256SUMS.
+Preserve all prior tags/assets and live sessions. Exclude local website/video
+production and test.csv from the source commit/archive.
 
 ## Published release — 0.5.14
 

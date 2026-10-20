@@ -74,6 +74,10 @@ use theme::*;
 mod projects;
 mod legacy;
 mod project_sidebar;
+mod web_links;
+mod quit_guard;
+mod startup_setup;
+mod network;
 mod browser_windows;
 mod file_access;
 mod path_editor;
@@ -685,6 +689,10 @@ const SIDEBAR_COLLAPSED_W: f32 = 52.0;
 /// Height of the custom titlebar strip (the OS titlebar is transparent, so this
 /// colored bar sits behind the traffic lights).
 const TITLEBAR_H: f32 = 56.0;
+const BROWSER_HEADER_H: f32 = TITLEBAR_H + 6.0;
+const TOOLBAR_CONTROL_H: f32 = 26.0;
+const CHROME_HIGHLIGHT: u32 = 0x3478c5;
+const CHROME_HIGHLIGHT_HOVER: u32 = 0x2867ae;
 /// Tab strip row height.
 const TAB_H: f32 = 34.0;
 /// Fixed list-row height (so marquee selection can map y-coordinates to rows).
@@ -991,6 +999,8 @@ struct Tab {
     terminal: Option<schnauz_terminal::Session>,
     terminal_open: bool,
     terminal_starting: Option<u64>,
+    terminal_restore: Option<startup_setup::Terminal>,
+    terminal_restore_attempted: bool,
     terminal_height: f32,
     entries: Vec<Entry>,
     listing_error: Option<directory_listing::ListingError>,
@@ -1044,6 +1054,7 @@ struct Tab {
     /// Generation of the latest load, so a stale background metadata fill is
     /// discarded if the user navigated away.
     load_gen: u64,
+    ssh_progress: Option<ssh_connection::Progress>,
     /// Last time this tab's list scrolled; drives the scrollbar's fade-out.
     last_scroll: Instant,
     /// Bumped per scroll so the fade-out animation restarts from opaque.
@@ -1051,6 +1062,9 @@ struct Tab {
     /// When `Some`, this tab browses a remote SFTP server; `current_dir` is a
     /// remote absolute path on that host. `None` = a normal local tab.
     remote: Option<SftpServer>,
+    network: Option<network::Location>,
+    network_connected: bool,
+    network_loading: bool,
 }
 
 impl Tab {
@@ -1061,6 +1075,9 @@ impl Tab {
     }
 
     fn change_directory(&mut self, dir: PathBuf) {
+        if let Some(location)=self.network.as_ref() {
+            self.network=location.at_path(&dir);
+        }
         self.current_dir = dir;
         self.editing_path = None;
         self.path_anchor = None;
@@ -1186,9 +1203,10 @@ impl Tab {
         Self::at_location(dir, None)
     }
 
-    fn at_location(dir: PathBuf, remote: Option<SftpServer>) -> Self {
+    fn at_location(dir: PathBuf, remote: Option<SftpServer>) -> Self { Self::at_network_location(dir,remote,None) }
+    fn at_network_location(dir:PathBuf,remote:Option<SftpServer>,network:Option<network::Location>)->Self {
         // Remote paths belong to the server, never read them on this Mac.
-        let listing = if remote.is_none() { read_entries_fast(&dir) } else { Ok(Vec::new()) };
+        let listing = if remote.is_none() && network.is_none() { read_entries_fast(&dir) } else { Ok(Vec::new()) };
         let (entries, listing_error) = directory_listing::unpack(listing);
         let mut tab = Tab {
             id: NEXT_TAB_ID.fetch_add(1, Ordering::Relaxed),
@@ -1196,6 +1214,8 @@ impl Tab {
             terminal: None,
             terminal_open: false,
             terminal_starting: None,
+            terminal_restore: None,
+            terminal_restore_attempted: false,
             terminal_height: 290.0,
             entries,
             listing_error,
@@ -1228,9 +1248,11 @@ impl Tab {
             preview_width: prefs().preview_width,
 
             load_gen: 0,
+            ssh_progress: None,
             last_scroll: Instant::now(),
             scroll_epoch: 0,
             remote,
+            network, network_connected:false, network_loading:false,
         };
         tab.recompute_results();
         tab
@@ -1260,11 +1282,15 @@ impl Pane {
     }
 }
 
-/// Payload for a tab drag: which pane/tab is being dragged.
-#[derive(Clone, Copy)]
+/// Frozen folder reference plus the live tab identity for internal tab drags.
+#[derive(Clone)]
 struct TabDrag {
     pane: usize,
     tab: usize,
+    owner: gpui::EntityId,
+    project: Option<u64>,
+    tab_id: u64,
+    folder: projects::Shortcut,
 }
 
 /// A small floating tooltip for toolbar actions and file paths.
@@ -1391,6 +1417,11 @@ struct Schnauz {
     sidebar_bounds: Rc<RefCell<Option<Bounds<gpui::Pixels>>>>,
     common_bounds: Rc<RefCell<Option<Bounds<gpui::Pixels>>>>,
     common_drop_hover: bool,
+    weblink_editor_open: bool,
+    network_connecting: bool,
+    network_status: Option<String>,
+    weblink_draft: Option<web_links::Draft>,
+    sidebar_order_bounds: Rc<RefCell<HashMap<String, Bounds<gpui::Pixels>>>>,
     todoist: todoist::PaneState,
     /// Open "Sort By" dropdown: (pane, x, y) in window coords.
     sort_menu: Option<(usize, f32, f32)>,
@@ -1448,6 +1479,8 @@ struct Schnauz {
     file_app_choice: Option<file_apps::Choice>,
     tab_project_move: Option<tab_projects::Dialog>,
     project_sessions: HashMap<Option<u64>, schnauz::ProjectSession>,
+    project_strip_scroll: ScrollHandle,
+    project_strip_state: RefCell<Option<(Option<u64>, Vec<Option<u64>>)>>,
     project_dialog: Option<String>,
     project_dialog_error: Option<String>,
     new_text_file: Option<new_text_file::Form>,
@@ -1469,6 +1502,17 @@ enum CloudKind {
 
 impl Schnauz {
     fn new(location: projects::Shortcut, cx: &mut Context<Self>) -> Self {
+        quit_guard::register(cx);
+        if cx.try_global::<browser_windows::ProjectActivity>().is_none() {
+            cx.set_global(browser_windows::ProjectActivity::default());
+        }
+        cx.observe_global::<browser_windows::ProjectActivity>(|_, cx| cx.notify()).detach();
+        let browser_id = cx.entity_id();
+        cx.on_release(move |_, cx| {
+            let mut activity = cx.global::<browser_windows::ProjectActivity>().clone();
+            activity.0.remove(&browser_id);
+            cx.set_global(activity);
+        }).detach();
         // A background snapshot, independent of project switching.
         Self::watch_volumes_start(cx);
         cx.on_app_quit(|this, cx| {
@@ -1544,7 +1588,7 @@ impl Schnauz {
                 let dirs = match this.update(cx, |this, _| {
                     this.panes.iter().map(|p| {
                         let tab = p.active_tab();
-                        if tab.remote.is_some() { return None; }
+                        if tab.remote.is_some() || (tab.network.is_some() && !tab.network_connected) { return None; }
                         Some(tab.current_dir.clone())
                     }).collect::<Vec<_>>()
                 }) { Ok(dirs) => dirs, Err(_) => break };
@@ -1618,28 +1662,12 @@ impl Schnauz {
             })
             .detach();
         }
-        let project_result = if let Some(shared) = cx.try_global::<ProjectLibraryGlobal>() {
-            match &shared.1 { Some(error) => Err(error.clone()), None => Ok(shared.0.clone()) }
-        } else { config_dir()
-            .ok_or_else(|| "Cannot find the settings folder.".to_string())
-            .and_then(|dir| projects::Library::load_migrating(
-                &dir.join("projects.json"), &dir.join("workspaces.json"), read_path_list("bookmarks.txt")
-            ).map_err(|error| format!("Couldn't read projects: {error}. The existing file has been preserved."))) };
-        let (mut projects, mut project_load_error) = match project_result {
-            Ok(library) => (library, None),
-            Err(error) => (projects::Library::default(), Some(error)),
-        };
-        if project_load_error.is_none() && projects.migrate_sidebar(load_sftp_servers()) {
-            if let Some(path) = config_file("projects.json") {
-                if let Err(error) = projects.save(&path) { project_load_error = Some(format!("Couldn't migrate project sidebar: {error}")); }
-            }
-        }
-        if cx.try_global::<ProjectLibraryGlobal>().is_none() {
-            cx.set_global(ProjectLibraryGlobal(projects.clone(), project_load_error.clone()));
-        }
+        browser_windows::initialize_project_library(cx);
+        let shared=cx.global::<ProjectLibraryGlobal>();
+        let (projects,project_load_error)=(shared.0.clone(),shared.1.clone());
         todoist_window::initialize(cx);
         Self {
-            panes: vec![Pane { tabs: vec![Tab::at_location(location.path, location.server)], active: 0 }],
+            panes: vec![Pane { tabs: vec![Tab::at_network_location(location.path, location.server, location.network)], active: 0 }],
             volumes: Vec::new(),
             active_pane: 0,
             split_ratio: 0.5,
@@ -1691,6 +1719,10 @@ impl Schnauz {
             sidebar_bounds: Rc::new(RefCell::new(None)),
             common_bounds: Rc::new(RefCell::new(None)),
             common_drop_hover: false,
+            weblink_editor_open: false,
+            network_connecting:false,network_status:None,
+            weblink_draft: None,
+            sidebar_order_bounds: Rc::new(RefCell::new(HashMap::new())),
             todoist: todoist::PaneState::default(),
             sort_menu: None,
             confirm_delete: None,
@@ -1720,6 +1752,8 @@ impl Schnauz {
             file_app_choice: None,
             tab_project_move: None,
             projects, project_load_error, project_sessions: HashMap::new(),
+            project_strip_scroll: ScrollHandle::new(),
+            project_strip_state: RefCell::new(None),
             project_dialog: None, project_dialog_error: None, new_text_file: None,
             info_panel: None,
             batch_rename: None,
@@ -1821,6 +1855,8 @@ impl Schnauz {
             self.reload_remote_pane(pane, cx);
             return;
         }
+        self.tab_mut(pane).ssh_progress = None;
+        if self.tab(pane).network.is_some() { self.reload_network_pane(pane,cx);return; }
         let dir = self.tab(pane).current_dir.clone();
         self.tab_mut(pane).install_listing(read_entries_fast(&dir));
         self.next_load_gen += 1;
@@ -1872,20 +1908,43 @@ impl Schnauz {
         self.tab_mut(pane).entries.clear();
         self.recompute_find(pane);
         cx.notify();
+        let tab_id = self.tab(pane).id;
+        let progress = self.start_ssh_progress(pane, cx);
         let use_system = prefs().ssh_use_system;
         cx.spawn(async move |this, cx| {
             let s = server.clone();
             let p = path.clone();
             let result = cx
-                .background_spawn(async move { sftp_list(&s, &p, use_system) })
+                .background_spawn(async move {
+                    let result = sftp_list_progress(&s, &p, use_system, Some(&progress));
+                    progress.finish();
+                    result
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                let Some((pane, tab_ix)) = this.panes.iter().enumerate().find_map(|(pi, p)|
+                    p.tabs.iter().position(|t| t.id == tab_id && t.load_gen == gen && t.current_dir == dir).map(|ti| (pi, ti))) else { return; };
+                if this.panes[pane].active != tab_ix {
+                    let tab = &mut this.panes[pane].tabs[tab_ix];
+                    tab.ssh_progress = None;
+                    match result {
+                        Ok(entries) => {
+                            tab.entries = entries;
+                            sort_entries(&mut tab.entries, tab.sort_key, tab.sort_asc);
+                            tab.recompute_results();
+                        }
+                        Err(error) => { this.remote_error = Some(error); }
+                    }
+                    cx.notify();
+                    return;
+                }
                 if pane >= this.panes.len()
                     || this.tab(pane).load_gen != gen
                     || this.tab(pane).current_dir != dir
                 {
                     return;
                 }
+                this.tab_mut(pane).ssh_progress = None;
                 match result {
                     Ok(entries) => {
                         this.tab_mut(pane).entries = entries;
@@ -3672,7 +3731,7 @@ impl Schnauz {
 
             // --- open / preview ---
             if !many && is_browsable_folder(&path, is_dir) {
-                nodes.extend(self.folder_open_nodes(pane, projects::Shortcut { path: path.clone(), kind: projects::Section::Folders, server: self.tab(pane).remote.clone() }, true));
+                nodes.extend(self.folder_open_nodes(pane, projects::Shortcut { path: path.clone(), kind: projects::Section::Folders, server: self.tab(pane).remote.clone(), network: self.tab(pane).network.as_ref().and_then(|n|n.at_path(&path)), alias: String::new(), add_on: String::new() }, true));
             } else {
                 let ts = targets.clone();
                 let label = if many { format!("Open {n} Items") } else { "Open".to_string() };
@@ -3958,7 +4017,7 @@ impl Schnauz {
         }
         if let Some((path, is_dir)) = target {
             if is_dir {
-                nodes.extend(self.folder_open_nodes(pane, projects::Shortcut { path: path.clone(), kind: projects::Section::Folders, server: self.tab(pane).remote.clone() }, true));
+                nodes.extend(self.folder_open_nodes(pane, projects::Shortcut { path: path.clone(), kind: projects::Section::Folders, server: self.tab(pane).remote.clone(), network: self.tab(pane).network.as_ref().and_then(|n|n.at_path(&path)), alias: String::new(), add_on: String::new() }, true));
             } else {
                 let p = path.clone();
                 nodes.push(mi("Open (Download)", move |this, _, cx| {
@@ -4916,7 +4975,7 @@ impl Schnauz {
         let open_folder = match &target {
             SidebarTarget::Favourite(s) | SidebarTarget::Common(s) if s.kind == projects::Section::Folders => Some(s.clone()),
             SidebarTarget::GroupMember(_, p) if cached_is_dir(p) => Some(projects::Shortcut::local(p.clone(), projects::Section::Folders)),
-            SidebarTarget::Tab(p, t) => self.panes.get(*p).and_then(|pane| pane.tabs.get(*t)).map(|tab| projects::Shortcut { path: tab.current_dir.clone(), kind: projects::Section::Folders, server: tab.remote.clone() }),
+            SidebarTarget::Tab(p, t) => self.panes.get(*p).and_then(|pane| pane.tabs.get(*t)).map(|tab| projects::Shortcut { path: tab.current_dir.clone(), kind: projects::Section::Folders, server: tab.remote.clone(), network:tab.network.clone(), alias: String::new(), add_on: String::new() }),
             SidebarTarget::NavBar(p) => Some(self.shortcut_for_path(*p, self.tab(*p).current_dir.clone())),
             SidebarTarget::Empty => Some(self.shortcut_for_path(self.active_pane, self.active_tab().current_dir.clone())),
             _ => None,
@@ -4952,12 +5011,26 @@ impl Schnauz {
         match target {
             SidebarTarget::Common(shortcut) => {
                 if !shortcut.is_home() {
+                    {
+                        let edit = shortcut.clone();
+                        let project = self.projects.active;
+                        items.push(mi("Edit alias and add-on…", move |this, _, cx| {
+                            this.edit_favourite_label(project, true, edit.clone(), cx);
+                        }));
+                    }
                     items.push(self.project_visibility_menu(shortcut.clone()));
                     items.push(mi("Remove from Common", move |this, _, cx| this.set_common_shortcut(shortcut.clone(), false, cx)));
                 }
             }
             SidebarTarget::Favourite(shortcut) => {
                 if !shortcut.is_home() {
+                    {
+                        let edit = shortcut.clone();
+                        let project = self.projects.active;
+                        items.push(mi("Edit alias and add-on…", move |this, _, cx| {
+                            this.edit_favourite_label(project, false, edit.clone(), cx);
+                        }));
+                    }
                     items.push(self.project_visibility_menu(shortcut.clone()));
                     items.push(mi("Remove from Favourites", move |this, _, cx| this.set_project_shortcut(shortcut.clone(), false, cx)));
                 }
@@ -5005,7 +5078,7 @@ impl Schnauz {
             SidebarTarget::Tab(pane, tab) => {
                 let tab_id=self.panes[pane].tabs[tab].id;
                 items.push(mi("Move to Project…",move|this,window,cx|this.open_tab_project_move(tab_id,window,cx)));
-                let shortcut=projects::Shortcut {path:self.panes[pane].tabs[tab].current_dir.clone(),kind:projects::Section::Folders,server:self.panes[pane].tabs[tab].remote.clone()};
+                let shortcut=projects::Shortcut {path:self.panes[pane].tabs[tab].current_dir.clone(),kind:projects::Section::Folders,server:self.panes[pane].tabs[tab].remote.clone(),network:self.panes[pane].tabs[tab].network.clone(),alias:String::new(),add_on:String::new()};
                 let mut favourites=self.project_visibility_menu(shortcut);
                 if let MenuNode::Sub {label,..}=&mut favourites { *label="Add to Favourites…".into(); }
                 items.push(favourites);
@@ -6190,7 +6263,7 @@ impl Schnauz {
         self.tab_mut(pane).change_directory(dir.clone());
         // Recents / last-dir are for local browsing only — a remote path would
         // be treated as a (missing) local folder on next launch.
-        if self.tab(pane).remote.is_none() {
+        if self.tab(pane).remote.is_none() && self.tab(pane).network.is_none() {
             save_last_dir(&dir);
 
         }
@@ -6212,7 +6285,7 @@ impl Schnauz {
         }
         // Local dirs are validated with a stat; remote dirs come from a listing
         // (we can't stat them locally), so trust the caller.
-        if self.tab(pane).remote.is_none() && !dir.is_dir() {
+        if self.tab(pane).remote.is_none() && self.tab(pane).network.is_none() && !dir.is_dir() {
             return;
         }
         self.active_pane = pane;
@@ -6599,8 +6672,10 @@ impl Schnauz {
         let origin = tab.remote.as_ref().and_then(|_| tab.terminal.as_ref())
             .and_then(|s| s.ssh.as_ref()).map(|s| s.origin().to_path_buf());
         let dir = origin.unwrap_or_else(|| tab.current_dir.clone());
+        let mut new=Tab::at_network_location(dir,None,tab.network.clone());
+        new.network_connected=tab.network_connected;
         let p = self.pane_mut(pane);
-        p.tabs.push(Tab::new(dir));
+        p.tabs.push(new);
         p.active = p.tabs.len() - 1;
         self.active_pane = pane;
         self.apply_folder_view(pane, false);
@@ -6609,7 +6684,7 @@ impl Schnauz {
     }
 
     /// Connect to a saved SFTP server: open a new tab, resolve the remote home
-    /// directory in the background, and browse it. Errors surface in the banner.
+    /// directory in the background, and browse it. Progress/errors use the footer.
     fn connect_sftp(&mut self, server: SftpServer, cx: &mut Context<Self>) {
         // Open a placeholder remote tab in the active pane immediately.
         let pane = self.active_pane;
@@ -6622,21 +6697,29 @@ impl Schnauz {
         let p = self.pane_mut(pane);
         p.tabs.push(tab);
         p.active = p.tabs.len() - 1;
-        let tab_ix = p.active;
+        let tab_id = p.tabs[p.active].id;
         self.active_pane = pane;
         self.remote_error = None;
         cx.notify();
 
+        self.next_load_gen += 1;
+        let gen = self.next_load_gen;
+        self.tab_mut(pane).load_gen = gen;
+        let progress = self.start_ssh_progress(pane, cx);
         let use_system = prefs().ssh_use_system;
         cx.spawn(async move |this, cx| {
             let s = server.clone();
             let home = cx
-                .background_spawn(async move { sftp_home(&s, use_system) })
+                .background_spawn(async move {
+                    let result = sftp_home_progress(&s, use_system, Some(&progress));
+                    progress.finish();
+                    result
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                if pane >= this.panes.len() || tab_ix >= this.panes[pane].tabs.len() {
-                    return;
-                }
+                let Some((pane, tab_ix)) = this.panes.iter().enumerate().find_map(|(pi, p)|
+                    p.tabs.iter().position(|t| t.id == tab_id && t.load_gen == gen).map(|ti| (pi, ti))) else { return; };
+                this.panes[pane].tabs[tab_ix].ssh_progress = None;
                 match home {
                     Ok(home) => {
                         let dir = PathBuf::from(&home);
@@ -6646,7 +6729,8 @@ impl Schnauz {
                             tab.history = vec![dir];
                             tab.hist_pos = 0;
                         }
-                        this.reload_pane(pane, cx);
+                        if this.panes[pane].active == tab_ix { this.reload_pane(pane, cx); }
+                        cx.notify();
                     }
                     Err(e) => {
                         // Drop the failed placeholder tab and reopen the editor
@@ -6676,7 +6760,7 @@ impl Schnauz {
         cx.notify();
         self.prewarm_icons(cx);
         // If this tab only got the fast pass, finish loading its metadata.
-        if self.tab(pane).entries.is_empty() || self.tab(pane).entries.iter().any(|e| !e.loaded) {
+        if !self.tab(pane).ssh_progress.as_ref().is_some_and(ssh_connection::Progress::pending) && (self.tab(pane).entries.is_empty() || self.tab(pane).entries.iter().any(|e| !e.loaded)) {
             self.reload_pane(pane, cx);
         }
     }
@@ -6691,8 +6775,9 @@ impl Schnauz {
         if self.palette_open && self.file_search.inline { self.close_palette(cx); }
         let dir = self.panes[pane].tabs[tab].current_dir.clone();
         let remote = self.panes[pane].tabs[tab].remote.clone();
-        let mut new = Tab::new(dir);
-        new.remote = remote;
+        let source=&self.panes[pane].tabs[tab];
+        let mut new=Tab::at_network_location(dir,remote,source.network.clone());
+        new.network_connected=source.network_connected;
         new.entry_filter = self.panes[pane].tabs[tab].entry_filter;
         new.show_hidden = self.panes[pane].tabs[tab].show_hidden;
         new.view = self.panes[pane].tabs[tab].view;
@@ -6756,9 +6841,11 @@ impl Schnauz {
 
     /// Move a dragged tab to a destination pane at `to_index`. `to_pane ==
     /// panes.len()` means "create a new pane on the right" (the drag-to-split).
-    fn move_tab(&mut self, from: TabDrag, to_pane: usize, to_index: usize, cx: &mut Context<Self>) {
+    fn move_tab(&mut self, from: &TabDrag, to_pane: usize, to_index: usize, cx: &mut Context<Self>) {
         TAB_DRAG_LIVE.store(false, Ordering::Relaxed);
-        if from.pane >= self.panes.len() || from.tab >= self.panes[from.pane].tabs.len() {
+        if from.owner != cx.entity_id() || from.project != self.projects.active
+            || from.pane >= self.panes.len() || from.tab >= self.panes[from.pane].tabs.len()
+            || self.panes[from.pane].tabs[from.tab].id != from.tab_id {
             return;
         }
         if self.palette_open && self.file_search.inline { self.close_palette(cx); }
@@ -7868,6 +7955,9 @@ impl Schnauz {
             .child(
                 div()
                     .id(SharedString::from(format!("sec-{title}")))
+                    .relative()
+                    .when(title == "PROJECTS", |d| d.children(ui_checks::probe("projects-heading")))
+                    .tooltip(tip(format!("Click to {} {}", if is_col { "expand" } else { "collapse" }, title.to_lowercase())))
                     .flex()
                     .items_center()
                     .gap_1()
@@ -8253,6 +8343,10 @@ impl Schnauz {
             .children(items);
         let hint = (self.favourites_drop_hover && cx.has_active_drag()) || self.remote_drop_hover();
         sidebar.children(fixed).child(sections)
+            .on_drop(cx.listener(|this, drag: &TabDrag, _, cx| {
+                this.drop_tab_shortcut(drag, false, cx);
+                cx.stop_propagation();
+            }))
             .on_drop(cx.listener(|this, drag: &ExternalPaths, _, cx| {
                 this.favourites_drop_hover = false; this.common_drop_hover = false;
                 this.add_dropped_favourites(this.projects.active, false, drag.paths().to_vec(), cx);
@@ -8337,6 +8431,12 @@ impl Schnauz {
             row = row.child(button("tb-delete", pane, Icon::Trash, false, has_selection, "Move selection to Trash · ⌘⌫")
                 .when(has_selection, |d| d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| { this.active_pane = pane; this.request_delete(pane, cx); }))));
         }
+        row = row.child(button("connect-network", pane, Icon::Globe, false, !self.network_connecting, "Connect to network drive…")
+            .relative().children(ui_checks::probe("connect-network-button"))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.active_pane = pane;
+                this.open_network_dialog(cx);
+            })));
         row = row.child(self.render_hidden_button(pane, cx));
         if !tiny {
             row = row.child(button("palette-search", pane, Icon::Search, false, true, "Search files · ⌘P")
@@ -8568,7 +8668,7 @@ impl Schnauz {
                             .border_color(rgb(theme().accent))
                     })
                     .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
-                        this.move_tab(*drag, new_pane, 0, cx);
+                        this.move_tab(drag, new_pane, 0, cx);
                     })),
             );
         }
@@ -8638,6 +8738,7 @@ impl Schnauz {
     fn render_tab_strip(&self, pane: usize, cx: &Context<Self>) -> impl IntoElement {
         let t = theme();
         let p = self.pane(pane);
+        let indicator_color = rgb(if t.is_light() { 0x000000 } else { 0xffffff });
         let mut chips: Vec<AnyElement> = Vec::new();
         for (i, tab) in p.tabs.iter().enumerate() {
             let active = i == p.active && pane == self.active_pane;
@@ -8647,13 +8748,18 @@ impl Schnauz {
                 _ => path_label(&tab.current_dir),
             };
             let drag_label = label.clone();
-            let drag = TabDrag { pane, tab: i };
+            let drag = self.tab_folder_drag(pane, i, cx);
             let tab_id = tab.id;
             chips.push(
                 div()
                     .id(("tab", pane * 4096 + i))
+                    .tooltip(tip(tab.remote.as_ref().map_or_else(
+                        || tab.current_dir.display().to_string(),
+                        |server| format!("{}\n{}", server.display(), tab.current_dir.display()),
+                    )))
                     .relative()
                     .when(pane == 0 && i == 1, |s| s.children(ui_checks::probe("drag-target-tab")))
+                    .when(tab.terminal.is_some(), |s| s.children(ui_checks::probe("tab-sidebar-source")))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -8684,7 +8790,7 @@ impl Schnauz {
                     // Drop another tab here → insert at this position.
                     .drag_over::<TabDrag>(|s, _, _, _| s.bg(Theme::alpha(theme().accent, 0x33)))
                     .on_drop(cx.listener(move |this, from: &TabDrag, _, cx| {
-                        this.move_tab(*from, pane, i, cx);
+                        this.move_tab(from, pane, i, cx);
                     }))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.select_tab(pane, i, cx);
@@ -8707,6 +8813,20 @@ impl Schnauz {
                             .truncate()
                             .child(label.clone()),
                     )
+                    .when(tab.terminal.as_ref().is_some_and(|session| !session.exited()), |chip| {
+                        chip.child(
+                            div().id(("tab-terminal", pane * 4096 + i)).flex_none().flex().items_center()
+                                .tooltip(tip("Terminal session active"))
+                                .child(ui_icon(Icon::Terminal, 11., indicator_color)),
+                        )
+                    })
+                    .when(tab.remote.is_some() || tab.network.is_some(), |chip| {
+                        chip.child(
+                            div().id(("tab-ssh", pane * 4096 + i)).flex_none().flex().items_center()
+                                .tooltip(tip("SSH connection"))
+                                .child(ui_icon(Icon::Globe, 11., indicator_color)),
+                        )
+                    })
                     .child(
                         div()
                             .id(("tab-close", pane * 4096 + i))
@@ -8739,7 +8859,7 @@ impl Schnauz {
             .drag_over::<TabDrag>(|s, _, _, _| s.bg(rgb(theme().hover)))
             .on_drop(cx.listener(move |this, from: &TabDrag, _, cx| {
                 let len = this.pane(pane).tabs.len();
-                this.move_tab(*from, pane, len, cx);
+                this.move_tab(from, pane, len, cx);
             }))
             .children(chips)
             .child(
@@ -9388,8 +9508,10 @@ impl Schnauz {
 
 impl Render for Schnauz {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.publish_project_activity(cx);
         native_file_drag::install(window);
         if std::mem::take(&mut self.dismiss_space_map) { self.close_space_map(cx); }
+        self.restore_terminals(window, cx);
         self.sync_tools_window(window, cx);
         if self.todoist.open && window.is_window_active() {
             let owner = cx.entity().downgrade();
@@ -9505,13 +9627,10 @@ impl Render for Schnauz {
             // the thin handle without dropping the resize.
             .on_drag_move::<ExternalPaths>(cx.listener(|this, ev: &gpui::DragMoveEvent<ExternalPaths>, _, cx| {
                 this.track_file_drag(ev, cx);
-                let hovered = !prefs().sidebar_collapsed && this.sidebar_bounds.borrow().is_some_and(|bounds| {
-                    project_sidebar::drop_hover(bounds, ev.event.position, this.favourites_drop_hover)
-                });
-                let common = hovered && this.common_bounds.borrow().is_some_and(|bounds| bounds.contains(&ev.event.position));
-                if this.favourites_drop_hover != hovered || this.common_drop_hover != common {
-                    this.favourites_drop_hover = hovered; this.common_drop_hover = common; cx.notify();
-                }
+                this.track_sidebar_drop(ev.event.position, cx);
+            }))
+            .on_drag_move::<TabDrag>(cx.listener(|this, ev: &gpui::DragMoveEvent<TabDrag>, _, cx| {
+                this.track_sidebar_drop(ev.event.position, cx);
             }))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 let x = f64::from(ev.position.x) as f32;
@@ -9533,7 +9652,14 @@ impl Render for Schnauz {
                 this.update_hbar_drag(x, cx);
                 this.update_divider(x, cx);
                 this.update_marquee(x, y, cx);
-                if !cx.has_active_drag() { TAB_DRAG_LIVE.store(false, Ordering::Relaxed); }
+                if !cx.has_active_drag() {
+                    TAB_DRAG_LIVE.store(false, Ordering::Relaxed);
+                    if this.favourites_drop_hover || this.common_drop_hover {
+                        this.favourites_drop_hover = false;
+                        this.common_drop_hover = false;
+                        cx.notify();
+                    }
+                }
             }))
             .on_mouse_up(
                 MouseButton::Left,
@@ -11128,7 +11254,7 @@ fn fps_overlay() -> AnyElement {
     };
     div()
         .absolute()
-        .top(px(TITLEBAR_H + 8.0))
+        .top(px(BROWSER_HEADER_H + 8.0))
         .right(px(12.0))
         .px_2()
         .py_1()
@@ -11680,11 +11806,20 @@ fn ssh_exec(server: &SftpServer, remote_cmd: &str, use_system: bool) -> Result<S
 /// Run a batch of sftp commands against `server`, returning stdout on success.
 /// `use_system` selects auth mode (delegate to ~/.ssh vs. explicit key).
 fn sftp_batch(server: &SftpServer, script: &str, use_system: bool) -> Result<String, String> {
+    sftp_batch_progress(server, script, use_system, None)
+}
+
+fn sftp_batch_progress(server: &SftpServer, script: &str, use_system: bool, progress: Option<&ssh_connection::Progress>) -> Result<String, String> {
     use std::io::Write;
+    if let Some(progress) = progress { progress.set("Checking SSH settings…"); }
     // Resolve saved terminal favourites off the UI thread, before opening SFTP.
     let resolved = ssh_connection::for_reconnect(server, use_system);
     let server = &resolved;
+    if let Some(progress) = progress { progress.set("Connecting…"); }
     ensure_master(server)?;
+    if script != "pwd" {
+        if let Some(progress) = progress { progress.set("Connecting / loading folder…"); }
+    }
     let mut cmd = Command::new("sftp");
     cmd.arg("-b").arg("-"); // read commands from stdin
     for opt in ssh_options(server, use_system) {
@@ -11713,7 +11848,11 @@ fn sftp_batch(server: &SftpServer, script: &str, use_system: bool) -> Result<Str
 
 /// The server's default remote directory (the login home), via `sftp pwd`.
 fn sftp_home(server: &SftpServer, use_system: bool) -> Result<String, String> {
-    let out = sftp_batch(server, "pwd", use_system)?;
+    sftp_home_progress(server, use_system, None)
+}
+
+fn sftp_home_progress(server: &SftpServer, use_system: bool, progress: Option<&ssh_connection::Progress>) -> Result<String, String> {
+    let out = sftp_batch_progress(server, "pwd", use_system, progress)?;
     // sftp prints: "Remote working directory: /home/user"
     for line in out.lines() {
         if let Some(p) = line.split_once("working directory:") {
@@ -11743,8 +11882,13 @@ fn sftp_path_arg(path: &str) -> Result<String, String> {
 
 /// List a remote directory, returning entries parsed from sftp's `ls -l`.
 fn sftp_list(server: &SftpServer, path: &str, use_system: bool) -> Result<Vec<Entry>, String> {
+    sftp_list_progress(server, path, use_system, None)
+}
+
+fn sftp_list_progress(server: &SftpServer, path: &str, use_system: bool, progress: Option<&ssh_connection::Progress>) -> Result<Vec<Entry>, String> {
     let script = remote_listing::list_command(path)?;
-    let out = sftp_batch(server, &script, use_system)?;
+    let out = sftp_batch_progress(server, &script, use_system, progress)?;
+    if let Some(progress) = progress { progress.set("Loading folder…"); }
     Ok(parse_sftp_ls(&out))
 }
 
@@ -13288,12 +13432,13 @@ fn main() {
                 ],
             },
         ]);
-        cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+        cx.on_action(|_: &Quit, cx: &mut App| quit_guard::request(cx));
         cx.on_action(|_: &OpenSettings, cx: &mut App| open_settings_window(cx));
         cx.on_action(|_: &OpenAbout, cx: &mut App| about::open_about(cx));
         cx.on_action(|_: &CheckForUpdates, cx: &mut App| {updates::check(cx);about::open_about(cx);});
 
         open_main_window(cx);
+        quit_guard::install(cx);
         if saved_prefs.check_updates_at_startup { updates::check(cx); }
         cx.activate(true);
     });
@@ -13301,7 +13446,18 @@ fn main() {
 
 /// Open the main explorer window.
 fn open_main_window(cx: &mut App) {
-    if let Err(error) = browser_windows::open(None, cx) { eprintln!("{error}"); }
+    match startup_setup::startup(cx) {
+        Ok(Some(windows)) if windows.is_empty() => {
+            if let Err(error)=browser_windows::open_fresh(cx) { eprintln!("{error}"); }
+        }
+        Ok(Some(windows)) => {
+            for setup in windows { if let Err(error)=browser_windows::open_restored(setup,cx) { eprintln!("{error}"); } }
+        }
+        legacy => {
+            if let Err(error)=browser_windows::open(None,cx) { eprintln!("{error}"); }
+            if let Err(error)=legacy { eprintln!("{error}"); }
+        }
+    }
 }
 
 #[cfg(test)]

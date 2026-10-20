@@ -8,7 +8,20 @@ impl Render for Fixture {
     }
 }
 
+#[derive(Clone, Default)]
+struct Input(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for Input {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 pub fn run(cx: &mut App) {
+    let input = Input::default();
     let window = cx
         .open_window(
             WindowOptions {
@@ -23,7 +36,7 @@ pub fn run(cx: &mut App) {
             |_, cx| {
                 let view = cx.new(|cx| {
                     let mut view = TerminalView::new(
-                        std::io::sink(),
+                        input.clone(),
                         std::io::empty(),
                         TerminalConfig {
                             copy_on_select: true,
@@ -177,6 +190,7 @@ pub fn run(cx: &mut App) {
     window
         .update(cx, |fixture, w, cx| {
             fixture.0.update(cx, |view, cx| {
+                view.resume_live(cx);
                 view.state.process_bytes(b"\x1b[?1000l\x1b[?1006l");
                 for i in 0..120 {
                     view.state
@@ -215,9 +229,167 @@ pub fn run(cx: &mut App) {
             })
         })
         .unwrap();
+    // Observe the actual bytes delivered by wheel/typing, not just mode flags.
+    window
+        .update(cx, |f, w, cx| {
+            f.0.update(cx, |v, cx| {
+                input.0.lock().unwrap().clear();
+                v.state
+                    .process_bytes(b"\x1b[?1049h\x1b[?1000l\x1b[?1006l\x1b[?1007l");
+                let position = v.bounds.get().origin
+                    + gpui::point(
+                        v.config.padding.left + px(1.),
+                        v.config.padding.top + px(1.),
+                    );
+                let mut scroll = |v: &mut TerminalView,
+                              delta: f32,
+                              shift: bool,
+                              cx: &mut Context<TerminalView>| {
+                    v.on_scroll(
+                        &ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Lines(gpui::point(0., delta)),
+                            modifiers: Modifiers {
+                                shift,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                        w,
+                        cx,
+                    );
+                };
+                scroll(v, -2., false, cx);
+                assert!(
+                    input.0.lock().unwrap().is_empty(),
+                    "Disabled alternate scrolling must not edit the prompt with arrow keys"
+                );
+                v.state.process_bytes(b"\x1b[?1007h");
+                scroll(v, -2., false, cx);
+                assert_eq!(&*input.0.lock().unwrap(), b"\x1b[B\x1b[B");
+                input.0.lock().unwrap().clear();
+                v.state.process_bytes(b"\x1b[?1007l\x1b[?1000h\x1b[?1006h");
+                scroll(v, -3., false, cx);
+                assert_eq!(
+                    &*input.0.lock().unwrap(),
+                    b"\x1b[<65;1;1M\x1b[<65;1;1M\x1b[<65;1;1M"
+                );
+                input.0.lock().unwrap().clear();
+                v.state.process_bytes(b"\x1b[?1006l");
+                scroll(v, 1., false, cx);
+                assert_eq!(
+                    &*input.0.lock().unwrap(),
+                    b"\x1b[M`!!",
+                    "Legacy mouse reporting cannot receive SGR text"
+                );
+                input.0.lock().unwrap().clear();
+                scroll(v, 2., true, cx);
+                assert!(
+                    input.0.lock().unwrap().is_empty(),
+                    "Shift-wheel scrolls locally without PTY input"
+                );
+                v.state.process_bytes(b"\x1b[?1000l\x1b[?1049l");
+                v.state.with_term_mut(|t| {
+                    t.scroll_display(alacritty_terminal::grid::Scroll::Delta(3))
+                });
+                cx.notify();
+            })
+        })
+        .unwrap();
+    paint(cx);
+    cx.update_window(*window, |_, w, cx| {
+        w.dispatch_keystroke(Keystroke::parse("x").unwrap(), cx);
+    })
+    .unwrap();
+    window
+        .update(cx, |f, _, cx| {
+            assert_eq!(&*input.0.lock().unwrap(), b"x");
+            assert_eq!(
+                f.0.read(cx).state.with_term(|t| t.grid().display_offset()),
+                0,
+                "Typing returns to the actual live bottom line"
+            );
+        })
+        .unwrap();
+    // Paint the bottom/right cells at several real viewport sizes. Verify the
+    // actual glyph origins and masks passed to GPUI rather than outer bounds.
+    for (width, height) in [(640., 300.), (633., 311.), (520., 237.)] {
+        cx.update_window(*window, |_, w, _| w.resize(size(px(width), px(height))))
+            .unwrap();
+        paint(cx);
+        window.update(cx,|f,_,cx|f.0.update(cx,|v,cx| {
+            let rows=v.state.rows();let cols=v.state.cols();
+            v.state.process_bytes(format!("\x1b[?25h\x1b[2J\x1b[{};1H界\x1b[{};5H\x1b[8mX\x1b[0m\x1b[{};{}H\x1b[1;3;4mg\x1b[0m",rows-1,rows-1,rows,cols).as_bytes());
+            cx.notify();
+        })).unwrap();
+        paint(cx);
+        window
+            .update(cx, |f, _, cx| {
+                let v = f.0.read(cx);
+                let painted = v.renderer.paint_checks.borrow();
+                let rows = v.state.rows();
+                let cols = v.state.cols();
+                let last = painted
+                    .glyphs
+                    .iter()
+                    .find(|g| g.0 == rows - 1 && g.1 == cols - 1)
+                    .expect("Bottom-right glyph is actually painted");
+                assert_eq!(last.2, 'g');
+                assert!(
+                    (f32::from(
+                        last.3.y
+                            - painted.content.origin.y
+                            - v.renderer.cell_height * (rows - 1) as f32
+                    ))
+                    .abs()
+                        < 0.01,
+                    "GPUI centers glyphs once, without extra row offset"
+                );
+                assert!(
+                    last.4.right() <= painted.content.right()
+                        && last.4.bottom() <= painted.content.bottom()
+                );
+                assert!(
+                    painted.content.right()
+                        <= v.bounds.get().right() - px(12.) - v.config.padding.right,
+                    "Scrollbar gutter stays outside the text mask"
+                );
+                assert!(
+                    !painted.glyphs.iter().any(|g| g.2 == 'X'),
+                    "Concealed cells cannot paint stale text"
+                );
+                let wide = painted.glyphs.iter().find(|g| g.2 == '界').unwrap();
+                assert!((f32::from(wide.4.size.width - v.renderer.cell_width * 2.)).abs() < 0.01);
+                let cursor = painted.cursor.expect("Live bottom-row cursor is painted");
+                assert!(
+                    cursor.right() <= painted.content.right()
+                        && cursor.bottom() <= painted.content.bottom()
+                );
+            })
+            .unwrap();
+    }
+    println!(
+        "PASS actual bottom-right glyph/cursor bounds and masks across terminal resizing, single baseline centering, wide/concealed cells, disabled alternate scrolling, negotiated mouse protocols, wheel counts, Shift scrolling and typing from scrollback; all input captured"
+    );
     cx.update_window(*window, |_, w, _| w.remove_window())
         .unwrap();
     println!(
         "PASS real terminal mouse drag/reverse/Unicode word/multiline selection, automatic copy, outside release, Shift selection with application mouse reporting and scrollback scrollbar top/bottom/wheel positions; no PTY or shell input"
     );
+}
+
+/// Test-only controlled output and coordinates for actual native input QA.
+pub fn output(view: &mut TerminalView, bytes: &[u8]) {
+    view.state.process_bytes(bytes);
+}
+pub fn cell(view: &TerminalView, col: f32, row: f32) -> Point<Pixels> {
+    view.bounds.get().origin
+        + point(
+            view.config.padding.left + view.renderer.cell_width * (col + 0.25),
+            view.config.padding.top + view.renderer.cell_height * (row + 0.5),
+        )
+}
+pub fn selected_text(view: &TerminalView) -> Option<String> {
+    view.displayed_state()
+        .with_term(|term| term.selection_to_string())
 }
