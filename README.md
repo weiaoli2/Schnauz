@@ -2,7 +2,7 @@
   <img src="assets/Schnauz-icon.png" width="128" alt="Schnauz — the schnauzer for your projects">
   <h1>Schnauz</h1>
   <p><strong>Your projects. Your files. Your terminal. One native Mac workspace.</strong></p>
-  <p>A project-first Finder alternative, built for speed and made to feel at home on macOS.</p>
+  <p>Schnauz is a free, open-source file manager for macOS and a project-focused alternative to Finder.</p>
   <p>
     <a href="https://github.com/weiaoli2/Schnauz/releases"><img alt="Schnauz releases" src="https://img.shields.io/github/v/release/weiaoli2/Schnauz?include_prereleases&label=release&color=5263ef"></a>
     <img alt="macOS 14 or later" src="https://img.shields.io/badge/macOS-14%2B-black">
