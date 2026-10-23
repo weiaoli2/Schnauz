@@ -198,6 +198,14 @@ A small green dot before a project icon means it has live tabs or terminals in
 any Schnauz window, including background project sessions. A saved layout alone
 does not light the dot.
 
+Right-click an open project in the sidebar or top project bar and choose **Close**
+to close its tabs and terminals in every window. Its green dot and top-bar chip
+disappear; the saved project, favourites and settings remain. Closing the selected
+project switches to the next open project in sidebar order, wrapping at the end.
+Closing the last tab in a window also switches projects and discards that window's
+outgoing tabs; other windows retain their own tabs. With no other open project,
+browsing returns to a fresh Personal/Home tab.
+
 The compact sidebar shows **Devices**, **Projects**, **Common**, then **Favourites**.
 Common and Favourites group references under **Folders / Files / Weblinks**,
 hiding empty subsections and keeping **Add Weblink…** in the group heading’s context menu, with no placeholder
@@ -618,3 +626,32 @@ Single-click opens; drag reorders without opening. Menus offer Edit, Copy link a
 Remove. A missing chosen browser reports an error so you can choose another.
 The website kit's FEATURE-STATUS.md lists the additions since its original 0.5.4
 copy, with local-preview/public-release distinctions and unchanged capture dates.
+
+
+Drag the file action icons beside the folder path to change their order. The
+order is shared across windows and saved for next time; List/Icons moves as a
+single group. The document-plus button beside New Folder opens New Text File…:
+choose a name to create an empty .txt file in the current folder. Existing files
+are never overwritten.
+
+
+Terminal header: Hide keeps the tab's shell and terminal badge alive; the Close
+cross immediately beside it ends that owned session and removes the badge.
+Terminal resize updates the grid and PTY before drawing, and full-screen editors
+receive modified navigation keys and Shift-page keys.
+
+
+### Reliability and diagnostics (0.8.9)
+
+The terminal divider can expand the terminal without crashing a very short file
+list. The project row has 8 pt clearance above and below its chips to distinguish
+projects from file tabs. Local session diagnostics retain up to 12 private logs
+in ~/Library/Logs/Schnauz: Rust panics include a forced stack trace, uncaught
+native exceptions include their stack, and fatal signals receive a marker.
+Raw memory-fault signals have no custom stack trace. Fixed action labels do not
+record terminal output, commands, file contents or credentials. No reports are
+uploaded automatically.
+
+Source builds stage a verified update while the installed app is running;
+applying it requires a deliberate quit. For manual DMG/Finder updates, quit the
+old app before replacing Schnauz.app.

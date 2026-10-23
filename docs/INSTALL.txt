@@ -1,6 +1,8 @@
-Schnauz 0.8.1 — early preview
+Schnauz 0.8.9 — early preview
 
-Drag Schnauz.app to Applications, then open it from there.
+For an update, first finish any terminal/SSH work and quit Schnauz.
+Then drag Schnauz.app to Applications and open it from there.
+Do not replace an app bundle while its previous version is running.
 Requires macOS 14 Sonoma or later. Download the correct Apple Silicon or Intel build.
 
 This preview is signed with Oliver's Apple Development certificate, but is not
@@ -18,7 +20,7 @@ https://github.com/weiaoli2/Schnauz/releases
 
 Original Shuffle MIT license and third-party notices are included inside the app
 under Contents/Resources/Licenses. Exact unmodified MPL-2.0 component sources are
-available as Schnauz-0.8.1-MPL-sources.zip on the same release page, and from
+available as Schnauz-0.8.9-MPL-sources.zip on the same release page, and from
 the repository's vendor/mpl-sources directory.
 
 Developer, design and product direction: Oliver Weber

@@ -404,7 +404,7 @@ pub fn scroll_report(
 ///
 /// A byte sequence containing the appropriate arrow key escape sequences.
 fn scroll_to_arrow_keys(delta: i32, mode: TermMode) -> Vec<u8> {
-    let count = delta.abs().min(5) as usize; // Limit to 5 lines per scroll
+    let count = delta.unsigned_abs().min(32) as usize; // Match mouse-report wheel counts
 
     // Determine arrow key sequence based on mode
     let arrow_seq = if delta > 0 {
@@ -781,13 +781,13 @@ mod tests {
     fn test_scroll_to_arrow_keys_limit() {
         let mode = TermMode::empty();
 
-        // Very large scroll should be limited to 5 lines
+        // Bound exceptionally large events consistently with mouse reports
         let bytes = scroll_to_arrow_keys(100, mode);
-        let expected = b"\x1b[A\x1b[A\x1b[A\x1b[A\x1b[A";
+        let expected = b"\x1b[A".repeat(32);
         assert_eq!(bytes, expected);
 
         let bytes = scroll_to_arrow_keys(-100, mode);
-        let expected = b"\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B";
+        let expected = b"\x1b[B".repeat(32);
         assert_eq!(bytes, expected);
     }
 }

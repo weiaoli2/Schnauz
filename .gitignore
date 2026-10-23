@@ -34,3 +34,6 @@ release-notes-*.md
 /nextcloud.json
 /projects.json
 /prefs.txt
+
+# Python packaging/test bytecode is generated, never release source.
+__pycache__/

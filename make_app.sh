@@ -54,11 +54,7 @@ mkdir -p .build-cache
 STAGING_ROOT=$(mktemp -d "$PWD/.build-cache/app-stage.XXXXXX")
 APP="$STAGING_ROOT/Schnauz.app"
 cleanup_package() {
-    # Preserve the previous app if final installation and rollback both failed.
-    if [ -d "$STAGING_ROOT/previous/Schnauz.app" ] && [ ! -d "$DEST_APP" ]; then
-        echo "Previous Schnauz app preserved at $STAGING_ROOT/previous/Schnauz.app" >&2
-        return
-    fi
+    # Installed, pending and retained bundles live outside this disposable root.
     rm -rf "$STAGING_ROOT"
 }
 trap cleanup_package EXIT
@@ -115,15 +111,6 @@ for executable in "$APP"/Contents/MacOS/*; do
         exit 1
     fi
 done
-mkdir -p "$(dirname "$DEST_APP")"
-if [ -d "$DEST_APP" ]; then
-    mkdir -p "$STAGING_ROOT/previous"
-    mv "$DEST_APP" "$STAGING_ROOT/previous/Schnauz.app"
-fi
-if ! mv "$APP" "$DEST_APP"; then
-    if [ -d "$STAGING_ROOT/previous/Schnauz.app" ]; then
-        mv "$STAGING_ROOT/previous/Schnauz.app" "$DEST_APP"
-    fi
-    exit 1
-fi
-echo "Built $DEST_APP"
+# Refuse live replacement: deleting a moved running executable breaks macOS
+# privacy attribution even when old and new builds have the same signer.
+python3 scripts/install_bundle.py "$DEST_APP" --source "$APP"

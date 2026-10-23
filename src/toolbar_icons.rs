@@ -7,6 +7,7 @@ pub(super) enum Icon {
     Search,
     Reload,
     FolderPlus,
+    FilePlus,
     Trash,
     Sort,
     Share,
@@ -204,6 +205,12 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
                     path.cubic_bezier_to(p(10., 17.), p(3., 14.), p(6., 17.));
                     path.cubic_bezier_to(p(17., 11.), p(13.5, 17.), p(16.5, 14.5));
                     line!(16,2.5;16,7;11.5,7);
+                }
+                Icon::FilePlus => {
+                    line!(4,2;12,2;16,6;16,18;4,18;4,2);
+                    line!(12,2;12,6;16,6);
+                    line!(10,9;10,15);
+                    line!(7,12;13,12);
                 }
                 Icon::FolderPlus => {
                     // Closed folder silhouette; the plus stays within the body

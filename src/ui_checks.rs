@@ -43,6 +43,10 @@ mod project_strip_checks;
 mod tab_sidebar_checks;
 
 #[cfg(feature = "ui-checks")]
+#[path = "toolbar_checks.rs"]
+mod toolbar_checks;
+
+#[cfg(feature = "ui-checks")]
 #[path = "clipboard_checks.rs"]
 mod clipboard_checks;
 
@@ -137,7 +141,7 @@ pub(super) fn run() {
     std::env::set_var("SCHNAUZ_START_DIR", &directory);
     // A hung/hidden platform window must fail, never masquerade as a passing check.
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(if visible { 600 } else { 15 }));
+        std::thread::sleep(Duration::from_secs(if visible { 600 } else { 45 }));
         std::process::exit(2);
     });
     let cleanup = directory.clone();
@@ -246,7 +250,7 @@ pub(super) fn run() {
             check_updates(window,cx);
             check_tab_project_dialog(window,cx);
             check_video(window,cx);
-            web_links::check(window,cx,move |cx|project_sidebar::check_order(window,cx,move |cx|todoist_window::check(window,cx,move |cx|drag_checks::run(window,cleanup,cx))));
+            toolbar_checks::run(window,cx,move |cx|web_links::check(window,cx,move |cx|project_sidebar::check_order(window,cx,move |cx|todoist_window::check(window,cx,move |cx|drag_checks::run(window,cleanup,cx)))));
         }
     });
 }
@@ -269,14 +273,14 @@ fn check_updates(window:gpui::WindowHandle<Fixture>,cx:&mut App) {
     }),..Default::default()});
     for _ in 0..3 {cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap();}
     let badge=recorded_bounds("update-info");let dog=recorded_bounds("mascot-body");
-    assert_eq!(f32::from(badge.size.width),13.);assert!(badge.origin.y<dog.origin.y);
+    assert_eq!(f32::from(badge.size.width),5.);assert_eq!(f32::from(badge.size.height),5.);assert_eq!(badge.origin.y,dog.origin.y);
     assert!(badge.origin.y>=px(0.),"Update info stays inside toolbar");
     about::check_updates(cx);
     cx.set_global(updates::State {checked:true,ahead_of:Some(semver::Version::parse("0.5.9").unwrap()),..Default::default()});
     assert_eq!(updates::badge(cx),Some((0xb77900,"Installed version is newer than the latest GitHub release")));
     assert!(cx.global::<updates::State>().release.is_none(),"Developer warning never offers a downgrade");
     for _ in 0..3 {cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap();}
-    assert_eq!(f32::from(recorded_bounds("update-info").size.width),13.);
+    assert_eq!(f32::from(recorded_bounds("update-info").size.width),5.);
     about::check_updates(cx);
     cx.set_global(updates::State::default());
     BOUNDS.with(|all|{all.borrow_mut().remove("update-info");});

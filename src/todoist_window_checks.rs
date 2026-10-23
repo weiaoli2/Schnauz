@@ -117,6 +117,17 @@ pub(crate) fn check(
         b.publish_project_activity(cx);
     });
     assert!(browser.read(cx).project_is_open(Some(u64::MAX - 1),cx),"A different browser's parked tabs mark the project open");
+    browser.update(cx, |b, cx| {
+        b.project_sessions.insert(Some(u64::MAX - 1), schnauz::ProjectSession { panes: vec![Pane::new(config_dir().unwrap())], active_pane: 0, split_ratio: 0.5 });
+        b.close_open_project(Some(u64::MAX - 1), true, cx);
+    });
+    assert!(!browser.read(cx).project_is_open(Some(u64::MAX - 1),cx), "Project Close clears every browser's parked tabs and activity");
+    assert!(!second_browser.read(cx).project_sessions.contains_key(&Some(u64::MAX - 1)));
+    // Retain the separate browser-release activity regression below.
+    second_browser.update(cx, |b, cx| {
+        b.project_sessions.insert(Some(u64::MAX - 1), schnauz::ProjectSession { panes: vec![Pane::new(config_dir().unwrap())], active_pane: 0, split_ratio: 0.5 });
+        b.publish_project_activity(cx);
+    });
     cx.update_window(*second,|_,w,cx|detach(Some(second_browser.downgrade()),w,cx)).unwrap();
     assert_eq!(cx.global::<Shared>().floating.unwrap().window_id(),floating.window_id(),"Other windows reuse the sole floater");
     assert!(!second_browser.read(cx).todoist.open);

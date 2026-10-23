@@ -114,6 +114,62 @@ use gpui::Keystroke;
 /// assert_eq!(bytes, Some(b"\r".to_vec()));
 /// ```
 pub fn keystroke_to_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u8>> {
+    // xterm modifier parameter: Shift=1, Alt=2, Control=4, plus one.
+    // Preserve these for TUI editors instead of turning Ctrl/Shift arrows into
+    // plain cursor movement. Command shortcuts belong to the host application.
+    if keystroke.modifiers.platform {
+        return None;
+    }
+    let modifiers = 1
+        + u8::from(keystroke.modifiers.shift)
+        + 2 * u8::from(keystroke.modifiers.alt)
+        + 4 * u8::from(keystroke.modifiers.control);
+    if modifiers > 1 {
+        let suffix = match keystroke.key.as_str() {
+            "up" => Some("A"),
+            "down" => Some("B"),
+            "right" => Some("C"),
+            "left" => Some("D"),
+            "home" => Some("H"),
+            "end" => Some("F"),
+            "f1" => Some("P"),
+            "f2" => Some("Q"),
+            "f3" => Some("R"),
+            "f4" => Some("S"),
+            _ => None,
+        };
+        if let Some(suffix) = suffix {
+            return Some(format!("\x1b[1;{modifiers}{suffix}").into_bytes());
+        }
+        let number = match keystroke.key.as_str() {
+            "insert" => Some(2),
+            "delete" => Some(3),
+            "pageup" => Some(5),
+            "pagedown" => Some(6),
+            "f5" => Some(15),
+            "f6" => Some(17),
+            "f7" => Some(18),
+            "f8" => Some(19),
+            "f9" => Some(20),
+            "f10" => Some(21),
+            "f11" => Some(23),
+            "f12" => Some(24),
+            _ => None,
+        };
+        if let Some(number) = number {
+            return Some(format!("\x1b[{number};{modifiers}~").into_bytes());
+        }
+    }
+    // Meta applies to special keys too (word deletion, escape-prefixed Return).
+    if keystroke.modifiers.alt && matches!(keystroke.key.as_str(), "backspace" | "enter" | "space")
+    {
+        let byte = match keystroke.key.as_str() {
+            "backspace" => 0x7f,
+            "enter" => b'\r',
+            _ => b' ',
+        };
+        return Some(vec![0x1b, byte]);
+    }
     // Handle special keys first
     match keystroke.key.as_str() {
         // Basic control characters
@@ -161,8 +217,26 @@ pub fn keystroke_to_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u
         }
 
         // Navigation keys
-        "home" => return Some(b"\x1b[H".to_vec()),
-        "end" => return Some(b"\x1b[F".to_vec()),
+        "home" => {
+            return Some(
+                if mode.contains(TermMode::APP_CURSOR) {
+                    b"\x1bOH"
+                } else {
+                    b"\x1b[H"
+                }
+                .to_vec(),
+            );
+        }
+        "end" => {
+            return Some(
+                if mode.contains(TermMode::APP_CURSOR) {
+                    b"\x1bOF"
+                } else {
+                    b"\x1b[F"
+                }
+                .to_vec(),
+            );
+        }
         "pageup" => return Some(b"\x1b[5~".to_vec()),
         "pagedown" => return Some(b"\x1b[6~".to_vec()),
         "insert" => return Some(b"\x1b[2~".to_vec()),
@@ -261,6 +335,41 @@ pub fn keystroke_to_bytes(keystroke: &Keystroke, mode: TermMode) -> Option<Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editor_modified_navigation_and_meta_keys() {
+        for (key, expected) in [
+            ("ctrl-left", "\x1b[1;5D"),
+            ("shift-up", "\x1b[1;2A"),
+            ("alt-right", "\x1b[1;3C"),
+            ("ctrl-shift-home", "\x1b[1;6H"),
+            ("shift-pageup", "\x1b[5;2~"),
+            ("ctrl-delete", "\x1b[3;5~"),
+            ("alt-backspace", "\x1b\x7f"),
+            ("alt-enter", "\x1b\r"),
+            ("ctrl-f5", "\x1b[15;5~"),
+        ] {
+            for mode in [TermMode::empty(), TermMode::APP_CURSOR] {
+                assert_eq!(
+                    keystroke_to_bytes(&Keystroke::parse(key).unwrap(), mode),
+                    Some(expected.as_bytes().to_vec()),
+                    "{key}"
+                );
+            }
+        }
+        assert_eq!(
+            keystroke_to_bytes(&Keystroke::parse("home").unwrap(), TermMode::APP_CURSOR),
+            Some(b"\x1bOH".to_vec())
+        );
+        assert_eq!(
+            keystroke_to_bytes(&Keystroke::parse("end").unwrap(), TermMode::APP_CURSOR),
+            Some(b"\x1bOF".to_vec())
+        );
+        assert_eq!(
+            keystroke_to_bytes(&Keystroke::parse("cmd-a").unwrap(), TermMode::empty()),
+            None
+        );
+    }
 
     #[test]
     fn test_enter_key() {

@@ -158,6 +158,10 @@ fn spawn_pty(
             pixel_height: 0,
         })
         .map_err(|e| e.to_string())?;
+    // A terminal launched from another terminal must not inherit that parent's
+    // fixed geometry. Programs should query this session's own PTY instead.
+    command.env_remove("COLUMNS");
+    command.env_remove("LINES");
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env("TERM_PROGRAM", "Schnauz");
@@ -397,6 +401,23 @@ impl Schnauz {
         } else {
             window.focus(&self.focus);
         }
+        cx.notify();
+    }
+
+    fn close_terminal(&mut self, pane: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // Apply normal SSH end-of-session cleanup before removing its identity,
+        // so a following browser cannot retain a dead owned control socket.
+        if let Some(id) = self.tab(pane).terminal.as_ref().map(|session| session.id) {
+            self.ssh_process_ended(id, cx);
+        }
+        let tab = self.tab_mut(pane);
+        tab.terminal_starting = None;
+        tab.terminal_restore = None;
+        tab.terminal_open = false;
+        // Dropping this owned session hangs up only its PTY. The browser tab
+        // remains, and the live-session badge disappears.
+        tab.terminal = None;
+        window.focus(&self.focus);
         cx.notify();
     }
 
@@ -788,6 +809,8 @@ impl Schnauz {
                 .child(
                     div()
                         .id(("terminal-divider", pane))
+                        .relative()
+                        .children(ui_checks::probe("terminal-divider"))
                         .h(px(5.0))
                         .flex_none()
                         .cursor(CursorStyle::ResizeUpDown)
@@ -796,6 +819,7 @@ impl Schnauz {
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                diagnostics::event("terminal divider drag started");
                                 this.terminal_resize = Some((
                                     pane,
                                     f32::from(event.position.y),
@@ -865,6 +889,7 @@ impl Schnauz {
                         .child(
                             div()
                                 .id(("terminal-hide", pane))
+                                .relative().children(ui_checks::probe("terminal-hide"))
                                 .px_2()
                                 .cursor_pointer()
                                 .hover(|s| s.text_color(rgb(0xffffff)))
@@ -873,6 +898,19 @@ impl Schnauz {
                                     this.tab_mut(pane).terminal_open = false;
                                     window.focus(&this.focus);
                                     cx.notify();
+                                })),
+                        )
+                        .child(
+                            div().id(("terminal-close", pane)).relative()
+                                .children(ui_checks::probe("terminal-close"))
+                                .flex_none().flex().items_center().justify_center()
+                                .size(px(22.)).rounded_sm().cursor_pointer()
+                                .hover(|s| s.bg(rgba(0xffffff20)))
+                                .child(ui_icon(Icon::Close, 12., rgb(0xaab4cb)))
+                                .tooltip(tip("Close terminal and end its running session"))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    this.close_terminal(pane, window, cx);
                                 })),
                         ),
                 )
@@ -1079,6 +1117,20 @@ SNZ_SSH_TEST_SHELL=1 SHELL="$SNZ_SSH_TEST_REMOTE_SHELL" /bin/sh -c "$remote"
             assert!(String::from_utf8_lossy(&probe.output).contains("NORMAL_SSH_PASSTHROUGH"));
             drop(probe);
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn new_pty_does_not_inherit_fixed_parent_terminal_dimensions() {
+        let root = crate::tests::scratch("terminal-size-env");
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c", "printf 'SNZ-SIZE-ENV=%s/%s\\n' \"${COLUMNS-unset}\" \"${LINES-unset}\"; stty size"]);
+        command.env("COLUMNS", "42");
+        command.env("LINES", "7");
+        let (process, reader) = spawn_pty(command, root.join("cwd"), root.join("ssh"), None).unwrap();
+        let mut probe = Probe::from_pair(process, reader);
+        probe.wait(|_, text| text.contains("SNZ-SIZE-ENV=unset/unset") && text.contains("18 100"));
+        drop(probe);
         fs::remove_dir_all(root).unwrap();
     }
 

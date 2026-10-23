@@ -240,6 +240,19 @@ impl TerminalState {
         self.parser.advance(&mut *term, bytes);
     }
 
+    pub(crate) fn sync_deadline(&self) -> Option<std::time::Instant> {
+        self.parser.sync_timeout().sync_timeout()
+    }
+
+    pub(crate) fn expire_sync(&mut self, now: std::time::Instant) -> bool {
+        if self.sync_deadline().is_some_and(|deadline| deadline <= now) {
+            self.parser.stop_sync(&mut *self.term.lock());
+            true
+        } else {
+            false
+        }
+    }
+
     /// Resize the terminal to new dimensions.
     ///
     /// This method updates the terminal's internal grid to match the new size.
@@ -271,7 +284,10 @@ impl TerminalState {
         // Create dimensions for the resize
         let dimensions = TermDimensions::new(cols, rows);
 
-        // Resize the terminal
+        // Finish a buffered redraw against its original coordinates before
+        // changing geometry. A late end marker must not replay the old frame
+        // over the newly sized command/input row.
+        self.parser.stop_sync(&mut *term);
         term.resize(dimensions);
     }
 
@@ -434,6 +450,56 @@ mod tests {
             // The text should be at the cursor position
             // We can't easily test the exact content without more complex grid inspection
             assert!(grid.columns() == 80);
+        });
+    }
+
+    #[test]
+    fn synchronized_redraw_finishes_on_deadline_or_before_resize() {
+        let (tx, _rx) = channel();
+        let mut terminal = TerminalState::new(80, 24, GpuiEventProxy::new(tx));
+        terminal.process_bytes(b"old\x1b[?2026h\rnew");
+        assert_eq!(
+            terminal.with_term(|t| t.grid()[alacritty_terminal::index::Point::new(
+                alacritty_terminal::index::Line(0),
+                alacritty_terminal::index::Column(0)
+            )]
+            .c),
+            'o'
+        );
+        let deadline = terminal.sync_deadline().unwrap();
+        assert!(!terminal.expire_sync(deadline - std::time::Duration::from_millis(1)));
+        assert!(terminal.expire_sync(deadline));
+        assert!(terminal.sync_deadline().is_none());
+        assert_eq!(
+            terminal.with_term(|t| t.grid()[alacritty_terminal::index::Point::new(
+                alacritty_terminal::index::Line(0),
+                alacritty_terminal::index::Column(0)
+            )]
+            .c),
+            'n'
+        );
+        terminal.process_bytes(b"\x1b[?2026h\x1b[24;1Hcommand row");
+        terminal.resize(100, 30);
+        assert!(
+            terminal.sync_deadline().is_none(),
+            "Old redraw must finish before resizing"
+        );
+        let before = terminal.with_term(|t| t.grid().clone());
+        terminal.process_bytes(b"\x1b[?2026l");
+        terminal.with_term(|t| {
+            for row in 0..30 {
+                for col in 0..100 {
+                    let point = alacritty_terminal::index::Point::new(
+                        alacritty_terminal::index::Line(row),
+                        alacritty_terminal::index::Column(col),
+                    );
+                    assert_eq!(
+                        t.grid()[point].c,
+                        before[point].c,
+                        "Late redraw terminator cannot overwrite resized content"
+                    );
+                }
+            }
         });
     }
 

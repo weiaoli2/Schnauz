@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source ./dev-env.sh
 ./test-signing.sh
+python3 scripts/test_install_bundle.py
 python3 scripts/check_bundle_contents.py --self-test
 cargo test "$@"
 cargo test --locked -p gpui-terminal --lib

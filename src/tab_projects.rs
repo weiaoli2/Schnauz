@@ -140,6 +140,81 @@ pub(super) fn check_moves(b: &mut Schnauz, window: &mut Window, cx: &mut Context
     b.persist_library(original_projects, cx).unwrap();
     b.project_sessions.remove(&Some(project));
     println!("PASS tab-project move with/without activation, Personal/split handling, atomic persistence failure, meaningful Favourites action, and identical live shell PID/terminal/tab/SSH identity; no reconnect or terminal restart");
+    check_project_closing(b, window, cx);
+}
+
+#[cfg(feature = "ui-checks")]
+fn check_project_closing(b: &mut Schnauz, window: &mut Window, cx: &mut Context<Schnauz>) {
+    // Park the enclosing fixture's owned terminal safely outside these tab drops.
+    let original = b.projects.clone();
+    let panes = std::mem::take(&mut b.panes);
+    let sessions = std::mem::take(&mut b.project_sessions);
+    let active_pane = b.active_pane;
+    let ratio = b.split_ratio;
+    let mut library = projects::Library::default();
+    let path = config_dir().unwrap();
+    b.panes = vec![Pane::new(path.clone())];
+    b.active_pane = 0;
+    let layout = b.capture_layout();
+    let a = library.create("Close fixture A", layout.clone()).unwrap();
+    let next = library.create("Close fixture B", layout.clone()).unwrap();
+    let saved_only = library.create("Close fixture saved only", layout.clone()).unwrap();
+    library.active = Some(a);
+    b.persist_library(library, cx).unwrap();
+    b.project_sessions.insert(Some(next), ProjectSession {
+        panes: vec![Pane::new(path.clone())], active_pane: 0, split_ratio: 0.5,
+    });
+    let survivor = b.project_sessions[&Some(next)].panes[0].tabs[0].id;
+    b.publish_project_activity(cx);
+    let close = |b: &mut Schnauz, id, window: &mut Window, cx: &mut Context<Schnauz>| {
+        let nodes = b.sidebar_menu_nodes(SidebarTarget::Project(id), cx);
+        let action = nodes.iter().find_map(|node| match node {
+            MenuNode::Item { label, on, .. } if label == "Close" => Some(on.clone()), _ => None,
+        }).expect("Both sidebar and header project targets offer Close");
+        action(b, window, cx);
+    };
+    b.project_load_error = Some("fixture close save failure".into());
+    let tab = b.active_tab().id;
+    close(b, Some(a), window, cx);
+    assert_eq!(b.projects.active, Some(a));
+    assert_eq!(b.active_tab().id, tab, "Failed save cannot close the tab");
+    b.project_load_error = None;
+    close(b, Some(a), window, cx);
+    assert_eq!(b.projects.active, Some(next));
+    assert_eq!(b.active_tab().id, survivor, "Next project's existing tab survives");
+    assert!(!b.project_is_open(Some(a), cx), "Closing clears the green dot");
+    assert!(!b.active_project_chips(cx).iter().any(|(id, _)| *id == Some(a)));
+    assert!(b.projects.items.iter().any(|p| p.id == a), "Close keeps the saved project");
+    assert!(!b.project_is_open(Some(saved_only), cx));
+    // Inactive Close must leave the selected project's tab untouched.
+    b.switch_project(Some(a), cx).unwrap();
+    b.switch_project(Some(next), cx).unwrap();
+    close(b, Some(a), window, cx);
+    assert_eq!(b.active_tab().id, survivor);
+    assert_eq!(b.projects.active, Some(next));
+    // A pane's final tab collapses the split; the project's final tab switches.
+    b.switch_project(Some(a), cx).unwrap();
+    b.panes.push(Pane::new(path.clone()));
+    b.close_tab(1, 0, cx);
+    assert_eq!(b.projects.active, Some(a));
+    assert_eq!(b.panes.len(), 1);
+    b.close_tab(0, 0, cx);
+    assert_eq!(b.projects.active, Some(next));
+    assert_eq!(b.active_tab().id, survivor);
+    assert!(!b.project_is_open(Some(a), cx));
+    b.close_tab(0, 0, cx);
+    assert_eq!(b.projects.active, None, "No other open project falls back to Personal");
+    assert_eq!(b.active_tab().current_dir, home_dir());
+    assert!(!b.project_is_open(Some(next), cx));
+    b.close_tab(0, 0, cx);
+    assert_eq!(b.active_tab().current_dir, home_dir(), "Final Personal tab resets to Home");
+    b.panes = panes;
+    b.project_sessions = sessions;
+    b.active_pane = active_pane;
+    b.split_ratio = ratio;
+    b.persist_library(original, cx).unwrap();
+    b.publish_project_activity(cx);
+    println!("PASS project Close menus, inactive close, next live tab identity, saved project retention, split/final-tab closure, Personal fallback and save-failure safety");
 }
 
 fn session(layout: &projects::Layout) -> ProjectSession {

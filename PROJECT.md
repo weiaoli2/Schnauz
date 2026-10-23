@@ -1,6 +1,6 @@
 # Schnauz
 
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -56,7 +56,9 @@ set `SCHNAUZ_CODESIGN_IDENTITY` to a certificate name or SHA-1. Missing or ambig
 certificates fail before replacing the app; `-` explicitly requests a temporary
 ad-hoc build whose permissions may not survive changes. After the one-time move
 from ad-hoc signing, the user needs to re-add the current app in Full Disk Access.
-Builds stage and verify the app before replacing it, without restarting sessions.
+Builds stage and verify the app. If the destination app is running, installation
+is deferred; its bundle is never moved or deleted. After a deliberate quit, apply
+the pending build with the command printed by packaging, then launch normally.
 `./test-signing.sh` checks selection using fixtures without signing or TCC access.
 
 That prepared cache defaults to offline mode. Use `CARGO_NET_OFFLINE=false` only
@@ -1174,3 +1176,200 @@ unnotarized early prerelease. Receipts: dist/0.8.1/{LOCAL-,SOURCE-,DRAFT-,RELEAS
 v0.8.0 / 8ae32d2 and its clearly superseded draft remain unpublished and intact.
 No running app, terminal or SSH session was restarted. This publication request
 is complete; future releases require a new request. Preserve both tags/assets.
+
+
+## Local 0.8.2 — close open projects
+
+Sidebar and top-bar project context menus offer Close while a project is open,
+including Personal. Explicit Close drops that project's tabs/terminals across
+browser windows and clears its activity indicators, retaining saved metadata.
+Closing the selected project's final tab switches to the next open project in
+sidebar order with wraparound; other windows retain their own tabs on individual
+tab closure. With no other open project, a fresh Personal/Home tab remains.
+Persistence failure leaves tabs intact. The new hidden-window checks cover the
+menu callback, inactive close, next-tab identity, split/final-tab closure, fallback,
+save failure and multi-window parked-session cleanup. ./test.sh passed 102 app
+and 60 terminal tests plus offline fixtures; the updated ./test-ui.sh passed.
+
+The reported 0.7.11 on relaunch was the ordinary repository-root Schnauz.app:
+release.sh built published 0.8.1 under dist/0.8.1 without updating that launch
+path. The release guide now requires verifying/updating the ordinary local bundle
+as well. Published 0.8.1 artifacts stay unchanged; 0.8.2 is local only.
+
+0.8.2 final packaging: the ordinary repository-root Schnauz.app now reports
+0.8.2 in both Info.plist and packaged --version. Optimized build, bundle allowlist
+and deep/strict Apple Development signature verification passed. The original
+running process (PID 22631) remains alive; Oliver must quit/reopen to load the
+updated executable. No commit, tag or public release was made.
+
+
+## Local 0.8.3 — smaller mascot status dot
+
+The update/developer indicator above the toolbar Schnauz is a plain 5 × 5 pt
+coloured dot, matching the sidebar project activity dot. The former 13 pt circle
+and white i are removed. Existing blue/amber status colours, tooltip and About
+click action remain. ./test-ui.sh passed, including both status-dot size checks.
+
+
+## Local 0.8.4 — lower mascot status dot
+
+Moves the 5 pt toolbar status dot down by 4 pt, from top -4 pt to 0 pt.
+Size, colours, tooltip and About action stay unchanged. Live sessions are preserved.
+
+0.8.4 validation: the isolated native UI suite passed and the optimized local
+bundle was built with the existing certificate and bundle-content verification.
+Superseded locally by the following combined test stand; no live restart.
+
+## Local 0.8.5 — reorder file action icons and create text files
+
+Drag file-action controls left/right to reorder them; an inset insertion marker
+keeps layout stable. The shared prefs order updates all windows and survives
+restart. List/Icons remains one movable group; narrow/remote panes retain their
+existing visibility rules without discarding hidden controls from saved order.
+The new document-plus icon defaults immediately after New Folder and opens the
+existing named .txt creation dialog. Menu actions trigger on click release so
+Share, Sort and View Options remain draggable without opening during a drag.
+The mascot status dot also includes the requested 4 pt downward adjustment.
+
+Validation: ./test.sh passed 103 application tests and 60 terminal tests, offline
+native fixtures and the hidden GPUI/AppKit suite. New actual mouse-drag checks
+cover both directions, inactive and menu controls, List/Icons, network, outside
+cancellation, disk reload and unchanged tab/path with no accidental actions.
+The actual new-file button opens its naming dialog and creates an empty .txt in
+a disposable folder. No live window, terminal, SSH, account or server is used.
+
+
+## Local 0.8.6 — terminal sizing, editor input and Close
+
+Terminal dimensions now update during layout before drawing, with the emulator
+resized and its lock released before notifying the owned PTY. Rendering and
+mouse coordinates share the same measured font metrics. New PTYs discard inherited
+COLUMNS/LINES overrides. Modified navigation/function keys retain xterm modifiers;
+Home/End respect application mode, Alt+Backspace/Enter retain Meta, and Shift-page
+keys reach full-screen apps. Wheel-to-arrow counts match mouse-report counts;
+fractional trackpad movement cannot cross between local/app scrolling modes.
+Frozen text selection explicitly blocks wheel input to the foreground program.
+
+A vector Close cross sits immediately right of Hide. Hide preserves the live
+session/badge; Close drops only that tab's owned PTY, removes restore intent and
+its terminal badge, and returns focus to browsing. SSH closure uses the existing
+end-of-session browser cleanup so no dead owned socket remains attached.
+
+QA uses owned fixture PTYs and actual native pointer events, with vi reporting
+rows/columns after narrow/wide resizes and multiline command output scrolling
+above its bottom prompt. Existing user sessions remain untouched. Oliver's
+reported Codex-over-SSH overlap still needs confirmation in his workflow; the
+screenshot alone does not prove the narrower transcript is a terminal-size fault.
+No commit, tag or public release is requested.
+
+Synchronized redraws now enforce VTE's 150 ms deadline even when no further
+output arrives. Resizing flushes a pending redraw against its original geometry
+before the grid changes, preventing an old buffered frame from later overwriting
+the resized command/input area. Regression covers deadline expiry and late end
+markers after resizing.
+
+0.8.6 final validation: ./test.sh passed all 104 application and 62 terminal
+tests plus offline native and hidden-window fixtures. Final optimized normal
+Schnauz.app reports 0.8.6; bundle allowlist and deep/strict Apple Development
+signature verification passed outside the restricted sandbox. No live app,
+terminal or SSH session was restarted; no commit or publication was made.
+
+
+## Local 0.8.7 — terminal-divider crash and local diagnostics
+
+The reported 2026-10-22 16:45:37 SIGABRT followed an upward terminal-divider drag.
+An actual hidden native mouse-drag regression reproduced a Rust panic: the file
+list scrollbar clamped between a 28 pt minimum and a 19 pt viewport. Bound the
+minimum to available space in list painting/dragging, horizontal bars and static
+bars. Preserve live terminals and their PTY identity during resizing.
+
+Normal launches now retain 12 private, bounded local session logs under
+~/Library/Logs/Schnauz (isolated profiles use their own diagnostics subfolder).
+Rust panics force a stack trace regardless of RUST_BACKTRACE; uncaught native
+exceptions include their native call stack. Fatal signals append a small safe
+marker and retain normal macOS crash processing. Raw memory-fault signals do not
+produce a custom stack trace. Fixed action labels include terminal-divider starts;
+no terminal transcript, commands, credentials or file contents are recorded.
+No upload is configured: report destination and automatic/manual sending await
+Oliver’s choice. macOS refused the original report with “Log limit exceeded”.
+
+
+0.8.7 validation: ./test.sh -- --test-threads=1 passed 106 application and
+62 terminal tests, offline native fixtures and the hidden-window suite, including
+the previously crashing native upward-divider drag with a live vi PTY. Panic and
+native-exception reports were verified in a disposable child process. An initial
+parallel run had an existing fixture-shell early-exit failure; serialized rerun
+passed. The signed optimized 0.8.7 bundle passed packaging checks without restart.
+
+## Local 0.8.8 — clearer project-row separation
+
+Oliver requested four times the vertical clearance around the top project row:
+8 pt above and below instead of 2 pt. Browser header becomes 74 pt; the Search
+row, project chip dimensions and Settings header stay as before. The actual
+hidden-window layout check asserts symmetric 8 pt clearance. Includes the 0.8.7
+terminal-divider crash fix and local crash diagnostics; no live session restart.
+
+0.8.8 validation: the final hidden-window suite passed symmetric 8 pt project-row
+clearance and the actual terminal-divider drag regression. Optimized normal
+Schnauz.app reports 0.8.8; bundle allowlist and deep/strict certificate signature
+verification passed outside the sandbox. No live app/PTY/SSH restart or app
+release publication was performed.
+
+
+## 2026-10-23 — protected folders fail after replacing the running app
+
+Confirmed from the reported Downloads denial at 12:22:46: tccd could not resolve
+PID 32977 (proc_pidpath_audittoken: ENOENT), failed to construct its attribution
+chain, then the kernel denied Downloads reads. lsof still identified its original
+executable under .build-cache/app-stage.2z2co4/previous/Schnauz.app, but that path
+no longer existed. make_app.sh moved the running app into that temporary backup
+and its EXIT cleanup deleted it after installing 0.8.7. The process stayed alive;
+its executable did not. Stable signing cannot fix missing process attribution.
+No evidence supports resetting TCC or treating this as a new user denial.
+
+make_app.sh now uses scripts/install_bundle.py. It inspects executable paths
+(no command arguments), fails closed if inspection or signature checks fail,
+and stages a pending candidate while the destination or its helpers are running.
+No restart or automatic launch. After Oliver deliberately quits, apply with:
+
+    python3 scripts/install_bundle.py /Users/oliw/CurrentProjects/Schnauz/Schnauz.app
+
+Replaced bundles and superseded candidates are retained outside disposable
+packaging roots, protecting a process that races the inventory check. Do not
+remove retained bundles while a process could still use them. Pending candidates
+are keyed by destination, and each apply verifies their signature again.
+
+Five disposable lifecycle regressions passed, including a compiled owned process
+with an unchanged PID/path/inode, deferred apply, rollback, inspection/signature
+failure and path aliases. Actual signed packaging against the live destination
+also deferred successfully: PID 32977 and the installed bundle/executable inodes
+and SHA-256 were unchanged. Receipt: .build-cache/install-preservation-proof.json.
+No protected-folder probes, privacy changes, live restarts or publication.
+The currently affected process still has a deleted executable; prevention does
+not repair that already-running session. Relaunch recovery remains Oliver’s
+manual check when his terminal/SSH work can safely stop.
+
+Final safe-install verification: ./test.sh -- --test-threads=1 passed all five
+installer lifecycle tests, 106 application tests, 62 terminal tests, native offline
+fixtures and the complete hidden-window suite. Signed packaging deferred against
+the live destination with unchanged PID/inodes/hash. No commit or publication.
+
+
+## Release 0.8.9 — authorized 2026-10-23
+
+Oliver requested an updated GitHub release after the confirmed running-bundle
+replacement bug. Includes the accumulated verified changes since public 0.8.1:
+project Close, draggable file-action order/New Text File, terminal geometry/input
+and synchronized redraws, terminal Close, divider-crash fix, local diagnostics,
+8 pt project-strip spacing and safer source build installation. Package both
+architectures with the stable certificate; retain early-prerelease/not-notarized
+status. Preserve all existing releases/tags, local production work and live
+sessions. No automatic crash sending, auto-updater or website deployment.
+Manual DMG/Finder upgrades must quit the old app before replacing it. Exclude
+website/, video/, test.csv and generated bytecode/cache/profile files from source.
+
+0.8.9 final-source validation: ./test.sh -- --test-threads=1 passed 106
+application tests, 62 terminal tests, five installer lifecycle tests, offline
+native helpers and the complete hidden-window suite. Prospective source files
+were reviewed for secrets and production/profile/cache exclusions. Both release
+architectures and their artifacts must pass verification before publication.

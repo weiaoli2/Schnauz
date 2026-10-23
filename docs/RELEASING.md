@@ -4,6 +4,16 @@ Official repository: https://github.com/weiaoli2/Schnauz (public).
 Current release: **v0.8.1**, public Apple Silicon + Intel early preview.
 Previous published release: **v0.5.14**.
 
+## Authorized release — 0.8.9
+
+Oliver requested an updated GitHub release on 2026-10-23 following the confirmed
+live-bundle deletion bug. Publish the accumulated verified fixes since 0.8.1 as
+0.8.9, with Apple Silicon and Intel DMGs, exact MPL source ZIP and SHA256SUMS.
+Use a new tag and early prerelease; preserve all existing releases/tags. Stable
+Apple Development signing, no notarization. Explicitly distinguish safe source
+build/install staging from manual Finder replacement, which requires quitting
+Schnauz first. No live session restart, automatic update or crash-report upload.
+
 ## Published release — 0.8.1
 
 Published 2026-10-20 at https://github.com/weiaoli2/Schnauz/releases/tag/v0.8.1,
@@ -222,3 +232,15 @@ gh release edit "$TAG" --repo weiaoli2/Schnauz --draft=false --prerelease
 For subsequent releases, reuse these scripts and update the version, release
 notes and changed validation details. Regenerate notices only when dependency
 changes require it. Keep the GitHub homepage set to https://techguyzone.com/apps/.
+
+The architecture-specific release builds do not update the ordinary
+`Schnauz.app` at the repository root. After a release, run `./build.sh` with its
+normal output. If that app is running, packaging stages a verified pending build
+and leaves the installed bundle untouched. Keeping the process alive while
+moving/deleting its bundle breaks macOS privacy attribution and is forbidden.
+After Oliver deliberately quits, apply the pending build using the printed
+`python3 scripts/install_bundle.py DESTINATION` command and verify version and
+signature. Launching remains manual; never stop live windows/PTYs to apply it.
+Replaced bundles remain in ignored .build-cache/retained-apps, outside staging
+cleanup, to protect a launch racing the process inventory. Do not delete these
+while any process could still be using them. No TCC resets or trust changes.

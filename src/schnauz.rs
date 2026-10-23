@@ -502,6 +502,69 @@ impl Schnauz {
         cx.notify();
     }
 
+    /// Explicit Close applies to all browser windows. Closing a window's last
+    /// tab only drops that window's session; other windows retain their tabs.
+    pub(super) fn close_open_project(&mut self, id: Option<u64>, all_windows: bool, cx: &mut Context<Self>) {
+        if !self.project_is_open(id, cx) { return; }
+        self.sidebar_menu = None;
+        let old = self.projects.active;
+        let mut library = self.projects.clone();
+        let home = Layout {
+            panes: vec![SavedPane { tabs: vec![SavedTab {
+                path: home_dir(), view: "list".into(), sort: "none".into(),
+                ascending: true, filter: Default::default(), show_hidden: false, network: None,
+            }], active: 0 }],
+            active_pane: 0, split_ratio: 0.5,
+        };
+        if old == id {
+            library.remember_layout(self.capture_layout());
+            let open = self.active_project_chips(cx);
+            let index = open.iter().position(|(project, _)| *project == id).unwrap_or(0);
+            library.active = open.iter().cycle().skip(index + 1).take(open.len())
+                .find(|(project, _)| *project != id).map(|(project, _)| *project).unwrap_or(None);
+            // With no remaining project, start a fresh Personal/Home tab.
+            if library.active.is_none() && !open.iter().any(|(project, _)| project.is_none() && *project != id) {
+                library.personal_layout = Some(home.clone());
+            }
+        }
+        // Persist before dropping any tabs/PTYs, so a failed save leaves them intact.
+        if let Err(error) = self.persist_library(library, cx) {
+            self.set_notice(error, cx);
+            return;
+        }
+        self.finish_project_close(id, old, true, &home, cx);
+        let own = cx.entity_id();
+        for browser in quit_guard::browsers(cx) {
+            if browser.entity_id() == own { continue; }
+            browser.update(cx, |browser, cx| {
+                let old = browser.projects.active;
+                browser.projects = cx.global::<ProjectLibraryGlobal>().0.clone();
+                browser.finish_project_close(id, old, all_windows, &home, cx);
+            });
+        }
+    }
+
+    fn finish_project_close(&mut self, closed: Option<u64>, old: Option<u64>, drop_session: bool, home: &Layout, cx: &mut Context<Self>) {
+        let active = self.projects.active;
+        if old != active {
+            let layout = active.and_then(|id| self.projects.items.iter().find(|p| p.id == id).map(|p| p.layout.clone()))
+                .or_else(|| self.projects.personal_layout.clone()).and_then(|layout| layout.available())
+                .unwrap_or_else(|| home.clone());
+            self.apply_project_switch(old, &layout, cx);
+        } else if active == closed && drop_session {
+            self.clear_file_drag(cx);
+            self.close_palette(cx);
+            self.space_map = None;
+            self.apply_layout(home);
+            self.terminal_resize = None;
+            self.reload_pane(0, cx);
+        }
+        if drop_session { self.project_sessions.remove(&closed); }
+        self.saved_session = self.session_string();
+        self.publish_project_activity(cx);
+        cx.notify();
+    }
+
     pub(super) fn restore_project(&mut self, id: u64, cx: &mut Context<Self>) {
         if let Err(error) = self.switch_project(Some(id), cx) {
             self.set_notice(error, cx);
@@ -749,11 +812,11 @@ impl Schnauz {
             .border_b_1()
             .border_color(rgb(if filtered { t.accent } else { t.border }))
             .child(first)
-            .child(div().relative().flex_none().h(px(1.)).mx_4().mt(px(1.)).mb(px(2.))
+            .child(div().relative().flex_none().h(px(1.)).mx_4().mt(px(1.)).mb(px(8.))
                 .bg(Theme::alpha(t.border,0x80))
                 .children(ui_checks::probe("project-row-divider")))
             .child(self.render_active_projects(cx))
-            .pb(px(2.))
+            .pb(px(8.))
             .into_any_element()
     }
 
@@ -826,6 +889,11 @@ impl Schnauz {
                     })
                     .child(div().min_w_0().truncate().child(name.clone()))
                     .tooltip(tip(format!("Switch to {name}")))
+                    .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        this.open_sidebar_menu(f32::from(event.position.x), f32::from(event.position.y),
+                            SidebarTarget::Project(id), event.modifiers.platform, cx);
+                        cx.stop_propagation();
+                    }))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         window.focus(&this.focus);
                         if let Some(id) = id {
@@ -884,6 +952,11 @@ impl Schnauz {
                 .child(ui_icon(Icon::Home, 15., rgb(t.text)))
                 .child("Personal")
                 .tooltip(tip("Your general browsing tabs and favourites"))
+                    .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        this.open_sidebar_menu(f32::from(event.position.x), f32::from(event.position.y),
+                            SidebarTarget::Project(None), event.modifiers.platform, cx);
+                        cx.stop_propagation();
+                    }))
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     window.focus(&this.focus);
                     this.restore_personal(cx);
@@ -926,7 +999,7 @@ impl Schnauz {
                             this.open_sidebar_menu(
                                 f32::from(event.position.x),
                                 f32::from(event.position.y),
-                                SidebarTarget::Project(id),
+                                SidebarTarget::Project(Some(id)),
                                 event.modifiers.platform, cx,
                             );
                             cx.stop_propagation();

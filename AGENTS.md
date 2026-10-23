@@ -419,7 +419,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The current local version is 0.8.1; the published version is 0.8.1.
+  no per-build app copies or releases. The release candidate is 0.8.9; the published version is 0.8.1 until verified publication.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -807,3 +807,56 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   checks passed. Apple Development signed, not notarized, early prerelease.
   v0.8.0 remains a superseded unpublished draft. Receipts: dist/0.8.1. Request
   complete; future publication needs a new request. Preserve all tags/sessions.
+
+- Project context menus in the sidebar and top bar offer Close for runtime-open
+  projects, including Personal. Explicit Close clears all windows' owned tabs/PTYs
+  for that project, retaining saved metadata; select the next runtime-open project
+  in sidebar order with wraparound. Individual final-tab closure drops only its
+  window's outgoing session and switches globally, preserving other windows' tabs.
+  No other open project falls back to Personal/Home. Persist before dropping tabs.
+- Release architecture outputs under dist/ do not update the usual root
+  Schnauz.app. Also build/verify that local bundle after release preparation;
+  never restart the user's running app or terminals to apply it.
+
+- File-action toolbar controls reorder by direct drag with a stable insertion
+  marker, using a shared persisted prefs order. Keep List/Icons as one group and
+  retain hidden narrow/remote controls in the stored order. The document-plus
+  New Text File button defaults after New Folder and uses the existing named
+  .txt dialog/create_new path. Share/Sort/View Options trigger on click release
+  so dragging never opens their menus. No file payloads or session changes.
+
+
+- Local 0.8.7 fixes the reported terminal-divider SIGABRT: shrinking file-list
+  viewports must bound scrollbar minimums to the available extent, including
+  scrollbar painting/dragging and horizontal/static bars. Preserve the actual
+  native upward-divider drag regression with a live fixture PTY.
+- Normal app launches save private, bounded session diagnostics under
+  ~/Library/Logs/Schnauz; explicit/legacy profile overrides use diagnostics/ in
+  that profile. Keep forced Rust panic stacks, native uncaught-exception stacks,
+  safe fatal-signal markers and ordinary macOS crash handling. Raw signal faults
+  have no custom stack. Fixed event labels only; no terminal output/commands,
+  file contents or credentials. Retain 12 sessions. Report destination and
+  automatic/manual sending are undecided; no external upload is configured.
+
+- Local 0.8.8 supersedes the compact project-row spacing: Oliver requested
+  8 pt above/below the project chips, four times the former 2 pt clearance.
+  Browser header is 74 pt; retain chip size, Search row and Settings geometry.
+
+
+- 2026-10-23: keeping a PID alive is insufficient when packaging. Never move or
+  unlink a running app bundle. The prior temporary-backup cleanup deleted the
+  live executable and broke TCC attribution (ENOENT), denying Downloads reads.
+  make_app.sh must use scripts/install_bundle.py to defer installation while the
+  destination or its helpers are active. Apply pending only after a deliberate
+  quit; never auto-restart. Preserve retired bundles outside temporary roots.
+  Do not delete retained bundles while any process might still use them. Keep
+  the owned-process installation regression in test.sh. No privacy/TCC reset.
+
+
+- Oliver requested an updated GitHub release on 2026-10-23 after the confirmed
+  live-bundle deletion bug. Prepare/publish 0.8.9 as an early prerelease with
+  both architectures, the accumulated verified local fixes, local diagnostics,
+  exact MPL sources and checksums. Preserve all prior tags/assets and sessions.
+  Explain that the safety fix is in the source build/install workflow; manual
+  DMG/Finder replacement still requires quitting Schnauz first. No auto-updater
+  or automatic crash-report upload is being introduced.

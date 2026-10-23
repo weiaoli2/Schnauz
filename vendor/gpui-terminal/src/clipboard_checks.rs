@@ -46,7 +46,13 @@ pub fn run(cx: &mut App) {
                     );
                     view.state
                         .process_bytes("Schnauz Grüße\r\nsecond line".as_bytes());
-                    view
+                    let grid = view.state.term_arc();
+                    view.with_resize_callback(move |cols, rows| {
+                        use alacritty_terminal::grid::Dimensions;
+                        let term = grid.try_lock().expect("Release grid lock before signalling the PTY");
+                        assert_eq!((term.columns(), term.screen_lines()), (cols, rows),
+                            "Child resize notification must see the updated grid dimensions");
+                    })
                 });
                 cx.new(|_| Fixture(view))
             },
@@ -241,10 +247,10 @@ pub fn run(cx: &mut App) {
                         v.config.padding.left + px(1.),
                         v.config.padding.top + px(1.),
                     );
-                let mut scroll = |v: &mut TerminalView,
+                let scroll = |v: &mut TerminalView,
                               delta: f32,
                               shift: bool,
-                              cx: &mut Context<TerminalView>| {
+                              w: &mut Window, cx: &mut Context<TerminalView>| {
                     v.on_scroll(
                         &ScrollWheelEvent {
                             position,
@@ -259,35 +265,60 @@ pub fn run(cx: &mut App) {
                         cx,
                     );
                 };
-                scroll(v, -2., false, cx);
+                scroll(v, -2., false, w, cx);
                 assert!(
                     input.0.lock().unwrap().is_empty(),
                     "Disabled alternate scrolling must not edit the prompt with arrow keys"
                 );
                 v.state.process_bytes(b"\x1b[?1007h");
-                scroll(v, -2., false, cx);
+                scroll(v, -2., false, w, cx);
                 assert_eq!(&*input.0.lock().unwrap(), b"\x1b[B\x1b[B");
                 input.0.lock().unwrap().clear();
                 v.state.process_bytes(b"\x1b[?1007l\x1b[?1000h\x1b[?1006h");
-                scroll(v, -3., false, cx);
+                scroll(v, -3., false, w, cx);
                 assert_eq!(
                     &*input.0.lock().unwrap(),
                     b"\x1b[<65;1;1M\x1b[<65;1;1M\x1b[<65;1;1M"
                 );
                 input.0.lock().unwrap().clear();
                 v.state.process_bytes(b"\x1b[?1006l");
-                scroll(v, 1., false, cx);
+                scroll(v, 1., false, w, cx);
                 assert_eq!(
                     &*input.0.lock().unwrap(),
                     b"\x1b[M`!!",
                     "Legacy mouse reporting cannot receive SGR text"
                 );
                 input.0.lock().unwrap().clear();
-                scroll(v, 2., true, cx);
+                scroll(v, 2., true, w, cx);
                 assert!(
                     input.0.lock().unwrap().is_empty(),
                     "Shift-wheel scrolls locally without PTY input"
                 );
+                // A partial Shift-scroll cannot leak into the application's
+                // wheel reports when Shift is released on the next event.
+                scroll(v, 0.75, true, w, cx);
+                scroll(v, 0.5, false, w, cx);
+                assert!(input.0.lock().unwrap().is_empty());
+                scroll(v, 0.5, false, w, cx);
+                assert_eq!(&*input.0.lock().unwrap(), b"\x1b[M`!!");
+                input.0.lock().unwrap().clear();
+                v.toggle_text_selection(w, cx);
+                scroll(v, -4., false, w, cx);
+                assert!(input.0.lock().unwrap().is_empty(), "Frozen selection never sends wheel input");
+                v.resume_live(cx);
+                v.state.process_bytes(b"\x1b[?1000l\x1b[?1007h\x1b[?1h");
+                for (key, expected) in [
+                    ("ctrl-left", "\x1b[1;5D"),
+                    ("shift-pageup", "\x1b[5;2~"),
+                    ("alt-backspace", "\x1b\x7f"),
+                ] {
+                    v.on_key_down(&KeyDownEvent { keystroke: Keystroke::parse(key).unwrap(), is_held: false }, w, cx);
+                    assert_eq!(&*input.0.lock().unwrap(), expected.as_bytes());
+                    input.0.lock().unwrap().clear();
+                }
+                scroll(v, -9., false, w, cx);
+                assert_eq!(&*input.0.lock().unwrap(), &b"\x1bOB".repeat(9), "Fast scrolling must not lose lines after the fifth");
+                input.0.lock().unwrap().clear();
                 v.state.process_bytes(b"\x1b[?1000l\x1b[?1049l");
                 v.state.with_term_mut(|t| {
                     t.scroll_display(alacritty_terminal::grid::Scroll::Delta(3))
@@ -392,4 +423,13 @@ pub fn cell(view: &TerminalView, col: f32, row: f32) -> Point<Pixels> {
 pub fn selected_text(view: &TerminalView) -> Option<String> {
     view.displayed_state()
         .with_term(|term| term.selection_to_string())
+}
+
+/// Inspect the actual emulator grid after output from an owned fixture PTY.
+pub fn screen(view: &TerminalView) -> Vec<String> {
+    use alacritty_terminal::grid::Dimensions;
+    view.state.with_term(|term| (0..term.screen_lines()).map(|row| {
+        (0..term.columns()).map(|col| term.grid()[alacritty_terminal::index::Point::new(
+            alacritty_terminal::index::Line(row as i32), alacritty_terminal::index::Column(col))].c).collect()
+    }).collect())
 }

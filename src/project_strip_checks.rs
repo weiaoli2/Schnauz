@@ -66,7 +66,7 @@ pub(super) fn run(
     let above = chip.origin.y - px(1.) - divider.bottom();
     let below = px(BROWSER_HEADER_H - 1.) - (chip.bottom() + px(1.));
     assert!(
-        above >= px(2.) && (f32::from(above - below)).abs() < 0.1,
+        (f32::from(above) - 8.).abs() < 0.1 && (f32::from(above - below)).abs() < 0.1,
         "Project chips have equal clearance between the divider and toolbar bottom border: above={above:?}, below={below:?}"
     );
     window.update(cx,|f,w,cx| {
@@ -116,7 +116,7 @@ pub(super) fn run(
                 b.project_sessions.remove(&Some(target));b.persist_library(original,cx).unwrap();cx.notify();
             })).unwrap();
             paint(window,cx);
-            println!("PASS title/search top alignment, window-centered active-project strip with thin divider and compact spacing, native project-chip switching and preserved owned terminal/session/PID");
+            println!("PASS title/search top alignment, window-centered active-project strip with thin divider and symmetric 8 pt spacing, native project-chip switching and preserved owned terminal/session/PID");
             text_view::check_external_edits(window, cx, done);
         }).unwrap();
     }).detach();

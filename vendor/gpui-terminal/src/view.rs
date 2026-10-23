@@ -423,6 +423,8 @@ pub struct TerminalView {
     selection_origin: Option<Point<Pixels>>,
     scrollbar_drag: Option<f32>,
     scroll_remainder: f32,
+    scroll_route: Option<(alacritty_terminal::term::TermMode, bool, bool)>,
+    sync_task: Option<Task<()>>,
     exited: bool,
 }
 
@@ -515,6 +517,23 @@ impl TerminalView {
                         // Process bytes and notify the view
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
                             view.state.process_bytes(&bytes);
+                            // VTE buffers synchronized redraws. Its deadline is
+                            // enforced even if the program sends no more output.
+                            view.sync_task =
+                                view.state.sync_deadline().map(|deadline| {
+                                    cx.spawn(async move |this, cx| {
+                                        cx.background_executor()
+                                            .timer(deadline.saturating_duration_since(
+                                                std::time::Instant::now(),
+                                            ))
+                                            .await;
+                                        let _ = this.update(cx, |view, cx| {
+                                            if view.state.expire_sync(std::time::Instant::now()) {
+                                                cx.notify();
+                                            }
+                                        });
+                                    })
+                                });
                             cx.notify();
                         });
                         if result.is_err() {
@@ -556,6 +575,8 @@ impl TerminalView {
             selection_origin: None,
             scrollbar_drag: None,
             scroll_remainder: 0.0,
+            scroll_route: None,
+            sync_task: None,
             exited: false,
         }
     }
@@ -826,7 +847,12 @@ impl TerminalView {
                 }
                 _ => return, // App shortcuts can bubble to the file browser.
             }
-        } else if key.modifiers.shift && matches!(key.key.as_str(), "pageup" | "pagedown") {
+        } else if key.modifiers.shift
+            && !key.modifiers.control
+            && !key.modifiers.alt
+            && matches!(key.key.as_str(), "pageup" | "pagedown")
+            && (self.text_selection_active() || !self.state.mode().contains(TermMode::ALT_SCREEN))
+        {
             let amount = self.state.rows() as i32 * if key.key == "pageup" { 1 } else { -1 };
             self.displayed_state()
                 .with_term_mut(|term| term.scroll_display(Scroll::Delta(amount)));
@@ -1015,12 +1041,24 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Fractional trackpad movement belongs to its original destination.
+        // Switching selection/Shift/application mode must not deliver it later
+        // as cursor movement or mouse input to a foreground editor.
+        let route = (
+            self.displayed_state().mode(),
+            event.modifiers.shift,
+            self.text_selection_active(),
+        );
+        if self.scroll_route != Some(route) {
+            self.scroll_remainder = 0.;
+            self.scroll_route = Some(route);
+        }
         self.scroll_remainder += f32::from(event.delta.pixel_delta(self.renderer.cell_height).y)
             / f32::from(self.renderer.cell_height);
         let lines = self.scroll_remainder.trunc() as i32;
         self.scroll_remainder -= lines as f32;
         if lines != 0 {
-            let report = (!event.modifiers.shift)
+            let report = (!event.modifiers.shift && !self.text_selection_active())
                 .then(|| {
                     crate::mouse::scroll_report(
                         lines,
@@ -1140,7 +1178,19 @@ impl TerminalView {
     /// * `cols` - New number of columns
     /// * `rows` - New number of rows
     pub fn resize(&mut self, cols: usize, rows: usize) {
+        let (cols, rows) = (cols.max(1), rows.max(1));
+        if self.dimensions() == (cols, rows) {
+            return;
+        }
+        // Update the grid before signalling the child: its redraw and size
+        // queries must observe the same dimensions as the next painted frame.
         self.state.resize(cols, rows);
+        if let Some(snapshot) = self.selection_snapshot.as_mut() {
+            snapshot.resize(cols, rows);
+        }
+        if let Some(callback) = &self.resize_callback {
+            callback(cols, rows);
+        }
     }
 
     /// Get the current terminal configuration.
@@ -1209,9 +1259,7 @@ impl Render for TerminalView {
         let bounds_cell = self.bounds.clone();
         // Get terminal state and renderer for rendering
         let state_arc = self.displayed_state().term_arc();
-        let live_state_arc = self.state.term_arc();
         let renderer = self.renderer.clone();
-        let resize_callback = self.resize_callback.clone();
         let mut padding = self.config.padding;
         padding.right += px(12.); // Keep the scrollbar clear of terminal glyphs.
         let owner = cx.entity().downgrade();
@@ -1243,8 +1291,21 @@ impl Render for TerminalView {
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .child(
                 canvas(
-                    move |bounds, window, _cx| {
-                        if bounds_cell.replace(bounds) != bounds {
+                    move |bounds, window, cx| {
+                        // Size the emulator and owned PTY during layout, before
+                        // painting. Paint must not reset an application's scroll
+                        // region after its command/status line has been laid out.
+                        let changed = bounds_cell.replace(bounds) != bounds;
+                        let _ = owner.update(cx, |view, _| {
+                            let width =
+                                (bounds.size.width - padding.left - padding.right).max(px(0.));
+                            let height =
+                                (bounds.size.height - padding.top - padding.bottom).max(px(0.));
+                            let cols = ((width / view.renderer.cell_width) as usize).max(1);
+                            let rows = ((height / view.renderer.cell_height) as usize).max(1);
+                            view.resize(cols, rows);
+                        });
+                        if changed {
                             let owner = owner.clone();
                             window.on_next_frame(move |_, cx| {
                                 let _ = owner.update(cx, |_, cx| cx.notify());
@@ -1253,66 +1314,8 @@ impl Render for TerminalView {
                         bounds
                     },
                     move |bounds, _, window, cx| {
-                        use alacritty_terminal::grid::Dimensions;
-
-                        // Measure actual cell dimensions from the font
-                        let mut measured_renderer = renderer.clone();
-                        measured_renderer.measure_cell(window);
-
-                        // Calculate available space after padding
-                        let available_width: f32 =
-                            (bounds.size.width - padding.left - padding.right).into();
-                        let available_height: f32 =
-                            (bounds.size.height - padding.top - padding.bottom).into();
-                        let cell_width_f32: f32 = measured_renderer.cell_width.into();
-                        let cell_height_f32: f32 = measured_renderer.cell_height.into();
-
-                        let cols = ((available_width / cell_width_f32) as usize).max(1);
-                        let rows = ((available_height / cell_height_f32) as usize).max(1);
-
-                        // Helper struct implementing Dimensions for resize
-                        struct TermSize {
-                            cols: usize,
-                            rows: usize,
-                        }
-                        impl Dimensions for TermSize {
-                            fn total_lines(&self) -> usize {
-                                self.rows
-                            }
-                            fn screen_lines(&self) -> usize {
-                                self.rows
-                            }
-                            fn columns(&self) -> usize {
-                                self.cols
-                            }
-                            fn last_column(&self) -> alacritty_terminal::index::Column {
-                                alacritty_terminal::index::Column(self.cols.saturating_sub(1))
-                            }
-                            fn bottommost_line(&self) -> alacritty_terminal::index::Line {
-                                alacritty_terminal::index::Line(self.rows as i32 - 1)
-                            }
-                            fn topmost_line(&self) -> alacritty_terminal::index::Line {
-                                alacritty_terminal::index::Line(0)
-                            }
-                        }
-
-                        // Resize terminal if dimensions changed
-                        let mut live = live_state_arc.lock();
-                        let current_cols = live.columns();
-                        let current_rows = live.screen_lines();
-                        if cols != current_cols || rows != current_rows {
-                            // Notify the PTY about the resize
-                            if let Some(ref callback) = resize_callback {
-                                callback(cols, rows);
-                            }
-                            live.resize(TermSize { cols, rows });
-                        }
-                        drop(live);
-                        let mut term = state_arc.lock();
-                        if cols != term.columns() || rows != term.screen_lines() {
-                            term.resize(TermSize { cols, rows });
-                        }
-
+                        let term = state_arc.lock();
+                        let measured_renderer = &renderer;
                         // Paint the terminal with measured dimensions
                         measured_renderer.paint(bounds, padding, &term, window, cx);
                     },

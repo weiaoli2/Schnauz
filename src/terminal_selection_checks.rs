@@ -118,6 +118,179 @@ pub(super) fn run(
             })).unwrap();
             drop(clipboard);
             println!("PASS native terminal Select text button, plain/Shift mouse drag across live redraws, automatic copy, Cmd+C, bracketed Cmd+V and unchanged owned session/PID; captured input only, no live Codex/session");
+        }).unwrap();
+        let (saved, close_pid) = cx.update(|cx| {
+            let result = window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+                let pane = b.active_pane;
+                let saved = b.tab_mut(pane).terminal.take().unwrap();
+                assert!(b.start_fixture_terminal(pane, cx));
+                let pid = b.tab(pane).terminal.as_ref().unwrap().fixture_pid();
+                (saved, pid)
+            })).unwrap();
+            paint(window, cx);
+            let hide = recorded_bounds("terminal-hide");
+            let close = recorded_bounds("terminal-close");
+            assert!(close.left() >= hide.right(), "Close must follow Hide");
+            result
+        }).unwrap();
+        // Exercise a real full-screen editor through its owned PTY. The
+        // shell's terminal size and vi's command row must agree with our grid.
+        cx.update(|cx| window.update(cx, |f, _, cx| f.browser.update(cx, |b, _| {
+            b.tab(b.active_pane).terminal.as_ref().unwrap().fixture_input(
+                b"/usr/bin/vim -Nu NONE -n -i NONE -c 'call setline(1, range(1,160))'\r");
+        })).unwrap()).unwrap();
+        for _ in 0..200 {
+            cx.background_executor().timer(Duration::from_millis(10)).await;
+            let ready = cx.update(|cx| {
+                paint(window, cx);
+                window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+                    let v = b.tab(b.active_pane).terminal.as_ref().unwrap().view.read(cx);
+                    let screen = terminal_fixture::screen(v);
+                    screen.first().is_some_and(|line| line.trim() == "1") && screen.get(1).is_some_and(|line|line.trim() == "2")
+                })).unwrap()
+            }).unwrap();
+            if ready { break; }
+        }
+        let original_size = cx.update(|cx| cx.update_window(*window, |_, w, _| w.viewport_size()).unwrap()).unwrap();
+        let divider = cx.update(|_| recorded_bounds("terminal-divider").center()).unwrap();
+        mouse(NSEventType::LeftMouseDown, divider, false);
+        let travel = (f32::from(divider.y) - 70.).max(0.);
+        for step in 1..=40 {
+            mouse(NSEventType::LeftMouseDragged, divider - point(px(0.), px((step as f32 * 10.).min(travel))), false);
+            cx.update(|cx| paint(window, cx)).unwrap();
+            cx.background_executor().timer(Duration::from_millis(2)).await;
+        }
+        mouse(NSEventType::LeftMouseUp, divider - point(px(0.), px(travel)), false);
+        cx.update(|cx| {
+            window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+                assert!(b.terminal_resize.is_none());
+                assert_eq!(b.tab(b.active_pane).terminal.as_ref().unwrap().fixture_pid(), close_pid);
+                b.tab_mut(b.active_pane).terminal_height = 250.;
+                cx.notify();
+            })).unwrap();
+            paint(window, cx);
+        }).unwrap();
+        println!("PASS native terminal divider upward drag through maximum height with live vi and preserved PTY");
+
+        for (width, height) in [(1000., 700.), (1600., 920.), (1100., 760.)] {
+            cx.update(|cx| {
+                cx.update_window(*window, |_, w, _| w.resize(gpui::size(px(width), px(height)))).unwrap();
+                paint(window, cx);
+            }).unwrap();
+            // AppKit delivers native resize events asynchronously. Let those
+            // settle before asking vi to report the resulting PTY geometry.
+            for _ in 0..10 {
+                cx.background_executor().timer(Duration::from_millis(10)).await;
+                cx.update(|cx| paint(window, cx)).unwrap();
+            }
+            let dimensions = cx.update(|cx| {
+                window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+                    let session = b.tab(b.active_pane).terminal.as_ref().unwrap();
+                    let dimensions = session.view.read(cx).dimensions();
+                    session.fixture_input(b":echo 'SNZ-SIZE-' . &columns . 'x' . &lines\r");
+                    dimensions
+                })).unwrap()
+            }).unwrap();
+            let expected = format!("SNZ-SIZE-{}x{}", dimensions.0, dimensions.1);
+            let mut matched = false;
+            for _ in 0..200 {
+                cx.background_executor().timer(Duration::from_millis(10)).await;
+                matched = cx.update(|cx| {
+                    paint(window, cx);
+                    window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+                        let screen = terminal_fixture::screen(b.tab(b.active_pane).terminal.as_ref().unwrap().view.read(cx));
+                        screen.last().is_some_and(|line|line.trim() == expected)
+                    })).unwrap()
+                }).unwrap();
+                if matched { break; }
+            }
+            if !matched {
+                cx.update(|cx| window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+                    eprintln!("vi screen expected {expected}: {:?}", terminal_fixture::screen(b.tab(b.active_pane).terminal.as_ref().unwrap().view.read(cx)));
+                })).unwrap()).unwrap();
+            }
+            assert!(matched, "vi's actual last command row must report {expected}, matching the full viewport");
+        }
+        cx.update(|cx| window.update(cx, |f, _, cx| f.browser.update(cx, |b, _| {
+            b.tab(b.active_pane).terminal.as_ref().unwrap().fixture_input(
+                b":set nomore\r:echo join(range(1,60), \"\\n\")\r");
+        })).unwrap()).unwrap();
+        let mut scrolled = false;
+        for _ in 0..200 {
+            cx.background_executor().timer(Duration::from_millis(10)).await;
+            scrolled = cx.update(|cx| {
+                paint(window, cx);
+                window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+                    let screen = terminal_fixture::screen(b.tab(b.active_pane).terminal.as_ref().unwrap().view.read(cx));
+                    screen[screen.len()-2].trim() == "60" && screen.last().unwrap().contains("Press ENTER")
+                })).unwrap()
+            }).unwrap();
+            if scrolled { break; }
+        }
+        assert!(scrolled, "Multiline vi command output must scroll the text upward and reserve the last row for the prompt");
+        cx.update(|cx| {
+            cx.update_window(*window, |_, w, _| w.resize(original_size)).unwrap();
+            paint(window, cx);
+        }).unwrap();
+        for _ in 0..10 {
+            cx.background_executor().timer(Duration::from_millis(10)).await;
+            cx.update(|cx| paint(window, cx)).unwrap();
+        }
+        println!("PASS actual vi command row, multiline output scrolling and reported PTY rows/columns across narrow, wide and resized terminal viewports");
+        let hide = cx.update(|_| recorded_bounds("terminal-hide").center()).unwrap();
+        mouse(NSEventType::LeftMouseDown, hide, false);
+        mouse(NSEventType::LeftMouseUp, hide, false);
+        cx.update(|cx| {
+            window.update(cx, |f, w, cx| f.browser.update(cx, |b, cx| {
+                assert!(!b.tab(b.active_pane).terminal_open);
+                assert_eq!(b.tab(b.active_pane).terminal.as_ref().unwrap().fixture_pid(), close_pid);
+                assert_eq!(unsafe { libc::kill(close_pid as i32, 0) }, 0);
+                b.toggle_terminal(w, cx);
+            })).unwrap();
+            paint(window, cx);
+        }).unwrap();
+        // Model following over an owned transport without connecting anywhere.
+        // Closing must run ordinary SSH end cleanup before dropping the PTY.
+        let local_folder = cx.update(|cx| window.update(cx, |f, _, cx| f.browser.update(cx, |b, _| {
+            let tab = b.tab_mut(b.active_pane);
+            let folder = tab.current_dir.clone();
+            let server = SftpServer { name: "Close fixture".into(), host: "192.0.2.1".into(),
+                control_path: Some(PathBuf::from("/tmp/schnauz-close-fixture-unused")), ..Default::default() };
+            let link = ssh_sync::Link::remote_start("close-fixture".into(), server.clone(), folder.clone(), tab, true);
+            tab.terminal.as_mut().unwrap().ssh = Some(link);
+            tab.remote = Some(server);
+            folder
+        })).unwrap()).unwrap();
+        let close = cx.update(|_| recorded_bounds("terminal-close").center()).unwrap();
+        mouse(NSEventType::LeftMouseDown, close, false);
+        mouse(NSEventType::LeftMouseUp, close, false);
+        cx.update(|cx| {
+            super::BOUNDS.with(|bounds| { bounds.borrow_mut().remove("active-tab-terminal"); });
+            paint(window, cx);
+            super::BOUNDS.with(|bounds| assert!(!bounds.borrow().contains_key("active-tab-terminal"), "Closed terminal badge must not render"));
+            window.update(cx, |f, _, cx| f.browser.update(cx, |b, _| {
+                let tab = b.tab(b.active_pane);
+                assert!(!tab.terminal_open && tab.terminal.is_none() && tab.terminal_restore.is_none());
+                assert!(tab.remote.is_none(), "SSH close must not leave a dead owned control socket in the browser");
+                assert_eq!(tab.current_dir, local_folder);
+            })).unwrap();
+        }).unwrap();
+        for _ in 0..100 {
+            if unsafe { libc::kill(close_pid as i32, 0) } != 0 { break; }
+            cx.background_executor().timer(Duration::from_millis(10)).await;
+        }
+        assert_ne!(unsafe { libc::kill(close_pid as i32, 0) }, 0, "Close must terminate its owned shell");
+        cx.update(|cx| {
+            window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+                let pane = b.active_pane;
+                assert_eq!(saved.id, id);
+                assert_eq!(saved.fixture_pid(), pid);
+                assert_eq!(unsafe { libc::kill(pid as i32, 0) }, 0);
+                b.tab_mut(pane).terminal = Some(saved);
+                b.tab_mut(pane).terminal_open = true;
+                cx.notify();
+            })).unwrap();
+            println!("PASS actual Hide preserves PTY, adjacent Close ends only its disposable shell and clears terminal state; original session/PID preserved");
             done(cx);
         }).unwrap();
     }).detach();

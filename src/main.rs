@@ -82,6 +82,7 @@ mod browser_windows;
 mod file_access;
 mod path_editor;
 mod directory_listing;
+mod diagnostics;
 use directory_listing::{read_entries, read_entries_fast};
 use browser_windows::{FolderViewsGlobal, ProjectLibraryGlobal};
 mod text_preview;
@@ -111,6 +112,7 @@ mod file_apps;
 mod updates;
 mod tab_projects;
 mod toolbar_icons;
+mod toolbar_order;
 use folder_views::{Column, ListLayout, ViewMode};
 use toolbar_icons::{ui_icon, Icon};
 mod previews;
@@ -146,6 +148,7 @@ use cache::Cache;
 struct Prefs {
     /// Explicit opt-in: public GitHub release check, once at app startup.
     check_updates_at_startup: bool,
+    toolbar_order: [toolbar_order::Control; 11],
     /// Show a file preview in the inspector when a file is selected.
     preview: bool,
     /// Show ‹ › page arrows on multi-page PDF previews in the inspector.
@@ -195,6 +198,7 @@ impl Default for Prefs {
     fn default() -> Self {
         Prefs {
             check_updates_at_startup: false,
+            toolbar_order: toolbar_order::DEFAULT,
             preview: true,
             preview_pages: true,
             preview_width: 420,
@@ -226,6 +230,7 @@ impl gpui::Global for PrefsGlobal {}
 thread_local! {
     static ACTIVE_PREFS: RefCell<Prefs> = const { RefCell::new(Prefs {
         check_updates_at_startup: false,
+        toolbar_order: toolbar_order::DEFAULT,
         preview: true,
         preview_pages: true,
         preview_width: 420,
@@ -689,7 +694,7 @@ const SIDEBAR_COLLAPSED_W: f32 = 52.0;
 /// Height of the custom titlebar strip (the OS titlebar is transparent, so this
 /// colored bar sits behind the traffic lights).
 const TITLEBAR_H: f32 = 56.0;
-const BROWSER_HEADER_H: f32 = TITLEBAR_H + 6.0;
+const BROWSER_HEADER_H: f32 = TITLEBAR_H + 18.0;
 const TOOLBAR_CONTROL_H: f32 = 26.0;
 const CHROME_HIGHLIGHT: u32 = 0x3478c5;
 const CHROME_HIGHLIGHT_HOVER: u32 = 0x2867ae;
@@ -881,7 +886,7 @@ struct Group {
 #[derive(Clone)]
 enum SidebarTarget {
     Common(projects::Shortcut),
-    Project(u64),
+    Project(Option<u64>),
     Favourite(projects::Shortcut),
     /// Empty sidebar space → offer "New Group".
     Empty,
@@ -5032,9 +5037,17 @@ impl Schnauz {
                 }
             },
             SidebarTarget::Project(id) => {
-                items.push(mi("Open project", move |this, window, cx| { window.focus(&this.focus); this.restore_project(id, cx); }));
-                items.push(MenuNode::Sep);
-                items.push(mi("Remove project", move |this, _, cx| this.remove_project(id, cx)));
+                items.push(mi("Open project", move |this, window, cx| {
+                    window.focus(&this.focus);
+                    if let Err(error) = this.switch_project(id, cx) { this.set_notice(error, cx); }
+                }));
+                if self.project_is_open(id, cx) {
+                    items.push(mi("Close", move |this, _, cx| this.close_open_project(id, true, cx)));
+                }
+                if let Some(id) = id {
+                    items.push(MenuNode::Sep);
+                    items.push(mi("Remove project", move |this, _, cx| this.remove_project(id, cx)));
+                }
             }
             SidebarTarget::Empty => {
                 if groups_on {
@@ -5174,7 +5187,7 @@ impl Schnauz {
             return;
         }
         let content = viewport + max;
-        let thumb_h = (viewport * viewport / content).clamp(28.0, viewport);
+        let thumb_h = (viewport * viewport / content).clamp(28.0_f32.min(viewport), viewport);
         let travel = (viewport - thumb_h).max(1.0);
         // Thumb moves `delta` px; scale that to content-scroll distance.
         let delta = y - drag.start_y;
@@ -6192,7 +6205,7 @@ impl Schnauz {
         let scrolled = (-(f64::from(base.offset().y) as f32)).clamp(0.0, max);
         let content = viewport + max;
         let min_thumb = 28.0_f32;
-        let thumb_h = (viewport * viewport / content).clamp(min_thumb, viewport);
+        let thumb_h = (viewport * viewport / content).clamp(min_thumb.min(viewport), viewport);
         let thumb_top = (viewport - thumb_h) * (scrolled / max);
 
         // macOS-style overlay bar: solid while scrolling or dragging, fades out
@@ -6761,8 +6774,6 @@ impl Schnauz {
         }
     }
 
-    /// Close a tab. Closing a pane's last tab removes the pane (collapsing the
-    /// split); closing the last tab of the last pane is a no-op.
     /// Open a copy of `tab` (same folder) right after it in the same pane.
     fn duplicate_tab(&mut self, pane: usize, tab: usize, cx: &mut Context<Self>) {
         if pane >= self.panes.len() || tab >= self.panes[pane].tabs.len() {
@@ -6821,7 +6832,8 @@ impl Schnauz {
             self.begin_collapse_anim(pane == 0);
             self.split_ratio = 0.5;
         } else {
-            return; // last tab of the only pane — keep it
+            self.close_open_project(self.projects.active, false, cx);
+            return;
         }
         if self.active_pane >= self.panes.len() {
             self.active_pane = self.panes.len() - 1;
@@ -8404,53 +8416,7 @@ impl Schnauz {
 
     /// Compact vector controls for the two supported views and folder options.
     fn render_view_toolbar(&self, pane: usize, cx: &Context<Self>) -> impl IntoElement {
-        use toolbar_icons::toolbar_button as button;
-        let view = self.tab(pane).view;
-        let local = self.tab(pane).remote.is_none();
-        let has_selection = !self.tab(pane).selection.is_empty();
-        let tiny = self.pane_width(pane) > 0. && self.pane_width(pane) < 470.;
-        let mut row = div().flex_none().flex().items_center().gap_1().pl_2();
-        if local && !tiny {
-            row = row.child(button("tb-new-folder", pane, Icon::FolderPlus, false, true, "New folder · ⇧⌘N")
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| { this.active_pane = pane; this.new_folder(pane, window, cx); })));
-            row = row.child(button("tb-share", pane, Icon::Share, false, has_selection, "Share selection · ⇧⌘S")
-                .when(has_selection, |d| d.on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                    this.active_pane = pane;
-                    if let Some(view) = ns_view_ptr(window) { show_share_picker(view, (f32::from(ev.position.x), f32::from(ev.position.y)), &this.action_targets(pane)); }
-                    cx.stop_propagation();
-                }))));
-        }
-        let tagged = self.selection_is_favourite(pane);
-        row = row.child(button("tb-project-tag", pane, Icon::Tag, tagged, has_selection, "Add to Favourites")
-            .when(has_selection, |d| d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_project_tags(pane, cx)))));
-        if local {
-            row = row.child(button("tb-delete", pane, Icon::Trash, false, has_selection, "Move selection to Trash · ⌘⌫")
-                .when(has_selection, |d| d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| { this.active_pane = pane; this.request_delete(pane, cx); }))));
-        }
-        row = row.child(button("connect-network", pane, Icon::Globe, false, !self.network_connecting, "Connect to network drive…")
-            .relative().children(ui_checks::probe("connect-network-button"))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.active_pane = pane;
-                this.open_network_dialog(cx);
-            })));
-        row = row.child(self.render_hidden_button(pane, cx));
-        if !tiny {
-            row = row.child(button("palette-search", pane, Icon::Search, false, true, "Search files · ⌘P")
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| { this.active_pane = pane; this.focus_file_search(false, window, cx); })));
-        }
-        row.child(div().flex_none().w(px(1.)).h(px(18.)).mx_1().bg(rgb(theme().border)))
-            .child(div().flex().items_center().gap(px(1.)).p(px(2.)).rounded_lg().border_1().border_color(rgb(theme().border)).bg(rgb(theme().sidebar))
-                .children([(ViewMode::List, Icon::List, "view-list", "List view"), (ViewMode::Icons, Icon::Grid, "view-icons", "Icon view")]
-                    .into_iter().map(|(mode, icon, id, label)| button(id, pane, icon, view == mode, true, label)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_view(pane, mode, cx))))))
-            .child(button("view-options", pane, Icon::Columns, false, true, "View options · columns and saved folder views")
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                    this.open_view_menu(pane, f32::from(ev.position.x), f32::from(ev.position.y), cx); cx.stop_propagation();
-                })))
-            .child(button("sort-by", pane, Icon::Sort, false, true, "Sort by")
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                    this.sort_menu = Some((pane, f32::from(ev.position.x), f32::from(ev.position.y))); cx.stop_propagation(); cx.notify();
-                })))
+        self.render_ordered_toolbar(pane, cx)
     }
 
     /// Clickable path ending at the current folder. The inner row keeps its
@@ -8811,7 +8777,8 @@ impl Schnauz {
                     )
                     .when(tab.terminal.as_ref().is_some_and(|session| !session.exited()), |chip| {
                         chip.child(
-                            div().id(("tab-terminal", pane * 4096 + i)).flex_none().flex().items_center()
+                            div().id(("tab-terminal", pane * 4096 + i)).flex_none().flex().items_center() .relative()
+                                .when(active, |icon| icon.children(ui_checks::probe("active-tab-terminal")))
                                 .tooltip(tip("Terminal session active"))
                                 .child(ui_icon(Icon::Terminal, 11., indicator_color)),
                         )
@@ -9416,7 +9383,7 @@ impl Schnauz {
             return None;
         }
         let scrolled = (-(f64::from(base.offset().x) as f32)).clamp(0.0, max);
-        let thumb_w = (viewport * viewport / total_w).clamp(28.0, viewport);
+        let thumb_w = (viewport * viewport / total_w).clamp(28.0_f32.min(viewport), viewport);
         let thumb_left = (viewport - thumb_w) * (scrolled / max);
         Some((viewport, max, thumb_w, thumb_left))
     }
@@ -12104,7 +12071,7 @@ fn static_scrollbar_thumb(base: &gpui::ScrollHandle) -> Option<AnyElement> {
     }
     let scrolled = (-(f64::from(base.offset().y) as f32)).clamp(0.0, max);
     let content = viewport + max;
-    let thumb_h = (viewport * viewport / content).clamp(20.0, viewport);
+    let thumb_h = (viewport * viewport / content).clamp(20.0_f32.min(viewport), viewport);
     let thumb_top = (viewport - thumb_h) * (scrolled / max);
     Some(
         div()
@@ -12931,6 +12898,7 @@ fn save_prefs(p: &Prefs) {
         body.push_str(&format!("drive_warning={}\ndrive_critical={}\ndrive_free_percent={}\n", p.drive_warning, p.drive_critical, p.drive_free_percent));
         body.push_str(&format!("file_access_intro_seen={}\n", p.file_access_intro_seen));
         body.push_str(&format!("check_updates_at_startup={}\n",p.check_updates_at_startup));
+        body.push_str(&format!("toolbar_order={}\n", toolbar_order::encode(p.toolbar_order)));
         let _ = fs::write(&file, body);
     }
 }
@@ -12989,6 +12957,7 @@ fn load_prefs() -> Prefs {
                 let on = v.trim() == "true";
                 if k.trim()=="check_updates_at_startup" {p.check_updates_at_startup=on;continue;}
                 match k.trim() {
+                    "toolbar_order" => p.toolbar_order = toolbar_order::decode(v),
                     "preview" => p.preview = on,
                     "preview_pages" => p.preview_pages = on,
                     "preview_width" => if let Ok(width) = v.trim().parse::<u16>() { p.preview_width = width.clamp(folder_views::MIN_PREVIEW_WIDTH,1200); },
@@ -13326,6 +13295,7 @@ fn main() {
         return;
     }
 
+    diagnostics::install();
     let app = Application::new();
     // Re-open the window when the Dock icon is clicked after the last window was
     // closed (otherwise the app stays running with no way to show it).

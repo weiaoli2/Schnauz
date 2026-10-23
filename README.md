@@ -57,6 +57,7 @@ stay in macOS Keychain.
 | Apple Silicon — M1 and newer | [Apple Silicon DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.8.1/Schnauz-0.8.1-macos-arm64.dmg) |
 | Intel | [Intel DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.8.1/Schnauz-0.8.1-macos-x86_64.dmg) |
 
+For an update, finish any terminal/SSH work and **quit Schnauz before replacing it**.
 Open the disk image and drag **Schnauz.app** to **Applications**. Checksums and
 release notes accompany the [release](https://github.com/weiaoli2/Schnauz/releases/tag/v0.8.1).
 Explore the app on [TechGuyZone](https://techguyzone.com/apps/).
