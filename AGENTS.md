@@ -419,7 +419,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The release candidate is 0.8.9; the published version is 0.8.1 until verified publication.
+  no per-build app copies or releases. The published release is 0.8.9; the normal local 0.8.9 update is staged while the old app runs.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -860,3 +860,12 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Explain that the safety fix is in the source build/install workflow; manual
   DMG/Finder replacement still requires quitting Schnauz first. No auto-updater
   or automatic crash-report upload is being introduced.
+
+
+- Published 0.8.9 on 2026-10-23, source 0ec6e3c. Both DMGs, exact MPL sources,
+  checksum file, all GitHub asset digests and all 1746 tagged source-archive files
+  verified. ARM native / Intel Rosetta smoke and signature/installer checks passed.
+  Apple Development signed, not notarized, early prerelease. Normal local 0.8.9
+  is pending while PID 32977 remains alive; installed files were not replaced.
+  Publication request complete. Future releases require a new request; preserve
+  this tag/assets, all live sessions and the safe after-quit installation policy.

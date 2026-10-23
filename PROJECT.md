@@ -1,6 +1,6 @@
 # Schnauz
 
-Last updated: 2026-10-21
+Last updated: 2026-10-23
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -1373,3 +1373,21 @@ application tests, 62 terminal tests, five installer lifecycle tests, offline
 native helpers and the complete hidden-window suite. Prospective source files
 were reviewed for secrets and production/profile/cache exclusions. Both release
 architectures and their artifacts must pass verification before publication.
+
+
+Published 0.8.9 on 2026-10-23:
+https://github.com/weiaoli2/Schnauz/releases/tag/v0.8.9
+Source tag: 0ec6e3cd539cf16edee0db3ce79f4fb3889f755d. Both signed DMGs, exact MPL
+component sources and checksum manifest match all four GitHub asset digests.
+The public unauthenticated listing, exact notes and download URLs passed; the
+GitHub source ZIP matches all 1746 tagged files. Every app/helper passed its
+architecture/signature checks; readonly-mounted installers match the verified
+bundles and install notes. ARM ran natively, Intel under Rosetta on Apple Silicon,
+not physical Intel hardware. Apple Development signed, unnotarized prerelease.
+Receipts: dist/0.8.9/{LOCAL-,LOCAL-INSTALL-,SOURCE-,DRAFT-,RELEASE-}VERIFICATION.json.
+
+The normal local 0.8.9 build is verified and staged as a pending update because
+PID 32977 is still running. Its installed bundle/executable inodes and SHA-256
+are unchanged; no restart, privacy change or terminal/SSH input occurred. Applying
+that update remains a deliberate after-quit action. This publication request is
+complete; preserve every existing tag/asset. Future publication needs a new request.
