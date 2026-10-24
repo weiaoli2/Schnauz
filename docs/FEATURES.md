@@ -36,6 +36,13 @@ with a suggested USD 2.50 amount; the user completes any payment on PayPal.
   App bundles appear under **Files**, while **Folders** shows ordinary directories.
 - **All · Folders · Files** controls for every tab. Active filters tint the top bar,
   show the visible item count, and are remembered in sessions and projects.
+- **Filter: On / Off · Modify…** beside Show hides file endings for the current
+  project. Enter a comma-separated list such as `.blend1,.bak` in Modify, then
+  switch On. Matching is case-insensitive; compound endings such as `.tar.gz`
+  work too. Off keeps the list and shows those files again. Each project,
+  including Personal, remembers its own list and switch across tabs, windows
+  and restarts. Folders remain visible, and files are never modified. The same
+  exclusions apply to filename/content search and loaded SSH listings.
 - **Reload folder** beside those controls re-reads the current local or SSH folder
   (⌘R), using the existing refresh action without restarting terminals.
 - Search, split/join panes, preview and project controls in the toolbar.
@@ -125,8 +132,12 @@ Rectangle area represents file sizes, with colors grouped by file type. Click a
 folder heading to open it on the left and zoom; click a file tile to reveal and
 select it on the left. Use ↑ to zoom out or Refresh to scan again. The map includes
 hidden items and uses metadata without reading file contents. Directory symlinks
-and other volumes are not traversed. Permission failures or the 500,000-item memory
-limit show an explicit partial-map notice. Closing the panel cancels the scan.
+and unrelated volumes are not traversed; scanning the startup root includes its
+paired macOS Data volume through the merged folder hierarchy without counting
+the backing mount twice. Scanned logical file sizes are shown separately from
+volume capacity and available space. Permission failures or the 500,000-item memory
+limit show explicit partial-map details above the map. Snapshots and filesystem
+overhead are not mapped. Closing the panel cancels the scan.
 The map starts below the path and filter bars. Selecting outside it closes it;
 navigation from inside its graphic keeps it open.
 
@@ -258,7 +269,8 @@ or edit the path to see the full filesystem location.
 Cloud files, folders and shortcuts have a provider submenu. Downloads and iCloud
 space controls run directly. Connect Nextcloud in **Settings → General →
 Connections → Connect folder…**, or right-click an item in a Nextcloud CloudStorage
-folder and choose **Nextcloud → Connect this folder to Nextcloud…**. Enter the
+folder and choose **Nextcloud → Enable sharing in Schnauz…**. The folder is
+already recognized as Nextcloud; this enables Schnauz's own server actions. Enter the
 server address and the remote folder corresponding to the selected local root
 (usually `/`), then approve Schnauz in your browser. This also supports classic
 Nextcloud sync folders outside CloudStorage. Each linked root gets the blue badge.
@@ -278,14 +290,33 @@ opening the window creates nothing. Advanced sharing options remain in the brows
 **Lock file / Unlock file** requires the server's
 [Files Locking app](https://github.com/nextcloud/files_lock#capabilities-api).
 Schnauz releases only user-owned locks confirmed as belonging to your account.
-Use **Refresh server features** after enabling server capabilities.
+Use **Refresh features** in Settings → General → Connections after enabling
+server capabilities. Connection management stays in Settings, not file menus.
 
-**Local storage policy in Finder…** still selects the item in Finder for
-Nextcloud's automatic freeing-up-space setting. macOS does not expose another
-provider's Finder extension menus as a reusable menu for other file managers.
-See [Apple's Finder Sync guide](https://developer.apple.com/library/archive/documentation/General/Conceptual/ExtensibilityPG/Finder.html)
-and [Nextcloud's File Provider guide](https://docs.nextcloud.com/server/stable/user_manual/en/desktop/macosfileprovider.html).
-Opening a cloud menu never recursively scans a folder.
+Nextcloud menus contain actions performed directly by Schnauz. **Always keep
+downloaded** invokes the installed Nextcloud File Provider's actual offline policy.
+It appears only for verified Nextcloud items whose data is not fully local and
+which are neither already kept nor downloading. A folder's recursive provider
+status is checked without scanning descendants. A successful action is reported
+only after a fresh policy check confirms it. There is no Finder handoff.
+
+The reference integration is Nextcloud Desktop **34.0.1**, inspected on macOS
+**15.7.4**. Older clients are outside the supported baseline. App location and
+provider identities are discovered for each installation; SwiftBar/ncstatus and
+Oliver's personal configuration are not required. The bridge uses internal macOS
+File Provider interfaces with runtime signature checks, so compatibility with
+other macOS/client combinations is not guaranteed. Unsupported interfaces fail
+with an explicit status error. Real provider-action QA is still pending.
+
+In List and search results, status symbols align at the right of the Name column.
+Green checks identify local files or recursively available folders; outlined clouds
+in Schnauz blue identify online or partly downloaded items. Green pins indicate
+confirmed kept-offline status; amber arrows indicate work in progress and a grey
+question mark indicates unavailable metadata. Icons view uses corner badges.
+Confirmed symbols remain visible while their background refresh is pending;
+menu actions still require fresh metadata. None of these status symbols
+assert that remote uploads have completed. Metadata work uses bounded background
+caches and never reads placeholder contents or recursively scans a folder.
 Account and file requests run outside the browser's render path. `./test.sh` tests
 login, paths, DAV/OCS sharing, locking and atomic settings entirely with fixtures;
 actual login and server compatibility require a manual test with your account.
@@ -337,9 +368,14 @@ preview. It starts below the full-width path and filter bars. Drag its left edge
 to change its width; the setting is part of that folder's saved view and inherited
 folder-tree rules. Double-click the edge to reset to 420 pt. Photos and videos scale
 to the full preview width, including smaller originals; tall media scrolls.
+PDF, document and text previews use compact 6 pt outer and 2 pt inner margins.
+Text previews also use a compact 6 pt filename-to-content gap.
 Local clips use native AVKit playback with seeking, Play/Pause and Unmute/Mute.
 Each new clip starts paused and muted, and leaving its preview stops playback.
-Supported codecs follow macOS; unsupported videos show an explanation.
+Audio files use the same native player in a compact preview with playback,
+seeking and sound controls. They start paused with sound enabled for an explicit
+Play click. Changing the selected file or closing Preview stops playback.
+Supported codecs follow macOS; unsupported or damaged media show an explanation.
 Text uses the same 12 pt size as file names. Select text with the mouse, use
 **⌘A** to select all and **⌘C** to copy. The preview is read-only, and its selection
 and scroll position survive resizing. Large text previews are bounded, with a
@@ -425,6 +461,7 @@ disposable test folders.
 - `src/volumes.rs`, `volumectl.swift`: global drive capacity and colour badges
 - `src/cloud_locations.rs`, `src/cloud_actions.rs`: cloud identity, paths and provider menus
 - `src/entry_filter.rs`: per-tab folder/file visibility
+- `src/project_file_filter.rs`: per-project file-ending exclusions, controls and native editor
 - `src/clipboard_path.rs`: pasted-path interpretation
 - `src/new_text_file.rs`: named text-file creation without overwriting
 - `src/text_preview.rs`: bounded text decoding; `src/text_view.rs`: native read-only selection/copying

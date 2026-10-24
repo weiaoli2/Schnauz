@@ -258,6 +258,62 @@ func dav(id: String = "42", extra: String = "", failed: String = "") -> Data {
       account: account(), password: "fixture", transport: mocked { _ in (200, ocs(code: 403)) })
     try await rejectsAsync { _ = try await rejected.shares(local: "/cloud") }
   }
+  static func shareWorkflow() async throws {
+    var methods: [String] = []
+    var failRefresh = false
+    let transport = mocked { request in
+      methods.append(request.httpMethod!)
+      if request.httpMethod == "PROPFIND" { return (207, dav()) }
+      if request.httpMethod == "GET" {
+        if failRefresh { return (503, Data()) }
+        return (200, ocs([["id": "17", "share_type": 3, "permissions": 1]]))
+      }
+      try expect(request.httpMethod == "POST", "Only an explicit create changes shares")
+      return (200, ocs(["id": "17"]))
+    }
+    let client = try NCClient(account: account(), password: "fixture", transport: transport)
+    var workflow = NCShareWorkflow()
+    try expect(!workflow.canChange, "No mutations before the initial share list is loaded")
+    try expect(!workflow.begin(changing: true), "An uninitialized sharing window cannot create shares")
+    try expect(workflow.begin(changing: false), "Opening the window starts a read")
+    _ = try await client.metadata(local: "/cloud/file")
+    _ = try await client.shares(local: "/cloud/file")
+    workflow.refreshed()
+    workflow.finish()
+    try expect(methods == ["PROPFIND", "GET"] && workflow.canChange,
+      "Opening/listing shares never sends a write")
+
+    try expect(workflow.begin(changing: true), "Explicit create starts once")
+    try expect(!workflow.begin(changing: true), "A pending mutation cannot be submitted twice")
+    try await client.createShare(local: "/cloud/file", type: 3)
+    workflow.confirmedChange()
+    failRefresh = true
+    try await rejectsAsync { _ = try await client.shares(local: "/cloud/file") }
+    workflow.finish()
+    let afterWrite = methods
+    try expect(workflow.changeConfirmed && workflow.requiresRefresh,
+      "A failed GET preserves the successful write outcome")
+    try expect(!workflow.begin(changing: true) && methods == afterWrite,
+      "A confirmed write with failed refresh cannot be submitted again")
+
+    try expect(workflow.begin(changing: false), "Recovery is an explicit read-only refresh")
+    try await rejectsAsync { _ = try await client.shares(local: "/cloud/file") }
+    workflow.finish()
+    try expect(!workflow.canChange && methods.filter { $0 == "POST" }.count == 1,
+      "Repeated refresh failures never replay the saved mutation")
+    failRefresh = false
+    try expect(workflow.begin(changing: false), "Refresh stays available")
+    _ = try await client.shares(local: "/cloud/file")
+    workflow.refreshed()
+    workflow.finish()
+    try expect(workflow.canChange && methods.filter { $0 == "POST" }.count == 1,
+      "A successful read unlocks new changes without replaying the old create")
+
+    try expect(workflow.begin(changing: true), "A later explicit mutation starts")
+    workflow.finish() // Simulates a lost response before confirmation.
+    try expect(!workflow.changeConfirmed && !workflow.canChange && workflow.canRefresh,
+      "An uncertain mutation requires read-only recovery before another write")
+  }
   static func locking() async throws {
     var methods: [String] = []
     var supports = true
@@ -353,6 +409,8 @@ func dav(id: String = "42", extra: String = "", failed: String = "") -> Data {
       print("PASS Nextcloud DAV metadata and internal links")
       try await sharing()
       print("PASS Nextcloud explicit sharing and safe API failures")
+      try await shareWorkflow()
+      print("PASS Nextcloud confirmed-write/failed-refresh recovery, pending guards and read-only retry without duplicate shares")
       try await locking()
       print("PASS Nextcloud server capabilities and lock ownership")
       try persistence()

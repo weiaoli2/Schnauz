@@ -7,7 +7,7 @@ pub(super) struct Layout {
     offset: f32,
 }
 
-fn caret_offset(previous: f32, caret: f32, text: f32, viewport: f32) -> f32 {
+pub(super) fn caret_offset(previous: f32, caret: f32, text: f32, viewport: f32) -> f32 {
     let width = (viewport - 3.).max(1.);
     let mut offset = previous.max(0.);
     if caret < offset {

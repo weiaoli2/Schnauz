@@ -1,6 +1,6 @@
 [package]
 name = "schnauz"
-version = "0.8.9"
+version = "0.9.2"
 edition = "2021"
 description = "A native, project-first Mac file manager with an interactive terminal"
 license = "MIT"
@@ -25,7 +25,7 @@ image = { version = "0.25", features = ["tiff"] }
 # Fetch real macOS file icons via NSWorkspace (AppKit).
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSData", "NSFileManager", "NSURL", "NSArray"] }
-objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSPDFImageRep", "NSGraphics", "NSGraphicsContext", "NSResponder", "NSView", "NSEvent", "NSApplication", "NSPasteboard", "NSPasteboardItem", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSSharingService", "NSMenu", "NSMenuItem"] }
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSPDFImageRep", "NSGraphics", "NSGraphicsContext", "NSResponder", "NSView", "NSEvent", "NSApplication", "NSPasteboard", "NSPasteboardItem", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSTextField", "NSAppearance", "NSSharingService", "NSMenu", "NSMenuItem"] }
 # Reach the underlying NSView so we can start native OS drag sessions (drag files out to Finder/other apps).
 raw-window-handle = "0.6"
 

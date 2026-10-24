@@ -250,7 +250,7 @@ impl Schnauz {
     pub(super) fn render_entry_filter(&self, pane: usize, cx: &Context<Self>) -> AnyElement {
         let t = theme();
         let tab = self.tab(pane);
-        let filtered = tab.entry_filter != EntryFilter::All;
+        let filtered = tab.entry_filter != EntryFilter::All || self.projects.sidebar().file_filter.active();
         let mut buttons = Vec::new();
         for (index, filter) in [EntryFilter::All, EntryFilter::Folders, EntryFilter::Files]
             .into_iter()
@@ -260,6 +260,7 @@ impl Schnauz {
             buttons.push(
                 div()
                     .id(("entry-filter", pane * 3 + index))
+                    .flex_none()
                     .h(px(24.0))
                     .px_3()
                     .rounded_md()
@@ -288,8 +289,10 @@ impl Schnauz {
         }
         let count = if self.search_in_pane(pane) { self.palette_items.len() } else { tab.visible_count() };
         div()
+            .id(("visibility-row",pane))
             .flex_none()
             .h(px(36.0))
+            .min_w_0().overflow_x_scroll().whitespace_nowrap()
             .px_3()
             .flex()
             .items_center()
@@ -302,12 +305,13 @@ impl Schnauz {
             .child("Show")
             .child(
                 div()
-                    .flex()
+                    .flex_none().flex()
                     .p(px(2.0))
                     .rounded_lg()
                     .bg(rgb(t.surface))
                     .children(buttons),
             )
+            .child(self.render_project_file_filter(pane,cx))
             .when(tab.remote.is_some(), |d| d.child(
                 toolbar_icons::toolbar_button("reload-folder", pane, Icon::Reload, false, true, "Reload SSH folder · ⌘R")
                     .relative().children(ui_checks::probe("ssh-reload-control"))
@@ -316,7 +320,7 @@ impl Schnauz {
                         this.run_key_action(KeyAction::Refresh, window, cx);
                     })),
             ))
-            .child(div().flex_1())
+            .child(div().flex_1().min_w_0())
             .when(tab.remote.is_none(), |d| d.child(
                 div().id(("inspect-storage", pane)).h(px(26.)).px_2().flex().items_center().gap_2().rounded_md().cursor_pointer()
                     .hover(|s| s.bg(rgb(t.hover))).tooltip(tip("Disk Usage…"))
@@ -676,7 +680,7 @@ impl Schnauz {
 
     pub(super) fn render_schnauz_toolbar(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
-        let filtered = self.active_tab().entry_filter != EntryFilter::All;
+        let filtered = self.active_tab().entry_filter != EntryFilter::All || self.projects.sidebar().file_filter.active();
         let tint = filter_tint(t);
         let first =
             div()
@@ -812,11 +816,14 @@ impl Schnauz {
             .border_b_1()
             .border_color(rgb(if filtered { t.accent } else { t.border }))
             .child(first)
-            .child(div().relative().flex_none().h(px(1.)).mx_4().mt(px(1.)).mb(px(8.))
+            .child(div().relative().flex_none().h(px(1.)).mx_4().mt(px(1.))
                 .bg(Theme::alpha(t.border,0x80))
                 .children(ui_checks::probe("project-row-divider")))
-            .child(self.render_active_projects(cx))
-            .pb(px(8.))
+            .child(
+                div().flex_none().flex().flex_col().w_full().py(px(8.))
+                    .bg(rgb(CHROME_HIGHLIGHT))
+                    .child(self.render_active_projects(cx)),
+            )
             .into_any_element()
     }
 
@@ -877,7 +884,7 @@ impl Schnauz {
                     .min_w_0()
                     .rounded_md()
                     .border_1()
-                    .border_color(rgb(if current { CHROME_HIGHLIGHT } else { theme().border }))
+                    .border_color(rgb(if current { 0xffffff } else { theme().border }))
                     .bg(rgb(if current { CHROME_HIGHLIGHT } else { theme().surface }))
                     .text_color(rgb(if current { 0xffffff } else { theme().text }))
                     .text_size(px(UI_SMALL_FONT_SIZE))

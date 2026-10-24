@@ -91,6 +91,7 @@ mod native_preview;
 mod quick_actions;
 mod new_text_file;
 mod entry_filter;
+mod project_file_filter;
 use entry_filter::EntryFilter;
 mod schnauz;
 mod clipboard_path;
@@ -108,6 +109,8 @@ mod folder_watch;
 mod folder_views;
 mod list_ui;
 mod native_menus;
+mod cloud_status;
+mod nextcloud_local;
 mod file_apps;
 mod updates;
 mod tab_projects;
@@ -873,6 +876,8 @@ struct Rename {
     /// Selection anchor (char index); `Some` and different from `cursor` means
     /// that range is selected (starts as the whole name, like Finder).
     anchor: Option<usize>,
+    layout: Rc<RefCell<Option<rename_ui::Layout>>>,
+    dragging: bool,
 }
 
 /// A user-defined sidebar group: a named collection of files/folders.
@@ -951,13 +956,19 @@ fn is_browsable_folder(path: &Path, is_dir: bool) -> bool {
 /// in the cloud, not on disk.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CloudSync {
-    /// Not a cloud placeholder: an ordinary local file, or a fully downloaded
-    /// cloud file. No badge.
+    /// An ordinary non-cloud item. No badge.
     Local,
     /// Online-only: content is in the cloud, not materialized on disk.
     OnlineOnly,
     /// Cloud item is available locally; provider membership remains visible.
     Available,
+    /// A materialized directory says nothing about its descendants.
+    Folder,
+    /// Metadata unavailable; never claim the content is downloaded.
+    Unknown,
+    FolderOnline,
+    FolderDownloaded,
+    KeptOffline,
     /// Actively downloading (we kicked off a materialize; clears once local).
     Syncing,
 }
@@ -1025,6 +1036,7 @@ struct Tab {
     /// `find_results` holds the matching `entries` indices, best match first.
     find_query: Option<String>,
     entry_filter: EntryFilter,
+    project_file_filter: project_file_filter::Rule,
     show_hidden: bool,
     has_hidden: bool,
     copy_feedback: Option<(String, Instant)>,
@@ -1116,7 +1128,7 @@ impl Tab {
     }
 
     fn is_filtered(&self) -> bool {
-        self.entry_filter != EntryFilter::All || self.find_query.is_some() || (!self.show_hidden && self.has_hidden)
+        self.project_file_filter.active() || self.entry_filter != EntryFilter::All || self.find_query.is_some() || (!self.show_hidden && self.has_hidden)
     }
 
     fn visible_entries(&self) -> impl Iterator<Item = &Entry> {
@@ -1139,7 +1151,7 @@ impl Tab {
         let q = tab.find_query.as_deref().unwrap_or("").trim();
         if q.is_empty() {
             tab.find_results = tab.entries.iter().enumerate()
-                .filter_map(|(i, entry)| (tab.entry_filter.accepts(entry.is_folder()) && (tab.show_hidden || !entry.is_hidden())).then_some(i))
+                .filter_map(|(i, entry)| (tab.entry_filter.accepts(entry.is_folder()) && tab.project_file_filter.allows(&entry.name,entry.is_folder()) && (tab.show_hidden || !entry.is_hidden())).then_some(i))
                 .collect();
             return;
         }
@@ -1168,7 +1180,7 @@ impl Tab {
 
         let mut scored: Vec<(i32, usize)> = Vec::new();
         for (i, e) in tab.entries.iter().enumerate() {
-            if !tab.entry_filter.accepts(e.is_folder()) || (!tab.show_hidden && e.is_hidden()) {
+            if !tab.entry_filter.accepts(e.is_folder()) || !tab.project_file_filter.allows(&e.name,e.is_folder()) || (!tab.show_hidden && e.is_hidden()) {
                 continue;
             }
             if !fq.matches_entry(&e.name, e.is_dir, e.size, e.modified) {
@@ -1233,6 +1245,7 @@ impl Tab {
             path_layout: Rc::new(RefCell::new(None)),
             find_query: None,
             entry_filter: EntryFilter::All,
+            project_file_filter: Default::default(),
             show_hidden: false,
             has_hidden: false,
             copy_feedback: None,
@@ -1489,6 +1502,7 @@ struct Schnauz {
     project_dialog: Option<String>,
     project_dialog_error: Option<String>,
     new_text_file: Option<new_text_file::Form>,
+    project_filter_editor: bool,
     /// The open Get Info card, if any.
     info_panel: Option<InfoPanel>,
     /// The open "Rename N Items" dialog, if any.
@@ -1762,7 +1776,7 @@ impl Schnauz {
             projects, project_load_error, project_sessions: HashMap::new(),
             project_strip_scroll: ScrollHandle::new(),
             project_strip_state: RefCell::new(None),
-            project_dialog: None, project_dialog_error: None, new_text_file: None,
+            project_dialog: None, project_dialog_error: None, new_text_file: None, project_filter_editor: false,
             info_panel: None,
             batch_rename: None,
         }
@@ -1858,6 +1872,8 @@ impl Schnauz {
     /// Load (or reload) a pane's directory: a near-instant cheap pass for first
     /// paint, then a background pass that fills in sizes/dates without blocking.
     fn reload_pane(&mut self, pane: usize, cx: &mut Context<Self>) {
+        let rule=self.projects.sidebar().file_filter.clone();
+        self.tab_mut(pane).apply_project_file_filter(&rule);
         // Remote (SFTP) tabs load over the network on a background thread.
         if self.tab(pane).remote.is_some() {
             self.reload_remote_pane(pane, cx);
@@ -2188,31 +2204,6 @@ impl Schnauz {
     ) {
         self.reveal_in_pane(pane, path.clone(), cx);
         self.begin_rename(pane, path, window, cx);
-    }
-
-    /// Quick Look the current selection (spacebar), like Finder. Uses macOS
-    /// `qlmanage -p`, which pops the system preview panel. Local files only —
-    /// remote (SFTP) items aren't on disk for QuickLook to read.
-    fn quick_look(&self, pane: usize) {
-        if self.tab(pane).remote.is_some() {
-            return;
-        }
-        let mut paths: Vec<PathBuf> = self.tab(pane).selection.iter().cloned().collect();
-        if paths.is_empty() {
-            if let Some(a) = self.tab(pane).anchor.clone() {
-                paths.push(a);
-            }
-        }
-        if paths.is_empty() {
-            return;
-        }
-        paths.sort();
-        let _ = Command::new("qlmanage")
-            .arg("-p")
-            .args(&paths)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
     }
 
     fn open_path(&mut self, pane: usize, path: PathBuf, is_dir: bool, cx: &mut Context<Self>) {
@@ -3010,6 +3001,7 @@ impl Schnauz {
     /// Begin renaming `path`: the row's name becomes an editable field.
     fn begin_rename(&mut self, pane: usize, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_click_rename = None;
+        self.drag_candidate = None;
         self.active_pane = pane;
         let text = path
             .file_name()
@@ -3023,6 +3015,8 @@ impl Schnauz {
             text,
             cursor: end,
             anchor: if end > 0 { Some(0) } else { None },
+            layout: Default::default(),
+            dragging: false,
         });
         window.focus(&self.focus);
         cx.notify();
@@ -3506,10 +3500,22 @@ impl Schnauz {
         if self.cloud_busy.contains(path) {
             return CloudSync::Syncing;
         }
+        if nextcloud_local::pin_busy(path) { return CloudSync::Syncing; }
+        let nextcloud=nextcloud::location(path,cx).is_some()
+            || cloud_locations::identify(&home_dir(),path).is_some_and(|p|p.name=="Nextcloud");
+        if nextcloud && cloud_kind(path)==Some(CloudKind::Provider) {
+            if let Some(item)=nextcloud_local::display(path) {
+                return if item.downloading {CloudSync::Syncing}
+                    else if item.folder && !item.recursively_downloaded {CloudSync::FolderOnline}
+                    else if !item.folder && !item.downloaded {CloudSync::OnlineOnly}
+                    else if item.keep_downloaded {CloudSync::KeptOffline}
+                    else if item.folder {CloudSync::FolderDownloaded} else {CloudSync::Available};
+            }
+            if nextcloud_local::error(path).is_some() { return CloudSync::Unknown; }
+        }
         let provider = cloud_kind(path).is_some() || nextcloud::location(path, cx).is_some();
         if provider {
-            if !is_dir && cached_dataless(path) { return CloudSync::OnlineOnly; }
-            return CloudSync::Available;
+            return cloud_storage_state(cached_cloud_dataless(path), is_dir);
         }
         CloudSync::Local
     }
@@ -3754,14 +3760,6 @@ impl Schnauz {
                     items: self.open_with_nodes(&path),
                 });
             }
-            {
-                let ts = targets.clone();
-                let label = if many { format!("Quick Look {n} Items") } else { "Quick Look".to_string() };
-                nodes.push(mi_hint(label, "␣", move |this, _, cx| {
-                    this.close_context_menu(cx);
-                    quick_look_paths(&ts);
-                }));
-            }
             push_menu_sep(&mut nodes);
 
             // --- cloud + type-specific (single target only) ---
@@ -3986,6 +3984,7 @@ impl Schnauz {
                 nodes.push(menu); push_menu_sep(&mut nodes);
             }
         }
+        if on_background {
         nodes.push(mi("New Folder", move |this, window, cx| {
             this.close_context_menu(cx);
             this.new_folder(pane, window, cx);
@@ -3997,6 +3996,8 @@ impl Schnauz {
             this.close_context_menu(cx);
             this.new_file(pane, window, cx);
         }));
+        }
+        while matches!(nodes.last(), Some(MenuNode::Sep)) { nodes.pop(); }
         nodes
     }
 
@@ -4004,6 +4005,7 @@ impl Schnauz {
     /// over the network.
     fn menu_nodes_remote(&self, pane: usize, target: Option<(PathBuf, bool)>) -> Vec<MenuNode> {
         let mut nodes: Vec<MenuNode> = Vec::new();
+        let on_background = target.is_none();
         let pin = target.as_ref().map(|(p, _)| p.clone()).unwrap_or_else(|| self.tab(pane).current_dir.clone());
         let shortcut = self.shortcut_for_path(pane, pin);
         let already = self.projects.sidebar().contains(&shortcut);
@@ -4053,6 +4055,7 @@ impl Schnauz {
             }));
             nodes.push(MenuNode::Sep);
         }
+        if on_background {
         nodes.push(mi("New Folder", move |this, window, cx| {
             this.close_context_menu(cx);
             this.new_folder(pane, window, cx);
@@ -4061,6 +4064,8 @@ impl Schnauz {
             this.close_context_menu(cx);
             this.new_file(pane, window, cx);
         }));
+        }
+        while matches!(nodes.last(), Some(MenuNode::Sep)) { nodes.pop(); }
         nodes
     }
 
@@ -5615,14 +5620,13 @@ impl Schnauz {
             return;
         }
         // Search results are ordinary rows; clicking one leaves text-editing
-        // focus and enables selection, previews, copying and Quick Look.
+        // focus and enables selection, previews and copying.
         if self.search_in_pane(self.active_pane) && !self.file_search.editing {
             match key {
                 "escape" => self.close_palette(cx),
                 "down" => self.move_selection(1, cx),
                 "up" => self.move_selection(-1, cx),
                 "enter" => self.activate_selection(cx),
-                "space" if !cmd => self.quick_look(self.active_pane),
                 _ => {
                     let kc = canon_keystroke(ks);
                     if let Some(action) = keymap().action_for(&kc) {
@@ -5658,11 +5662,6 @@ impl Schnauz {
                 };
                 if let Some((dx, dy)) = delta {
                     self.arrow_move(pane, dx, dy, cx);
-                    return;
-                }
-                // Spacebar → Quick Look the selection, like Finder.
-                if key == "space" {
-                    self.quick_look(pane);
                     return;
                 }
             }
@@ -7291,6 +7290,10 @@ impl Schnauz {
     /// dropped into Finder, Claude, Mail, or any other app (and back into
     /// Schnauz's own folders/panes, which arrive as an external-file drop).
     fn maybe_start_os_drag(&mut self, x: f32, y: f32, window: &Window, cx: &mut Context<Self>) {
+        if self.rename.as_ref().is_some_and(|rename| rename.dragging) {
+            self.drag_candidate = None;
+            return;
+        }
         let Some((pane, path, (sx, sy))) = self.drag_candidate.clone() else {
             return;
         };
@@ -7476,7 +7479,7 @@ impl Schnauz {
         let tab = self.active_tab();
         if tab.selection.len() != 1 { return None; }
         let sel = tab.selection.iter().next()?.clone();
-        if show_preview && tab.remote.is_none() && video_preview::is_video(&sel) {
+        if show_preview && tab.remote.is_none() && video_preview::is_media(&sel) {
             return self.render_video_preview(cx);
         }
         let text = TEXT_PREVIEW_CACHE.with(|c| c.borrow().get(&sel).cloned().flatten());
@@ -7498,7 +7501,7 @@ impl Schnauz {
             .flex()
             .flex_col()
             .gap_3()
-            .when(!video_preview::is_picture(&sel), |d| d.p_4())
+            .when(!video_preview::is_picture(&sel), |d| d.p(px(6.)))
             .bg(rgb(t.sidebar))
             .border_l_1()
             .border_color(rgb(t.border))
@@ -7529,7 +7532,7 @@ impl Schnauz {
                 Some(handle) => {
                     let picture = video_preview::is_picture(&sel);
                     let available = preview_panel::preview_width(self, self.panes.len() - 1)
-                        - if picture { 1. } else { 49. };
+                        - if picture { 1. } else { 17. };
                     let dimensions = native_preview::image_size(
                         handle.size(0), available, picture, self.preview_zoom.scale,
                     );
@@ -7570,12 +7573,13 @@ impl Schnauz {
                 .items_center()
                 .justify_center()
                 .min_w_full()
-                .when(!video_preview::is_picture(&sel), |d| d.p_2())
+                .when(!video_preview::is_picture(&sel), |d| d.p(px(2.)))
                 .overflow_hidden()
                 .rounded_md()
                 // White "page" so document/text previews (black text, often
                 // transparent background) stay readable on dark themes.
                 .bg(rgb(0xffffff))
+                .children(ui_checks::probe("preview-visual-box"))
                 .child(body);
 
             // Finder-style ‹ 2 / 14 › pill over the bottom of the preview.
@@ -7657,7 +7661,7 @@ impl Schnauz {
         }
 
         if p.info {
-            col = col.child(native_preview::information(&sel, None, preview_panel::preview_width(self, self.panes.len() - 1) - if video_preview::is_picture(&sel) { 1. } else { 33. }));
+            col = col.child(native_preview::information(&sel, None, preview_panel::preview_width(self, self.panes.len() - 1) - if video_preview::is_picture(&sel) { 1. } else { 13. }));
         }
 
         Some(col.into_any_element())
@@ -8730,9 +8734,13 @@ impl Schnauz {
                     .h(px(TAB_H - 4.0))
                     .max_w(px(180.0))
                     .rounded_t_md()
-                    .border_1()
+                    .border_t_1()
+                    .border_l_1()
+                    .border_r_1()
                     .border_color(rgb(if active { t.border_strong } else { t.border }))
-                    .when(active, |s| s.border_b_0())
+                    // Cover the strip's divider only beneath the active tab;
+                    // inactive tabs use the strip's line, never their own edge.
+                    .when(active, |s| s.mb(px(-1.)).h(px(TAB_H - 3.)))
                     .cursor_pointer()
                     .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
                     .bg(if active { rgb(t.bg) } else { rgb(t.sidebar) })
@@ -9133,6 +9141,7 @@ impl Schnauz {
                                         false,       // ".." is never the menu target
                                         widths,
                                         icon,
+                                        CloudSync::Local,
                                         true,        // accepts drops (move into parent)
                                         None,        // never renamed
                                         cx.listener({
@@ -9194,7 +9203,7 @@ impl Schnauz {
                             let hover_target = target.clone();
                             let is_selected = tab.selection.contains(&target);
                             let ctx_active = this.is_ctx_target(&target);
-                            let rename_text = this.rename_text(pane, &target);
+                            let rename_text = this.rename_text(pane, &target, cx);
                             let name_target = target.clone();
                             // Don't drag the row while it's being renamed.
                             let drag_target = if rename_text.is_some() {
@@ -9202,7 +9211,7 @@ impl Schnauz {
                             } else {
                                 Some(target.clone())
                             };
-                            let icon = cloud_badged_icon(icon_element(&target, is_dir), cloud, 11.0);
+                            let icon = icon_element(&target, is_dir);
 
                             items.push(
                                 file_row(
@@ -9213,6 +9222,7 @@ impl Schnauz {
                                     ctx_active,
                                     widths,
                                     icon,
+                                    cloud,
                                     entry.is_folder(), // ordinary folders accept drops
                                     rename_text,       // editable name when renaming
                                     cx.listener(move |this, ev: &ClickEvent, window, cx| {
@@ -9349,7 +9359,7 @@ impl Schnauz {
                                 let target = base_dir.join(&name);
                                 let selected = tab.selection.contains(&target);
                                 let ctx_active = this.is_ctx_target(&target);
-                                let edit = this.rename_text(pane, &target);
+                                let edit = this.rename_text(pane, &target, cx);
                                 let cloud = if this.tab(pane).remote.is_none() { this.cloud_state(&target, is_dir, cx) } else { CloudSync::Local };
                                 cells.push(icon_cell(pane, name, target, is_dir, selected, ctx_active, cell_w, edit, cloud, cx));
                             }
@@ -9471,6 +9481,7 @@ impl Schnauz {
 
 impl Render for Schnauz {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.apply_project_file_filters() && self.palette_open && self.file_search.inline { self.refresh_file_search(cx); }
         self.publish_project_activity(cx);
         native_file_drag::install(window);
         if std::mem::take(&mut self.dismiss_space_map) { self.close_space_map(cx); }
@@ -9484,7 +9495,9 @@ impl Render for Schnauz {
         self.sync_preview_zoom();
         self.sync_text_preview();
         let owner=cx.entity().downgrade();
-        window.on_next_frame(move|_,cx|{let _=owner.update(cx,|this,cx|this.prewarm_icons(cx));});
+        window.on_next_frame(move|_,cx|{let _=owner.update(cx,|this,cx|{
+            this.prewarm_icons(cx); this.pump_cloud_status(cx); this.pump_nextcloud_local(cx);
+        });});
         let t = theme();
         self.cancel_unused_previews();
         // Kick off any pending waterfall folder reads before rendering the tree.
@@ -9599,6 +9612,11 @@ impl Render for Schnauz {
                 let x = f64::from(ev.position.x) as f32;
                 let y = f64::from(ev.position.y) as f32;
                 this.path_drag(ev.position, cx);
+                if ev.pressed_button == Some(MouseButton::Left) {
+                    this.rename_drag(ev.position, cx);
+                } else if let Some(rename) = &mut this.rename {
+                    rename.dragging = false;
+                }
                 this.resize_preview(x, cx);
                 // A press-then-move on a file row becomes a native OS drag (so
                 // files can be dropped into Finder or any other app).
@@ -9628,6 +9646,7 @@ impl Render for Schnauz {
                 MouseButton::Left,
                 cx.listener(|this, ev: &gpui::MouseUpEvent, _, cx| {
                     for pane in &mut this.panes { for tab in &mut pane.tabs { tab.path_dragging = false; } }
+                    if let Some(rename) = &mut this.rename { rename.dragging = false; }
                     this.finish_favourite_drag(ev.position, cx);
                     this.finish_preview_resize(cx);
                     this.drag_candidate = None;
@@ -9858,19 +9877,6 @@ fn push_menu_sep(nodes: &mut Vec<MenuNode>) {
     if !matches!(nodes.last(), None | Some(MenuNode::Sep)) {
         nodes.push(MenuNode::Sep);
     }
-}
-
-/// Preview files with Quick Look (the same viewer as pressing Space).
-fn quick_look_paths(paths: &[PathBuf]) {
-    if paths.is_empty() {
-        return;
-    }
-    let _ = Command::new("qlmanage")
-        .arg("-p")
-        .args(paths)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
 }
 
 /// Put files on the general pasteboard as file URLs — Finder, Terminal, and
@@ -10247,25 +10253,35 @@ fn is_dataless(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// `SF_DATALESS` cache for render, keyed by path with a short TTL. The flag
-/// isn't reliably captured during bulk directory enumeration (it lags on a
-/// background thread), so the badge reads it lazily here instead. The stat is a
-/// local metadata read (cloud placeholders live on-disk; only their bytes are
-/// remote), so it's fast on the main thread — no network blocking like a dead
-/// mount, hence no background dance.
-static DATALESS_STAT: OnceLock<Mutex<HashMap<PathBuf, (bool, Instant)>>> = OnceLock::new();
-
 fn cached_dataless(path: &Path) -> bool {
-    const TTL: Duration = Duration::from_secs(3);
-    let map = DATALESS_STAT.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some((v, at)) = map.lock().unwrap().get(path).copied() {
-        if at.elapsed() <= TTL {
-            return v;
-        }
+    cached_cloud_dataless(path) == Some(true)
+}
+
+fn cached_cloud_dataless(path: &Path) -> Option<bool> {
+    cloud_status::read(path)
+}
+
+fn cloud_storage_state(dataless: Option<bool>, directory: bool) -> CloudSync {
+    match (dataless, directory) {
+        (Some(true), _) => CloudSync::OnlineOnly,
+        (Some(false), true) => CloudSync::Folder,
+        (Some(false), false) => CloudSync::Available,
+        (None, _) => CloudSync::Unknown,
     }
-    let v = is_dataless(path);
-    map.lock().unwrap().insert(path.to_path_buf(), (v, Instant::now()));
-    v
+}
+
+fn cloud_storage_label(state: CloudSync) -> &'static str {
+    match state {
+        CloudSync::Local => "Local item",
+        CloudSync::Available => "Downloaded · available locally",
+        CloudSync::OnlineOnly => "Online only · download required",
+        CloudSync::Folder => "Folder available · contents may be online only",
+        CloudSync::Unknown => "Local availability unknown",
+        CloudSync::Syncing => "Download / storage operation in progress",
+        CloudSync::FolderOnline => "Folder contents not fully downloaded",
+        CloudSync::FolderDownloaded => "Folder contents downloaded · available locally",
+        CloudSync::KeptOffline => "Always kept downloaded · available offline",
+    }
 }
 
 /// Files to act on for a cloud download/evict: `path` itself when it's a file,
@@ -10823,6 +10839,7 @@ fn file_row(
     ctx_active: bool,
     widths: &ListLayout,
     icon: AnyElement,
+    cloud: CloudSync,
     // Drag-and-drop: `accept_drop` true => it's a drop target (a folder or the
     // ".." row) that runs `on_drop_file` when files are dropped on it.
     accept_drop: bool,
@@ -10843,16 +10860,20 @@ fn file_row(
     let t = theme();
     let name = &entry.name;
     let name_el = div().id(("entry-name", key)).flex_1().min_w_0().flex()
+        .when(cloud != CloudSync::Local, |d| d.relative().children(ui_checks::probe("cloud-name-text")))
         .child(rename_ui::entry_name(name, rename_text))
         .on_click(on_name_click);
 
     let name_cell = div()
         .flex_none().w(px(widths.width(Column::Name))).flex().items_center().gap_2().pr_2()
+        .when(cloud != CloudSync::Local, |d| d.relative().children(ui_checks::probe("cloud-name-cell")))
         .on_mouse_down(MouseButton::Left, on_press)
         .when(accept_drop && entry.name != "..", |d| d.relative().children(ui_checks::probe("drag-folder")))
         .when(accept_drop, |c| c.rounded_sm().on_drop(on_drop_file).on_drag_move::<ExternalPaths>(on_drag_move))
         .child(div().flex_none().w(px(ICON_W)).flex().justify_center().child(icon))
-        .child(name_el).into_any_element();
+        .child(name_el)
+        .children(cloud_status_icon(cloud, 14.))
+        .into_any_element();
     let mut name_cell = Some(name_cell);
     let cells: Vec<AnyElement> = widths.columns.iter().map(|spec| {
         if spec.column == Column::Name { return name_cell.take().unwrap(); }
@@ -11034,27 +11055,43 @@ fn icon_element(path: &Path, is_dir: bool) -> AnyElement {
     icon_element_sized(path, is_dir, 16.0)
 }
 
-/// Wrap a file icon with a small corner badge showing its cloud-sync state:
-/// a cloud for online-only files, a rotating arrow while downloading. Local
-/// (fully-present) files get no badge. `badge` is the badge diameter in px.
+/// Cloud membership and local materialization, without claiming remote sync or
+/// permanent offline pinning. `badge` is the diameter in logical pixels.
+fn cloud_status_appearance(cloud: CloudSync) -> (u32, Icon) {
+    match cloud {
+        CloudSync::OnlineOnly | CloudSync::FolderOnline => (CHROME_HIGHLIGHT, Icon::Cloud),
+        CloudSync::Available | CloudSync::FolderDownloaded => (0x24864b, Icon::Check),
+        CloudSync::KeptOffline => (0x24864b, Icon::PinDocked),
+        CloudSync::Syncing => (0xb7791f, Icon::Reload),
+        CloudSync::Folder => (theme().text_dim, Icon::Cloud),
+        CloudSync::Unknown => (theme().text_dim, Icon::Question),
+        CloudSync::Local => unreachable!(),
+    }
+}
+
+/// A trailing, nonshrinking status slot inside the Name column. The filename
+/// yields space first, so status stays aligned through truncation and renaming.
+fn cloud_status_icon(cloud: CloudSync, size: f32) -> Option<AnyElement> {
+    if cloud == CloudSync::Local { return None; }
+    let (color, symbol) = cloud_status_appearance(cloud);
+    Some(div().id("cloud-item-status").relative().flex_none().w(px(size)).h(px(size)).flex().items_center().justify_center()
+        .children(ui_checks::probe("cloud-name-status"))
+        .tooltip(tip(cloud_storage_label(cloud)))
+        .child(ui_icon(symbol, size, rgb(color)))
+        .into_any_element())
+}
+
 fn cloud_badged_icon(icon: AnyElement, cloud: CloudSync, badge: f32) -> AnyElement {
     if cloud == CloudSync::Local {
         return icon;
     }
     let t = theme();
-    // A small corner chip. `☁`/`↻` aren't in the UI font (they render blank),
-    // so use a solid colored disc with a glyph the app already draws: `▾`
-    // (points down = "download this") in blue for online-only, amber while a
-    // download/evict is in flight. A ring in the surface color separates it.
-    let (bg, glyph) = match cloud {
-        CloudSync::OnlineOnly => (0x3b82f6u32, "\u{25BE}"), // blue ▾ — online-only
-        CloudSync::Syncing => (0xf59e0bu32, "\u{25BE}"),    // amber ▾ — working
-        CloudSync::Available => (0x0078c9u32, ""),
-        CloudSync::Local => unreachable!(),
-    };
+    let (bg, symbol) = cloud_status_appearance(cloud);
     div()
+        .id("cloud-storage-state")
         .relative()
         .flex()
+        .tooltip(tip(cloud_storage_label(cloud)))
         .child(icon)
         .child(
             div()
@@ -11072,7 +11109,7 @@ fn cloud_badged_icon(icon: AnyElement, cloud: CloudSync, badge: f32) -> AnyEleme
                 .border_color(rgb(t.bg))
                 .text_size(px(badge * 0.64))
                 .text_color(rgb(0xffffff))
-                .child(if cloud == CloudSync::Available { ui_icon(Icon::Cloud, (badge - 2.).max(8.), rgb(0xffffff)).into_any_element() } else { div().child(glyph).into_any_element() }),
+                .child(ui_icon(symbol, (badge - 2.).max(8.), rgb(0xffffff))),
         )
         .into_any_element()
 }

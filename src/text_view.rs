@@ -86,13 +86,14 @@ impl Session {
         let font = NSFont::fontWithName_size(&NSString::from_str("Menlo"), UI_FONT_SIZE as f64)
             .unwrap_or_else(|| NSFont::monospacedSystemFontOfSize_weight(UI_FONT_SIZE as f64, 0.));
         text.setFont(Some(&font));
-        text.setTextContainerInset(NSSize::new(12., 12.));
+        text.setTextContainerInset(NSSize::new(2., 2.));
         text.setMinSize(NSSize::new(0., 0.));
         text.setMaxSize(NSSize::new(f64::MAX, f64::MAX));
         text.setVerticallyResizable(true);
         text.setHorizontallyResizable(false);
         text.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
         if let Some(container) = unsafe { text.textContainer() } {
+            container.setLineFragmentPadding(0.);
             container.setContainerSize(NSSize::new(320., f64::MAX));
             container.setWidthTracksTextView(true);
         }
@@ -272,13 +273,17 @@ impl Schnauz {
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .gap_3()
-                .p_4()
+                .gap(px(6.))
+                .p(px(6.))
+                .relative()
+                .children(ui_checks::probe("preview-text-panel"))
                 .bg(rgb(t.sidebar))
                 .border_l_1()
                 .border_color(rgb(t.border))
                 .child(
                     div()
+                        .relative()
+                        .children(ui_checks::probe("preview-text-title"))
                         .flex_none()
                         .font_weight(FontWeight::SEMIBOLD)
                         .truncate()
@@ -289,6 +294,7 @@ impl Schnauz {
                         .flex_1()
                         .min_h_0()
                         .relative()
+                        .children(ui_checks::probe("preview-text-viewport"))
                         .rounded_md()
                         .overflow_hidden()
                         .bg(rgb(t.bg))
@@ -335,6 +341,10 @@ pub(super) fn smoke_test() -> Result<String, String> {
     let font = session.text.font().ok_or("Missing preview font")?;
     if font.pointSize() != UI_FONT_SIZE as f64 {
         return Err("Preview font differs from file names".into());
+    }
+    if session.text.textContainerInset() != NSSize::new(2., 2.)
+        || unsafe { session.text.textContainer() }.is_none_or(|c| c.lineFragmentPadding()!=0.) {
+        return Err("Native text preview must use two-point insets without extra line padding".into());
     }
     let board = NSPasteboard::pasteboardWithUniqueName();
     let result = (|| {

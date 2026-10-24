@@ -39,6 +39,10 @@ mod drag_checks;
 mod project_strip_checks;
 
 #[cfg(feature = "ui-checks")]
+#[path = "project_file_filter_checks.rs"]
+mod project_file_filter_checks;
+
+#[cfg(feature = "ui-checks")]
 #[path = "tab_sidebar_checks.rs"]
 mod tab_sidebar_checks;
 
@@ -49,6 +53,10 @@ mod toolbar_checks;
 #[cfg(feature = "ui-checks")]
 #[path = "clipboard_checks.rs"]
 mod clipboard_checks;
+
+#[cfg(feature = "ui-checks")]
+#[path = "rename_checks.rs"]
+mod rename_checks;
 
 #[cfg(feature = "ui-checks")]
 pub(super) struct Fixture {
@@ -122,6 +130,7 @@ fn check_geometry(phase: usize) {
 
 #[cfg(feature = "ui-checks")]
 pub(super) fn run() {
+    nextcloud_local::fixture_mode();
     std::panic::set_hook(Box::new(|error| {
         clipboard_checks::restore_on_failure();
         eprintln!("Layout check failed: {error}");
@@ -246,11 +255,12 @@ pub(super) fn run() {
             settings::check_quick_keybinds(cx);
             check_previews(window, cx);
             check_cloud_alias(window, cx);
+            check_cloud_row_layout(cx);
             clipboard_checks::run(window, cx);
             check_updates(window,cx);
             check_tab_project_dialog(window,cx);
             check_video(window,cx);
-            toolbar_checks::run(window,cx,move |cx|web_links::check(window,cx,move |cx|project_sidebar::check_order(window,cx,move |cx|todoist_window::check(window,cx,move |cx|drag_checks::run(window,cleanup,cx)))));
+            rename_checks::run(window,cx,move |cx|toolbar_checks::run(window,cx,move |cx|web_links::check(window,cx,move |cx|project_sidebar::check_order(window,cx,move |cx|todoist_window::check(window,cx,move |cx|drag_checks::run(window,cleanup,cx))))));
         }
     });
 }
@@ -323,22 +333,27 @@ fn check_tab_project_dialog(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
 
 #[cfg(feature = "ui-checks")]
 fn check_video(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
-    let path=PathBuf::from(std::env::var_os("SCHNAUZ_UI_VIDEO_FIXTURE").expect("Synthetic MP4 fixture"));
-    window.update(cx,|f,_,cx|f.browser.update(cx,|b,cx| {
-        b.todoist.open=false;
-        let pane=b.active_pane;
-        b.tab_mut(pane).selection=std::iter::once(path.clone()).collect();
-        b.tab_mut(pane).anchor=Some(path.clone());cx.notify();
-    })).unwrap();
-    let start=Instant::now();
-    for _ in 0..3 { cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap(); }
-    window.update(cx,|f,_,cx|{
-        f.browser.read(cx).video_preview.as_ref().expect("Immediate video session").check_painted();
-    }).unwrap();
-    assert!(start.elapsed()<Duration::from_secs(2),"Native video attachment cannot wait for file information");
-    window.update(cx,|f,_,cx|f.browser.update(cx,|b,cx| {b.tab_mut(b.active_pane).selection.clear();cx.notify();})).unwrap();
-    for _ in 0..2 { cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap(); }
-    println!("PASS synthetic MP4 immediate player attachment and nonzero native viewport without waiting for file metadata");
+    for variable in ["SCHNAUZ_UI_VIDEO_FIXTURE", "SCHNAUZ_UI_AUDIO_FIXTURE"] {
+        let path=PathBuf::from(std::env::var_os(variable).expect("Synthetic media fixture"));
+        window.update(cx,|f,_,cx|f.browser.update(cx,|b,cx| {
+            b.todoist.open=false;
+            let pane=b.active_pane;
+            b.tab_mut(pane).selection=std::iter::once(path.clone()).collect();
+            b.tab_mut(pane).anchor=Some(path.clone());cx.notify();
+        })).unwrap();
+        let start=Instant::now();
+        for _ in 0..3 { cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap(); }
+        let session = window.update(cx,|f,_,cx|{
+            let session = f.browser.read(cx).video_preview.as_ref().expect("Immediate media session").clone();
+            session.check_painted();
+            session
+        }).unwrap();
+        assert!(start.elapsed()<Duration::from_secs(2),"Native media attachment cannot wait for file information");
+        window.update(cx,|f,_,cx|f.browser.update(cx,|b,cx| {b.tab_mut(b.active_pane).selection.clear();cx.notify();})).unwrap();
+        for _ in 0..2 { cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap(); }
+        session.check_deactivated();
+    }
+    println!("PASS synthetic MP4/AAC immediate native player attachment, compact unmuted/paused audio controls and selection-change cleanup without waiting for file metadata");
 }
 
 #[cfg(feature = "ui-checks")]
@@ -426,10 +441,37 @@ fn check_previews(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
         let zoomed = BOUNDS.with(|all| *all.borrow().get("preview-image").unwrap());
         assert!(zoomed.size.width > image.size.width && zoomed.size.height > image.size.height);
     }
+    select("compact-document.docx", (800, 800), cx); paint(cx);
+    BOUNDS.with(|all| {
+        let all = all.borrow();
+        let frame = all.get("preview-frame").unwrap();
+        let page = all.get("preview-visual-box").unwrap();
+        let image = all.get("preview-image").unwrap();
+        assert!((f32::from(page.left() - frame.left()) - 7.).abs() < 1., "Six-point outer padding plus divider");
+        assert!((f32::from(image.left() - page.left()) - 2.).abs() < 1., "Two-point page padding");
+        assert!((f32::from(image.top() - page.top()) - 2.).abs() < 1.);
+        assert!((f32::from(frame.size.width - image.size.width) - 17.).abs() < 1., "Document width uses both compact insets and divider");
+    });
     select("next.png", (600, 600), cx); paint(cx);
     window.update(cx, |fixture, _, cx| fixture.browser.update(cx, |browser, _| {
         assert_eq!(browser.preview_zoom.scale, 1., "New selection resets zoom");
     })).unwrap();
+    window.update(cx,|fixture,_,cx|fixture.browser.update(cx,|browser,cx| {
+        let path=browser.active_tab().current_dir.join("compact-preview.txt");
+        TEXT_PREVIEW_CACHE.with(|cache|cache.borrow_mut().insert(path.clone(),Some(Arc::new(text_preview::TextPreview {
+            text:"Compact text preview\nGrüße — 日本語".into(),truncated:false
+        }))));
+        browser.tab_mut(browser.active_pane).selection=HashSet::from([path]);
+        browser.sync_text_preview();cx.notify();
+    })).unwrap();
+    paint(cx);
+    let frame=recorded_bounds("preview-frame");
+    let viewport=recorded_bounds("preview-text-viewport");
+    let title=recorded_bounds("preview-text-title");
+    assert!((f32::from(viewport.left()-frame.left())-7.).abs()<0.5,"Text preview uses six-point outer inset plus divider");
+    assert!((f32::from(frame.right()-viewport.right())-6.).abs()<0.5);
+    assert!((f32::from(viewport.top()-title.bottom())-6.).abs()<0.5,"Compact text title gap");
+    select("next.png", (600,600),cx);paint(cx);
     window.update(cx, |fixture, _, cx| fixture.browser.update(cx, |browser, cx| {
         let pane = browser.active_pane;
         let path = browser.active_tab().anchor.clone().unwrap();
@@ -504,16 +546,43 @@ fn check_cloud_alias(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
     cloud_locations::fixture_alias(alias.clone(), physical.clone());
     let account: nextcloud::Account = serde_json::from_value(serde_json::json!({
         "id":"offline-fixture", "root":physical, "server":"https://invalid.example", "login":"fixture", "remoteRoot":"/" })).unwrap();
-    let mut state = nextcloud::State::default(); state.accounts = vec![account]; cx.set_global(state);
+    let mut state = nextcloud::State::default(); state.accounts = vec![account.clone()]; cx.set_global(state);
     window.update(cx, |fixture, _, cx| fixture.browser.update(cx, |browser, cx| {
         for (path, directory) in [(alias.join("Folder"),true), (alias.join("Folder/image.png"),false)] {
+            cloud_status::seed(&path,Some(false));
             assert_eq!(nextcloud::location(&path, cx).unwrap().root, alias);
-            assert_eq!(browser.cloud_state(&path,directory,cx),CloudSync::Available);
+            assert_eq!(browser.cloud_state(&path,directory,cx),if directory { CloudSync::Folder } else { CloudSync::Available });
             let menu = browser.cloud_menu(0,&path,directory,cx).unwrap();
             match menu { MenuNode::Sub { label, items } => {
                 assert_eq!(label,"Nextcloud");
                 assert!(items.iter().any(|node| matches!(node,MenuNode::Item {label,..} if label=="Share options…")));
+                assert!(!items.iter().any(|node|matches!(node,MenuNode::Item{label,..} if label.contains("Finder"))));
+                assert!(!items.iter().any(|node| matches!(node,MenuNode::Item {label,..} if label.contains("Connect this folder") || label=="Sync Now" || label=="Disconnect from Schnauz…")));
             }, _ => panic!("Missing native Nextcloud submenu") }
+        }
+    })).unwrap();
+    cx.set_global(nextcloud::State::default());
+    window.update(cx, |fixture, _, cx| fixture.browser.update(cx, |browser, cx| {
+        for (flag, expected) in [(Some(true), CloudSync::OnlineOnly),(Some(false),CloudSync::Available),(None,CloudSync::Unknown)] {
+            let path=alias.join("Folder/image.png");
+            cloud_status::seed(&path,flag);
+            assert_eq!(browser.cloud_state(&path,false,cx),expected);
+            let MenuNode::Sub {items,..}=browser.cloud_menu(0,&path,false,cx).unwrap() else {panic!("Cloud menu missing")};
+            assert!(items.iter().any(|n|matches!(n,MenuNode::Item{label,..} if label=="Enable sharing in Schnauz…")));
+            assert!(!items.iter().any(|node|matches!(node,MenuNode::Item{label,..} if label.contains("Finder"))));
+            assert!(!items.iter().any(|n|matches!(n,MenuNode::Item{label,..} if label=="Share options…" || label.contains("Connect this folder"))));
+            assert!(items.iter().any(|n|matches!(n,MenuNode::Disabled(label) if label==cloud_storage_label(expected))));
+        }
+    })).unwrap();
+    let mut state = nextcloud::State::default(); state.accounts=vec![account.clone()]; cx.set_global(state);
+    window.update(cx,|fixture,_,cx|fixture.browser.update(cx,|browser,cx| {
+        for (folder,downloaded,recursive,expected) in [(false,false,false,true),(false,true,false,false),(true,true,false,true),(true,true,true,false)] {
+            let path=alias.join(if folder {"Folder"} else {"Folder/image.png"});
+            nextcloud_local::seed(&path,folder,downloaded,recursive);
+            let MenuNode::Sub{items,..}=browser.cloud_menu(0,&path,folder,cx).unwrap() else {panic!("Missing Nextcloud menu")};
+            assert_eq!(items.iter().any(|n|matches!(n,MenuNode::Item{label,..} if label=="Always keep downloaded")),expected);
+            assert!(!items.iter().any(|n|matches!(n,MenuNode::Item{label,..} if label.contains("Finder") || label=="Download Contents" || label=="Sync Now")));
+            nextcloud_local::invalidate(&path);
         }
     })).unwrap();
     let nested: nextcloud::Account = serde_json::from_value(serde_json::json!({
@@ -522,6 +591,49 @@ fn check_cloud_alias(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
     assert_eq!(nextcloud::location(&alias.join("Folder/image.png"),cx).unwrap().root,alias.join("Folder"));
     cx.set_global(original);
     println!("PASS Nextcloud alias identity, folder/file cloud badges and connected menu routing; no network, desktop credentials or Keychain accessed");
+}
+
+#[cfg(feature = "ui-checks")]
+struct CloudRowFixture { layout: ListLayout, cloud: CloudSync }
+#[cfg(feature = "ui-checks")]
+impl Render for CloudRowFixture {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let entry = Entry { name: "A long Nextcloud filename with Grüße and 日本語 for truncation.pdf".into(),
+            is_dir:false, size:123, modified:None, created:None, mode:None, loaded:true, hidden_flag:false };
+        div().size_full().bg(rgb(theme().bg)).text_size(px(UI_FONT_SIZE)).child(file_row(
+            &entry, Path::new("/fixture"), 0, false, false, &self.layout,
+            icon_element(Path::new("/fixture/document.pdf"),false), self.cloud, false, None,
+            |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}))
+    }
+}
+#[cfg(feature = "ui-checks")]
+fn check_cloud_row_layout(cx: &mut App) {
+    let window = cx.open_window(WindowOptions {
+        window_bounds:Some(WindowBounds::Windowed(Bounds::new(point(px(-4000.),px(-4000.)),size(px(700.),px(100.))))),
+        show:false,focus:false,..Default::default()
+    }, |_,cx|cx.new(|_|CloudRowFixture {layout:ListLayout::default(),cloud:CloudSync::OnlineOnly})).unwrap();
+    for width in [140.,320.] {
+        for moved in [false,true] {
+            for state in [CloudSync::OnlineOnly,CloudSync::Available,CloudSync::KeptOffline,CloudSync::Syncing,CloudSync::Unknown] {
+                window.update(cx,|row,_,cx| {
+                    row.layout=ListLayout::default();row.layout.set_width(Column::Name,width);
+                    if moved {row.layout.columns.swap(0,1);}
+                    row.cloud=state;cx.notify();
+                }).unwrap();
+                for _ in 0..3 {cx.update_window(*window,|_,w,cx|{w.refresh();w.draw(cx).clear();}).unwrap();}
+                let name=recorded_bounds("cloud-name-cell");
+                let text=recorded_bounds("cloud-name-text");
+                let status=recorded_bounds("cloud-name-status");
+                assert_eq!(name.size.width,px(width));
+                assert_eq!(status.size.width,px(14.));
+                assert!((f32::from(name.right()-status.right())-8.).abs()<0.5,"Status follows the Name column's right inset");
+                assert!(text.right()<=status.left(),"Long Unicode names must not overlap cloud status");
+                assert!(name.contains(&status.origin) && name.contains(&status.bottom_right()));
+            }
+        }
+    }
+    window.update(cx,|_,w,_|w.remove_window()).unwrap();
+    println!("PASS trailing cloud status stays inside resized/reordered Name columns without overlapping long Unicode filenames; synthetic metadata only");
 }
 
 #[cfg(feature="ui-checks")]

@@ -234,8 +234,11 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   user-owned locks belonging to the current user, never app/token/foreign locks.
   Disconnect revokes/removes only Schnauz's credential, even if Keychain access is
   missing or the server is offline. Preserve invalid account config files.
-  Local automatic-space policy stays explicitly labeled as a Finder handoff;
-  macOS does not expose another provider's Finder extension menu to Schnauz.
+  The direct offline bridge targets Nextcloud Desktop 34.0.1; older clients
+  need not be supported. Discover installations/accounts per user; never depend
+  on Oliver's paths, SwiftBar or ncstatus. Internal macOS File Provider selectors
+  require availability and ABI checks. Real provider-action QA remains pending;
+  do not advertise it as verified before the scoped live test. Omit Finder handoff.
   Never recursively scan a folder while constructing a cloud menu. Test Nextcloud
   with URLProtocol fixtures and temporary settings, not Oliver's live server or
   Keychain. `./test.sh` includes those native tests. Live login remains manual QA.
@@ -419,7 +422,7 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   row, clear of native window controls. --version prints the same version.
   Oliver explicitly removed date/build/source identifiers from the UI. Keep the
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
-  no per-build app copies or releases. The published release is 0.8.9; the normal local 0.8.9 update is staged while the old app runs.
+  no per-build app copies or releases. The published release is 0.8.9; the normal local 0.8.13 update includes project filters, the seamless active tab and finer toolbar icons and is staged while the old app runs.
 - Todoist task rows use completion circles, thin separators and dates below the
   title. The indigo + Add task row is last in the virtual list, even when empty.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
@@ -869,3 +872,53 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   is pending while PID 32977 remains alive; installed files were not replaced.
   Publication request complete. Future releases require a new request; preserve
   this tag/assets, all live sessions and the safe after-quit installation policy.
+
+
+- Local 0.8.10: Oliver requested a full-width Schnauz-blue (#3478c5) project row,
+  including the 8 pt top/bottom clearance. The selected project chip remains blue
+  with white text and a white 1 pt outline. Preserve neutral inactive chips,
+  header geometry, Search styling, horizontal scrolling and live project sessions.
+
+- Local 0.8.11: each project (including Personal) owns a persistent file-ending
+  exclusion list and independent On/Off flag in Sidebar.file_filter. Show retains
+  its per-tab All/Folders/Files semantics. Filter: On / Off and Modify… sit beside
+  Show, with matching segmented controls. Native Modify captures the project,
+  supports normal text-edit shortcuts, validates literal comma-separated endings
+  and saves atomically; Cancel preserves both list and flag. Never hide folders
+  or alter files. Apply rules to local/loaded SFTP listings and recursive search,
+  and synchronize live/parked tabs and browser windows without reconnecting or
+  replacing terminals. Off retains the configured list. Existing profiles default
+  to Off. Preserve the local blue-project-bar changes from 0.8.10.
+
+- Local 0.8.12: file tabs have top/side outlines only. The strip owns the bottom
+  divider; the active tab extends 1 pt over it with the content background so it
+  joins the path area seamlessly. Keep the divider visible beneath inactive
+  tabs/empty strip, and preserve tab top alignment and total strip height.
+
+- Local 0.8.13: modern path-bar action icons use native SF Symbols Light
+  (folder/doc badge plus, Share, bookmark, Trash, globe, Eye/Eye Off, Search).
+  Retain view icon geometry; common vector strokes are 1.2/20 instead of 1.5/20.
+  Keep all toolbar action routing, order, hit areas and state colours unchanged.
+
+- Audio Preview reuses the embedded AVKit session with compact 88 pt native
+  controls. Audio starts paused with sound enabled on explicit Play; video keeps
+  its paused/muted default. Selection changes and closing Preview stop playback;
+  native modals pause it. Test with silent generated WAV/AAC fixtures and isolated
+  windows, never personal music or live sessions. Decoding follows macOS; show a
+  readable error for unsupported/corrupt audio instead of an empty preview.
+
+- Local 0.9.0: selected local/SFTP file and folder menus omit all New actions;
+  creation remains on the background and existing toolbar/menu commands. The
+  separate Quick Look viewer and Space shortcut are removed, while embedded
+  preview thumbnail generation remains. Rename supports measured Unicode mouse
+  positioning/drag/Shift selection and a visible, clipped caret in List, Icons
+  and search; text selection must never start a file drag.
+- A detected Nextcloud sync folder is distinct from Schnauz's own server login.
+  Use “Enable sharing in Schnauz…” for the latter, never “Connect this folder”
+  inside an already detected root. Keep maintenance in Settings. Cloud badges
+  show local file data with a green check, online placeholders with a blue cloud,
+  and explicit unknown status on metadata failure. A materialized directory
+  does not imply all descendants are offline. The direct keep-downloaded bridge is implemented with runtime checks,
+  but issue #1 remains open until real provider QA. Offer it only for verified
+  nonlocal Nextcloud items, excluding kept/downloading items. Omit Finder handoff.
+  Never import desktop credentials or scan descendants for a menu/status badge.

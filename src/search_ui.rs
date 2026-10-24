@@ -243,6 +243,7 @@ impl Schnauz {
             query: self.query.clone(),
             show_hidden: self.active_tab().show_hidden,
             filter: self.active_tab().entry_filter,
+            file_filter: self.projects.sidebar().file_filter.clone(),
             cancel: cancel.clone(),
         };
         cx.notify();
@@ -471,7 +472,7 @@ impl Schnauz {
         };
         let Action::Open(path, is_dir) = item.action.clone();
         let pane = self.file_search.pane;
-        if name_click && !ev.modifiers().modified() && self.rename_text(pane, &path).is_some() {
+        if name_click && !ev.modifiers().modified() && self.rename_text(pane, &path, cx).is_some() {
             return;
         }
         self.selected = row;
@@ -698,13 +699,14 @@ impl Schnauz {
                             .text_size(px(UI_FONT_SIZE)).cursor_pointer()
                             .when(selected,|s|s.bg(rgb(t.selected))).hover(|s|s.bg(rgb(t.hover)))
                             .child(div().flex_none().w(px(cell_width)).min_w_0().flex().items_center().gap_2()
-                                .child(div().flex_none().child(cloud_badged_icon(icon_element(path,*is_dir), cloud, 11.)))
+                                .child(div().flex_none().child(icon_element(path,*is_dir)))
                                 .child(div().id(("search-entry-name",i)).flex_1().min_w_0().flex()
-                                    .child(rename_ui::entry_name(&item.title,this.rename_text(pane,path)))
+                                    .child(rename_ui::entry_name(&item.title,this.rename_text(pane,path,cx)))
                                     .on_click(cx.listener(move|this,ev:&ClickEvent,window,cx| {
                                         this.click_search_entry(i,true,ev,window,cx);
                                         this.suppress_entry_click = true;
-                                    }))))
+                                    })))
+                                .children(cloud_status_icon(cloud,14.)))
                             .child(div().flex_none().w(px(cell_width)).min_w_0().truncate().text_color(rgb(t.text_muted)).child(location))
                             .on_click(cx.listener(move|this,ev:&ClickEvent,window,cx| {
                                 this.click_search_entry(i,false,ev,window,cx);

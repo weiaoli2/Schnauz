@@ -7,6 +7,7 @@ struct ToolRequest: Decodable {
   let config: String
   let root: String?
   let path: String?
+  let paths: [String]?
 }
 struct ToolResult: Encodable {
   let success: Bool
@@ -18,7 +19,13 @@ struct ToolResult: Encodable {
   if let data = try? JSONEncoder().encode(result) { FileHandle.standardOutput.write(data) }
   exit(result.success || result.cancelled ? 0 : 1)
 }
+#if SCHNAUZ_NEXTCLOUD_UI_TESTS
+@MainActor var schnauzNextcloudUITestErrors: [String] = []
+#endif
 @MainActor func errorAlert(_ error: Error) {
+#if SCHNAUZ_NEXTCLOUD_UI_TESTS
+  schnauzNextcloudUITestErrors.append((error as? NCFailure)?.localizedDescription ?? error.localizedDescription)
+#else
   let alert = NSAlert()
   alert.messageText = "Nextcloud"
   alert.informativeText =
@@ -26,6 +33,7 @@ struct ToolResult: Encodable {
     ?? "Nextcloud could not complete this action. Check the connection and try again."
   alert.addButton(withTitle: "OK")
   alert.runModal()
+#endif
 }
 @MainActor func prompt(
   _ title: String, detail: String, fields: [(String, String, Bool)], confirm: String = "Continue"
@@ -105,6 +113,28 @@ struct ToolResult: Encodable {
     NSApp.activate(ignoringOtherApps: true)
   }
   func start() throws {
+    if request.operation == "local-status" || request.operation == "keep-downloaded" {
+      var input: [String: Any] = ["operation": request.operation]
+      if let path = request.path { input["path"] = path }
+      if let paths = request.paths { input["paths"] = paths }
+      var completed = false
+      SchnauzNextcloudLocalRequest(input) { response in
+        DispatchQueue.main.async {
+          guard !completed else { return }
+          completed = true
+          if let data = try? JSONSerialization.data(withJSONObject: response) {
+            FileHandle.standardOutput.write(data)
+          }
+          exit((response["success"] as? Bool) == true ? 0 : 1)
+        }
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + (request.operation == "local-status" ? 12 : 300)) {
+        guard !completed else { return }
+        completed = true
+        finish(ToolResult(success: false, message: "Nextcloud local action timed out. Refresh its status before trying again."))
+      }
+      return
+    }
     if request.operation == "connect" {
       try connect()
       return
@@ -319,9 +349,11 @@ final class SharesWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NST
   let client: NCClient, path: String
   let window: NSWindow, table = NSTableView(),
     label = NSTextField(labelWithString: "Loading shares…")
-  var rows: [NCShare] = [], pending = false, isDirectory = false
+  var rows: [NCShare] = [], isDirectory = false
+  var workflow = NCShareWorkflow()
   var work: Task<Void, Never>?
   var buttons: [NSButton] = []
+  var refreshButton: NSButton?
   init(client: NCClient, path: String) {
     self.client = client
     self.path = path
@@ -368,7 +400,14 @@ final class SharesWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NST
     label.font = .systemFont(ofSize: 11)
     label.textColor = .secondaryLabelColor
     label.lineBreakMode = .byTruncatingTail
-    [title, context, scroll, actions, label].forEach(stack.addArrangedSubview)
+    let footer = NSStackView()
+    footer.orientation = .horizontal
+    footer.spacing = 8
+    let refresh = NSButton(title: "Refresh", target: self, action: #selector(refresh))
+    refreshButton = refresh
+    footer.addArrangedSubview(label)
+    footer.addArrangedSubview(refresh)
+    [title, context, scroll, actions, footer].forEach(stack.addArrangedSubview)
     window.contentView!.addSubview(stack)
     stack.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
@@ -378,7 +417,9 @@ final class SharesWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NST
       stack.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor, constant: -16),
       scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
       scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 150),
+      footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
     ])
+    updateButtons()
   }
   func show() {
     window.center()
@@ -400,34 +441,53 @@ final class SharesWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NST
     field.lineBreakMode = .byTruncatingTail
     return field
   }
-  func perform(_ operation: @escaping () async throws -> Void) {
-    guard !pending else { return }
-    pending = true
-    buttons.forEach { $0.isEnabled = false }
-    label.stringValue = "Working…"
+  func updateButtons() {
+    for (index, button) in buttons.enumerated() {
+      button.isEnabled = index == 3 ? !workflow.pending : workflow.canChange
+    }
+    refreshButton?.isEnabled = workflow.canRefresh
+  }
+  func perform(_ change: (() async throws -> Void)? = nil) {
+    guard workflow.begin(changing: change != nil) else { return }
+    updateButtons()
+    label.stringValue = change == nil ? "Loading shares…" : "Saving change…"
+    label.toolTip = label.stringValue
     work = Task {
+      defer {
+        workflow.finish()
+        updateButtons()
+      }
       do {
-        try await operation()
+        if let change {
+          try await change()
+          workflow.confirmedChange()
+        } else {
+          let info = try await client.metadata(local: path)
+          isDirectory = info["collection"] == "true"
+        }
         rows = try await client.shares(local: path)
+        workflow.refreshed()
         table.reloadData()
         label.stringValue =
           rows.isEmpty
           ? "No shares. Create a link or share with a Nextcloud user or group."
-          : "\(rows.count) share(s) · changes are saved to Nextcloud"
+          : "\(rows.count) share(s)\(workflow.changeConfirmed ? " · change saved to Nextcloud" : "")"
       } catch is CancellationError { return } catch {
-        label.stringValue = "The action failed. Your previous shares remain listed."
-        errorAlert(error)
+        if workflow.changeConfirmed {
+          label.stringValue = "Change saved. Could not refresh shares; click Refresh."
+          errorAlert(NCFailure.message("The change was saved to Nextcloud, but its updated share list could not be loaded. Click Refresh to check the result. Do not submit the same change again."))
+        } else if change != nil {
+          label.stringValue = "Change not confirmed. Refresh shares before making another change."
+          errorAlert(NCFailure.message("The server response did not confirm this change. It may have reached Nextcloud. Click Refresh to check the share list before making another change."))
+        } else {
+          label.stringValue = "Could not refresh shares. Previous entries remain listed."
+          errorAlert(error)
+        }
       }
-      pending = false
-      buttons.forEach { $0.isEnabled = true }
+      label.toolTip = label.stringValue
     }
   }
-  func refresh() {
-    perform { [self] in
-      let info = try await client.metadata(local: path)
-      isDirectory = info["collection"] == "true"
-    }
-  }
+  @objc func refresh() { perform() }
   func selected() -> NCShare? {
     let row = table.selectedRow
     if rows.indices.contains(row) { return rows[row] }
@@ -537,7 +597,9 @@ final class SharesWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NST
   }
 }
 
-MainActor.assumeIsolated {
+#if !SCHNAUZ_NEXTCLOUD_UI_TESTS
+@main struct SchnauzNextcloudMain {
+@MainActor static func main() {
   let app = NSApplication.shared
   app.setActivationPolicy(.accessory)
   let parent = getppid()
@@ -569,3 +631,5 @@ MainActor.assumeIsolated {
   }
   withExtendedLifetime((controller, parentMonitor)) { app.run() }
 }
+}
+#endif

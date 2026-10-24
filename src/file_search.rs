@@ -53,6 +53,7 @@ pub struct Request {
     pub query: String,
     pub show_hidden: bool,
     pub filter: EntryFilter,
+    pub file_filter: crate::project_file_filter::Rule,
     pub cancel: Arc<AtomicBool>,
 }
 
@@ -140,6 +141,7 @@ pub fn run(request: Request, tx: Sender<Update>) {
                 directories.push(path.clone());
             }
             progress.scanned += 1;
+            if !request.file_filter.allows(&name,crate::is_browsable_folder(&path,is_dir)) { continue; }
             let matched = match request.mode {
                 Mode::File => matches_name(&name, &words),
                 Mode::Content if md.is_file() => {
@@ -332,6 +334,7 @@ mod tests {
                 mode,
                 show_hidden: hidden,
                 filter,
+                file_filter: Default::default(),
                 cancel: Arc::new(AtomicBool::new(false)),
             },
             tx,
@@ -340,6 +343,25 @@ mod tests {
             .flat_map(|u| u.hits.into_iter().map(|h| h.path))
             .collect()
     }
+    #[test]
+    fn project_exclusions_apply_before_filename_and_content_results() {
+        let root=crate::tests::scratch("project-exclusion-search");
+        fs::write(root.join("needle.blend"),"needle").unwrap();
+        fs::write(root.join("needle.blend1"),"needle").unwrap();
+        fs::create_dir(root.join("needle.bak")).unwrap();
+        fs::write(root.join("needle.bak/needle-child.txt"),"needle").unwrap();
+        for mode in [Mode::File,Mode::Content] {
+            let (tx,rx)=std::sync::mpsc::channel();
+            run(Request{root:root.clone(),mode,query:"needle".into(),show_hidden:true,filter:EntryFilter::All,
+                file_filter:crate::project_file_filter::Rule::parse(".blend1,.bak",true).unwrap(),cancel:Arc::new(AtomicBool::new(false))},tx);
+            let paths=rx.into_iter().flat_map(|u|u.hits.into_iter().map(|h|h.path)).collect::<Vec<_>>();
+            assert!(paths.contains(&root.join("needle.blend")));
+            assert!(!paths.contains(&root.join("needle.blend1")));
+            assert!(paths.contains(&root.join("needle.bak/needle-child.txt")),"Folders with excluded-looking names are still traversed");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn scoped_recursive_names_and_text_are_distinct_and_literal() {
         let root = crate::tests::scratch("file-search");

@@ -141,6 +141,7 @@ impl Schnauz {
         } else if changed_link {
             self.ensure_todoist(false, cx);
         }
+        if self.apply_project_file_filters() && self.palette_open && self.file_search.inline { self.refresh_file_search(cx); }
         cx.notify();
     }
 }

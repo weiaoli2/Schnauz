@@ -29,6 +29,7 @@ pub(super) enum Icon {
     Drive,
     Globe,
     Cloud,
+    Question,
     Home,
     Calendar,
     Check,
@@ -59,7 +60,9 @@ fn apple_symbol(name: &'static str, color: Rgba) -> Option<Arc<RenderImage>> {
             None,
         )?;
         let configuration =
-            objc2_app_kit::NSImageSymbolConfiguration::configurationWithPointSize_weight(48., 0.);
+            objc2_app_kit::NSImageSymbolConfiguration::configurationWithPointSize_weight(
+                48., unsafe { objc2_app_kit::NSFontWeightLight },
+            );
         let symbol = symbol.imageWithSymbolConfiguration(&configuration)?;
         let bytes = symbol.TIFFRepresentation()?;
         let mut pixels = image::load_from_memory(&bytes.to_vec()).ok()?.to_rgba8();
@@ -73,7 +76,7 @@ fn apple_symbol(name: &'static str, color: Rgba) -> Option<Arc<RenderImage>> {
         }
         let image = Arc::new(RenderImage::new(vec![image::Frame::new(pixels)]));
         let mut cache = cache.borrow_mut();
-        if cache.len() >= 32 {
+        if cache.len() >= 128 {
             cache.clear();
         }
         cache.insert(key, image.clone());
@@ -83,7 +86,17 @@ fn apple_symbol(name: &'static str, color: Rgba) -> Option<Arc<RenderImage>> {
 
 pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
     let symbol = match icon {
+        Icon::FolderPlus => apple_symbol("folder.badge.plus", color),
+        Icon::FilePlus => apple_symbol("doc.badge.plus", color),
         Icon::Share => apple_share(color),
+        Icon::Tag => apple_symbol("bookmark", color),
+        Icon::Trash => apple_symbol("trash", color),
+        Icon::Globe => apple_symbol("globe", color),
+        Icon::Eye => apple_symbol("eye", color),
+        Icon::EyeOff => apple_symbol("eye.slash", color),
+        Icon::Search => apple_symbol("magnifyingglass", color),
+        Icon::Cloud => apple_symbol("cloud", color),
+        Icon::Question => apple_symbol("questionmark", color),
         Icon::PinDocked => apple_symbol("pin", color),
         Icon::PinFloating => apple_symbol("pin.slash", color),
         _ => None,
@@ -101,7 +114,7 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
         move |_, bounds, window, _| {
             let scale = f32::from(bounds.size.width) / 20.;
             let p = |x: f32, y: f32| bounds.origin + point(px(x * scale), px(y * scale));
-            let mut path = gpui::PathBuilder::stroke(px(1.5 * scale));
+            let mut path = gpui::PathBuilder::stroke(px(1.2 * scale));
             macro_rules! line { ($($x:expr, $y:expr);+ $(;)?) => {{
             let points = [$(p($x as f32, $y as f32)),+];
             path.move_to(points[0]);
@@ -142,6 +155,10 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
                 }};
             }
             match icon {
+                Icon::Question => {
+                    line!(6,6;6,5;8,3;12,3;14,5;14,7;10,10;10,12);
+                    circle!(10,16,0.6);
+                }
                 Icon::PinDocked | Icon::PinFloating => {
                     line!(7,3;13,3;12,8;15,11;5,11;8,8;7,3);
                     line!(10,11;10,17);

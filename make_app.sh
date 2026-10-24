@@ -75,7 +75,11 @@ for helper in removebg cloudctl volumectl; do
     xcrun swiftc "${SWIFT_ARGS[@]}" "$helper.swift" -o "$APP/Contents/MacOS/$helper"
     codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/$helper"
 done
-xcrun swiftc "${SWIFT_ARGS[@]}" native/nextcloud/Core.swift native/nextcloud/main.swift -o "$APP/Contents/MacOS/nextcloudctl"
+xcrun clang -fobjc-arc -fblocks -target "$APP_ARCH-apple-macosx14.0" -O2 \
+    -fmodules-cache-path="$SWIFT_CACHE" -c native/nextcloud/Local.m -o "$SWIFT_CACHE/nextcloud-local.o"
+xcrun swiftc -parse-as-library "${SWIFT_ARGS[@]}" -import-objc-header native/nextcloud/Local.h \
+    native/nextcloud/Core.swift native/nextcloud/main.swift "$SWIFT_CACHE/nextcloud-local.o" \
+    -framework FileProvider -o "$APP/Contents/MacOS/nextcloudctl"
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/nextcloudctl"
 xcrun swiftc "${SWIFT_ARGS[@]}" native/todoist/Core.swift native/todoist/Composer.swift native/todoist/main.swift -o "$APP/Contents/MacOS/todoistctl"
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/todoistctl"

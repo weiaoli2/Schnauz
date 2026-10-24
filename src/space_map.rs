@@ -1,5 +1,6 @@
 //! Explicit, cancellable folder-size scans and a squarified treemap.
 use std::{
+    collections::HashSet,
     fs,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -21,6 +22,8 @@ pub struct Tree {
     pub counts: Vec<usize>,
     pub unreadable: usize,
     pub limited: bool,
+    pub skipped_volumes: usize,
+    pub capacity: Option<(u64, u64)>,
 }
 #[derive(Default, Clone, Copy)]
 pub struct Progress {
@@ -28,12 +31,33 @@ pub struct Progress {
     pub bytes: u64,
     pub unreadable: usize,
 }
-pub fn scan(root: &Path, cancel: &AtomicBool, mut report: impl FnMut(Progress)) -> Option<Tree> {
+pub fn scan(root: &Path, cancel: &AtomicBool, report: impl FnMut(Progress)) -> Option<Tree> {
+    scan_with_limit(root, cancel, report, MAX_NODES)
+}
+
+fn scan_with_limit(
+    root: &Path,
+    cancel: &AtomicBool,
+    mut report: impl FnMut(Progress),
+    max_nodes: usize,
+) -> Option<Tree> {
+    // Resolve an explicitly chosen volume alias (e.g. /Volumes/Macintosh HD).
+    // Links encountered inside the scan are still never followed.
+    let resolved = fs::canonicalize(root).ok()?;
+    let root = resolved.as_path();
     let root_meta = fs::symlink_metadata(root).ok()?;
     if !root_meta.is_dir() {
         return None;
     }
     let device = root_meta.dev();
+    // The boot namespace crosses APFS firmlinks into its paired Data volume.
+    // Other mounts must remain outside this explicit scan.
+    let boot_data = if root == Path::new("/") {
+        fs::metadata("/System/Volumes/Data").ok().map(|m| m.dev())
+    } else {
+        None
+    };
+    let mut directories = HashSet::from([(device, root_meta.ino())]);
     let mut tree = Tree {
         nodes: vec![Node {
             path: root.into(),
@@ -45,6 +69,8 @@ pub fn scan(root: &Path, cancel: &AtomicBool, mut report: impl FnMut(Progress)) 
         counts: Vec::new(),
         unreadable: 0,
         limited: false,
+        skipped_volumes: 0,
+        capacity: volume_capacity(root),
     };
     let mut stack = vec![0];
     let mut progress = Progress::default();
@@ -64,7 +90,7 @@ pub fn scan(root: &Path, cancel: &AtomicBool, mut report: impl FnMut(Progress)) 
             if cancel.load(Ordering::Acquire) {
                 return None;
             }
-            if tree.nodes.len() >= MAX_NODES {
+            if tree.nodes.len() >= max_nodes {
                 tree.limited = true;
                 break 'walk;
             }
@@ -76,11 +102,19 @@ pub fn scan(root: &Path, cancel: &AtomicBool, mut report: impl FnMut(Progress)) 
                 progress.unreadable += 1;
                 continue;
             };
-            // Metadata only: no file reads/downloads, directory symlink traversal or other volumes.
-            if md.dev() != device {
+            // Data is already exposed through the merged boot namespace. Do not
+            // scan its backing mount again or include unrelated mounted volumes.
+            if boot_data.is_some() && entry.path() == Path::new("/System/Volumes/Data") {
+                continue;
+            }
+            if !allowed_device(md.dev(), device, boot_data) {
+                tree.skipped_volumes += 1;
                 continue;
             }
             let directory = md.is_dir();
+            if directory && !directories.insert((md.dev(), md.ino())) {
+                continue;
+            }
             if !directory && !md.is_file() && !md.file_type().is_symlink() {
                 continue;
             }
@@ -130,6 +164,26 @@ pub fn scan(root: &Path, cancel: &AtomicBool, mut report: impl FnMut(Progress)) 
     tree.unreadable = progress.unreadable;
     report(progress);
     Some(tree)
+}
+
+fn allowed_device(device: u64, root: u64, boot_data: Option<u64>) -> bool {
+    device == root || boot_data == Some(device)
+}
+
+// Capacity is filesystem metadata, not a recursive scan or a TCC access probe.
+fn volume_capacity(root: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(root.as_os_str().as_bytes()).ok()?;
+    let mut info = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    if unsafe { libc::statvfs(path.as_ptr(), info.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let info = unsafe { info.assume_init() };
+    let block = info.f_frsize as u64;
+    Some((
+        (info.f_blocks as u64).saturating_mul(block),
+        (info.f_bavail as u64).saturating_mul(block),
+    ))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -279,6 +333,36 @@ pub fn hit(tiles: &[Tile], x: f32, y: f32) -> Option<usize> {
 mod tests {
     use super::*;
     #[test]
+    fn boot_scope_includes_only_system_and_paired_data_device() {
+        assert!(allowed_device(1, 1, Some(2)));
+        assert!(allowed_device(2, 1, Some(2)));
+        assert!(!allowed_device(3, 1, Some(2)));
+        assert!(!allowed_device(2, 1, None));
+    }
+
+    #[test]
+    fn explicit_root_alias_and_safety_limit_have_honest_totals() {
+        let root = crate::tests::scratch("space-map-limit");
+        fs::write(root.join("a"), vec![0; 100]).unwrap();
+        fs::write(root.join("b"), vec![0; 200]).unwrap();
+        let alias = root.with_extension("alias");
+        std::os::unix::fs::symlink(&root, &alias).unwrap();
+        let cancel = AtomicBool::new(false);
+        let complete = scan(&alias, &cancel, |_| {}).unwrap();
+        assert_eq!(complete.nodes[0].bytes, 300);
+        assert!(!complete.limited);
+        assert!(complete
+            .capacity
+            .is_some_and(|(total, free)| total > 0 && free <= total));
+        let partial = scan_with_limit(&root, &cancel, |_| {}, 2).unwrap();
+        assert!(partial.limited);
+        assert_eq!(partial.nodes.len(), 2);
+        assert_eq!(partial.counts[0], 1);
+        assert_eq!(partial.nodes[0].bytes, partial.nodes[1].bytes);
+        fs::remove_file(alias).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn scans_exact_sizes_hidden_files_and_cancels_without_following_links() {
         let root = crate::tests::scratch("space-map");
         fs::create_dir_all(root.join("inside")).unwrap();
@@ -334,6 +418,8 @@ mod tests {
             counts: vec![2, 1, 1, 0],
             unreadable: 0,
             limited: false,
+            skipped_volumes: 0,
+            capacity: None,
         };
         let tiles = layout(
             &tree,

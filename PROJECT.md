@@ -1,6 +1,6 @@
 # Schnauz
 
-Last updated: 2026-10-23
+Last updated: 2026-10-24
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -46,7 +46,15 @@ Rust stable and Xcode; the current development Mac is Apple Silicon (M4 Pro).
 ./build.sh                              # Optimized app bundle, locally signed
 SCHNAUZ_BUILD_PROFILE=debug ./build.sh    # Faster development build
 ./test.sh                               # Existing regression suite
+./update.sh                             # Apply the latest locally staged build after quitting
 ```
+
+`update.sh` applies the latest signed build already staged by `build.sh`, using
+the existing safe installer. It never quits or launches Schnauz, downloads a
+GitHub release or rebuilds source. While Schnauz is running, installation stays
+deferred so terminal sessions remain intact. Run it again after deliberately
+quitting the app, then open the normal Schnauz.app. If no build is staged, prepare
+one with `./build.sh` first.
 
 The scripts source `dev-env.sh` and reuse the ignored `.build-cache/` directory
 inside the checkout for the local Cargo registry and build cache.
@@ -240,7 +248,7 @@ is implemented: Settings → General → Connections links a local folder throug
 browser login, with its own credential in Keychain. Nextcloud menus offer sharing,
 internal links and server-supported file locks. Nonsecret mappings are centralized
 in `nextcloud.json`; no browsing-time network requests. Local automatic-space
-policy still uses an explicitly labeled Finder handoff. Native offline protocol
+policy uses a direct checked provider bridge (see the local 0.9.0 notes). Native offline protocol
 tests run with `./test.sh`; actual account login/server interoperability awaits
 Oliver's manual test. Do not contact his live server for automated verification.
 Local terminal directory changes are allowed only
@@ -1391,3 +1399,322 @@ PID 32977 is still running. Its installed bundle/executable inodes and SHA-256
 are unchanged; no restart, privacy change or terminal/SSH input occurred. Applying
 that update remains a deliberate after-quit action. This publication request is
 complete; preserve every existing tag/asset. Future publication needs a new request.
+
+
+## Local 0.8.10 — blue project bar
+
+Oliver requested a clearer separation of projects from Search/file tabs. The
+project row now has a full-width CHROME_HIGHLIGHT (#3478c5) background including
+its existing 8 pt top/bottom clearance. The selected chip retains its blue fill
+and white text, with a white 1 pt border. Inactive chips retain their themed
+neutral appearance. Header height, chip geometry, scrolling and switching remain
+as before. Local test stand only; no commit, release or live session restart.
+
+0.8.10 validation: ./test-ui.sh passed outside the sandbox, including unchanged
+8 pt symmetric spacing, native project switching and preserved owned terminal
+PID. The optimized candidate reports 0.8.10 and passed bundle allowlist and
+deep/strict certificate signature verification. Packaging deferred it while
+PID 32977 remains active; the installed bundle/executable inodes and SHA-256
+are unchanged. Receipt: .build-cache/blue-project-bar-verification.json.
+Apply only after a deliberate quit. No commit or public release was made.
+
+
+## Local 0.8.11 — project-specific file type filters
+
+Oliver requested Filter: On / Off and Modify… beside Show All/Folders/Files.
+Each project and Personal now persists an independent literal file-ending list
+and enabled flag in projects.json. Example: .blend1,.bak. Matching ignores case,
+accepts optional dots, *.bak shorthand and compound endings, normalizes duplicates,
+and validates limits/unsupported patterns. Off preserves the list. Existing
+profiles default to Off; directories stay visible and files are never changed.
+Rules apply in List/Icons, current-folder filtering, recursive filename/content
+search and loaded remote listings. Synchronize tabs, parked projects and other
+browser windows in memory without network requests or terminal replacement.
+Narrow panes scroll the control row horizontally. Native Modify supports normal
+Mac text-edit shortcuts, Save/Cancel, visible validation/save failures and a
+captured project target even if another window switches projects. Persistence
+must succeed before any visibility change. Includes the local 0.8.10 blue bar.
+
+Validation: ./test.sh -- --test-threads=1 passed 110 application tests,
+62 terminal tests, five installer lifecycle tests, native offline fixtures and
+the complete hidden-window suite. New checks cover literal/case-insensitive
+rules, legacy storage defaults and project isolation, list/icon selection and
+reload, recursive name/content search, real On/Off clicks, native Modify
+Save/Cancel and Cmd+A, captured-project editing, persistence failure and
+cross-window propagation. Owned tab/PTY/PID and disposable fixture files remain
+unchanged. No commit, publication or live session restart is authorized by this
+feature request.
+
+The optimized 0.8.11 candidate passed the bundle allowlist, version check and
+codesign --verify --deep --strict. It is staged as the pending update while
+PID 32977 stays active. Installed bundle/executable inodes and SHA-256 are
+identical before/after; no live session was restarted. Receipt:
+.build-cache/project-file-filter-verification.json. After a deliberate quit:
+
+    python3 scripts/install_bundle.py /Users/oliw/CurrentProjects/Schnauz/Schnauz.app
+
+Then launch the normal Schnauz.app. No Git commit or publication was made.
+
+
+## Local 0.8.12 — seamless active file tab
+
+Oliver requested removal of the thin grey line beneath the active file tab.
+Tabs now have only top/side outlines. The selected tab extends over the strip's
+1 pt bottom divider using the content background; inactive tabs use the strip's
+divider instead of drawing a separate bottom edge. Preserve the strip height,
+tab top alignment, switching and existing project filter/blue-bar changes.
+./test-ui.sh passed outside the sandbox, including native tab dragging,
+switching, project filters and preserved owned terminal/PID. The optimized
+0.8.12 bundle passed the packaging allowlist, version and deep/strict certificate
+signature checks. It is staged as the pending update; PID 32977 and the installed
+bundle/executable inodes and SHA-256 are unchanged. Receipt:
+.build-cache/tab-seam-verification.json. Apply with the same deliberate after-quit
+installer command as 0.8.11. No commit/publication or live app restart occurred.
+
+
+## Local 0.8.13 — lighter native toolbar icons
+
+Oliver requested modern action icons in the path toolbar while retaining the
+view icons, with finer strokes throughout. Folder/file creation, Share,
+Favourites (bookmark), Trash, network globe, Eye/Eye Off and Search now use
+native macOS SF Symbols in Light weight. Existing List/Grid/Columns and other
+vector silhouettes stay intact, with stroke width reduced from 1.5 to 1.2 on
+the 20-unit grid. Native Share/pin symbols use the same lighter weight. Keep
+button geometry, ordering, tooltips, selected/disabled colouring and all actions.
+The symbol cache now holds 128 variants for the broader icon set; vector
+fallbacks remain available. QA preview: .build-cache/toolbar-icons-preview.png.
+./test-ui.sh passed with isolated native windows, including toolbar drag/order,
+New Text File, Share symbol decoding and existing project-filter regressions.
+All nine requested SF Symbols resolved successfully; the light/dark contact
+sheet was visually checked. Optimized 0.8.13 passed bundle allowlist, version and
+deep/strict certificate signature checks. It is staged pending a deliberate quit;
+PID 32977 and installed bundle/executable inodes and SHA-256 remain unchanged.
+Receipt: .build-cache/toolbar-icons-verification.json. Apply with the same
+after-quit installer command as 0.8.11. No release, commit or live-session restart.
+
+## Local 0.8.14 — startup-disk Disk Usage scope and totals
+
+Oliver reported Macintosh HD stopping around 50 GB despite a roughly 500 GB
+drive. The scanner previously rejected every device other than the root device,
+which excludes the paired APFS Data volume from a boot-root scan. Explicit `/`
+scans now allow that Data device through the merged macOS namespace, skip its
+duplicate backing mount and deduplicate directories by device/inode. Unrelated
+mounts and internal symlinks remain excluded. Explicitly selected root aliases
+are resolved before scanning; normal browsing still never triggers a scan.
+
+The panel separates logical scanned file bytes from filesystem-reported capacity
+and available space. Read errors, excluded mounts and the existing 500,000-item
+safety limit are visible above the map with explicit partial/scope details.
+Snapshots, filesystem overhead and inaccessible files are not invented as tiles;
+the mapped sum is not a promise to match physical disk usage or drive capacity.
+Verification uses disposable folders, not a scan of Oliver's startup disk.
+
+Validation: `./test.sh` passed 112 application tests, 62 terminal tests, five
+installer tests, offline native fixtures and the isolated native UI suite.
+Optimized 0.8.14 passed the bundle allowlist, `--version` and deep/strict signing
+verification. It is staged for `./update.sh` after a deliberate quit; the running
+app and all live terminals remain untouched. Logs: `.build-cache/disk-usage-tests.log`
+and `.build-cache/disk-usage-build.log`. No commit or publication requested.
+
+## Local 0.8.15 — audio playback in Preview
+
+Audio selections now route through the existing embedded AVKit player alongside
+video. The native inline controls occupy a compact 88 pt viewport with seeking
+and sound controls; the preview header retains Play/Pause and Mute. Audio starts
+paused and unmuted, video remains paused/muted. Selection changes, Preview close
+and native-modal blocking stop/pause playback using the existing session lifecycle.
+Recognized music extensions include MP3, M4A/AAC, WAV, FLAC, AIFF and CAF; actual
+decoding follows macOS and rejected/corrupt files show an audio-specific error.
+Remote SSH files retain the existing local-media restriction.
+
+QA generates silent disposable WAV and AAC fixtures; player integration checks
+silently exercise initial state, playback, mute, modal pause and cleanup. The real
+isolated GPUI preview check also selects AAC and verifies native attachment,
+compact height, paused/unmuted state and removal after changing selection.
+
+Validation: `./test.sh` passed 113 application tests, 62 terminal tests, native
+offline fixtures and isolated native UI checks, including WAV/AAC playback and
+actual audio preview attachment/cleanup. Optimized 0.8.15 passed the bundle
+allowlist, version and deep/strict certificate checks; it is staged for
+`./update.sh` after a deliberate quit. No live app/session was restarted.
+Logs: `.build-cache/audio-preview-tests.log`, `.build-cache/audio-preview-build.log`.
+
+## Local 0.8.16 — compact document-preview margins
+
+Oliver approved reducing PDF/document preview padding from 16 pt outer + 8 pt
+inner to 6 pt outer + 2 pt inner on every side. Available image width now deducts
+17 pt (both insets plus the divider), and Information width deducts 13 pt. Images
+and native media retain their existing edge-to-edge/compact layouts. The isolated
+native preview check measures a synthetic document's outer/inner offsets and
+available width alongside the existing picture/zoom/audio/video checks.
+
+Validation: `./test-ui.sh` passed with measured 6 pt outer/2 pt inner document
+padding, existing picture zoom, audio/video and native session regressions.
+Optimized 0.8.16 passed bundle allowlist, version and deep/strict signing checks;
+staged for `./update.sh` after a deliberate quit. No live sessions were restarted.
+Logs: `.build-cache/preview-margins-tests.log`, `.build-cache/preview-margins-build.log`.
+
+## Local 0.9.0 — Nextcloud menus, availability and mouse-editable Rename
+
+Oliver chose ordinary version 0.9.0 for this build; no publication requested.
+The Nextcloud sync-folder identity is separate from Schnauz's own optional
+server credential. Detected folders no longer offer “Connect this folder”.
+“Enable sharing in Schnauz…” explicitly enables Schnauz's server actions when
+no mapping exists. Connected menus retain Share options, browser/internal links
+and supported file locks; connection maintenance moves to Settings. Nextcloud's
+generic Sync Now entry is removed. Oliver rejected the Finder handoff; it has
+been removed entirely from Nextcloud menus. Persistent-offline policy now has
+a direct installed-provider bridge; real provider-action QA remains pending.
+Never import desktop credentials or fake provider actions.
+
+Cloud file badges now distinguish local data (green check) and online placeholders
+(blue cloud), with status tooltips and a provider-menu status row. Failed metadata
+is unknown, not downloaded; an available directory does not assert recursive
+offline availability. The bounded metadata cache is invalidated after operations.
+No folder scan is started merely to construct a menu or paint a badge.
+
+Selected-item context menus, local and SFTP, omit New Folder/Text File/File;
+creation remains on empty background and toolbar/menu actions. The separate
+Quick Look viewer, context entries and Space handlers are deleted. Embedded
+preview thumbnail generation is retained for PDF/document/image previews.
+
+Rename uses a clipped, measured text line with a visible caret, Unicode pointer
+positioning, drag/Shift/double-click selection and caret scrolling. The same
+editor serves List, Icons and search. Starting/dragging a rename clears file-drag
+candidates so text selection cannot start an OS file drag. Native QA exercises
+real AppKit clicks, Unicode drag and Shift selection, copying, and menu scope in
+all three views with disposable files; no live account/session is used.
+
+Validation: the full `./test.sh` passed 113 application tests, 62 terminal tests,
+offline native fixtures and isolated UI checks. The final `./test-ui.sh` also
+passed lost-mouse-up/hover recovery for Rename. Oliver authorized publication of
+0.9.0 on 2026-10-24 after reviewing changes since 0.8.9. GitHub issues #1 (direct
+persistent offline policy) and #2 (return to preserved search results) are not
+fully resolved and remain open; do not claim either fixed in the release notes.
+
+Oliver paused release preparation on 2026-10-24 while discussing the rejected
+Finder handoff. The release build/publication has not started. Continue the
+Nextcloud corrections locally; wait for his instruction to resume publication.
+
+
+### Direct Nextcloud provider bridge — 2026-10-24
+
+The reference client is Nextcloud Desktop 34.0.1, inspected on macOS 15.7.4.
+Older clients need not be supported. LaunchServices discovers the installed app;
+provider metadata supplies item/domain routing. No personal account/path, SwiftBar
+installation, ncstatus configuration or desktop credential is required.
+`native/nextcloud/Local.m` invokes Nextcloud's declared KeepDownloaded action via
+internal macOS File Provider interfaces with checked method signatures. The
+NSError-first completion contract was checked using an owned, unscheduled runtime
+operation on Apple Silicon and under Rosetta. This does not prove live pinning.
+Only verified nonlocal Nextcloud files/partly available folders offer the action;
+kept/downloading items are excluded. A fresh read precedes the write and a fresh
+policy check must confirm success. Unknown or unsupported metadata fails closed.
+
+`src/cloud_status.rs` and `src/nextcloud_local.rs` keep bounded metadata caches,
+deduplicated queues and dedicated background workers; no metadata I/O, placeholder
+reads, full provider dump or recursive scans occur in menu/render callbacks.
+Sharing mutations now distinguish confirmed writes from failed refreshes, retain
+old rows and require Refresh instead of replaying a successful write. Hidden
+AppKit fixtures exercise actual minimum-size light/dark controls and retry flow.
+The signed normal 0.9.0 build is staged; the running app remains untouched.
+Real provider metadata/action QA needs a specifically approved disposable object.
+Release and GitHub issue closure remain paused pending that check.
+
+Final automated verification for the provider bridge: `./test.sh` passed with
+123 application tests, 62 terminal tests, native protocol/local-policy fixtures,
+the actual hidden sharing window and the complete isolated GPUI/AppKit suite.
+The staged 0.9.0 bundle passed deep/strict signature verification and reports
+`Schnauz 0.9.0`. These checks do not replace the pending live provider-action QA.
+
+## Local 0.9.1 — Nextcloud metadata, trailing status and text-preview margins
+
+Oliver reported “Nextcloud local metadata is unavailable” for every item.
+A read-only helper request against the detected Nextcloud root reproduced the
+protocol error: `recursivelyDownloaded` was emitted as numeric `0`, because a C
+logical expression promotes BOOL operands to int. Rust correctly requires JSON
+Booleans. The native public-response boundary now normalizes numeric flag fields
+to JSON Booleans, retaining missing/malformed fields as invalid. An offline
+regression round-trips actual JSON and checks every flag's Boolean type for both
+0 and 1. No live pin/download action has been performed; issue #1 remains open.
+
+List and search rows show status at the right edge of the Name column, separately
+from the file icon. Online-only/partly downloaded folders use Schnauz blue
+#3478c5 and Apple's filled cloud symbol; downloaded content uses a green check,
+kept-offline content a green pin, in-progress work amber arrows and unavailable
+metadata a grey question mark. Tooltips explain the state. Icons view retains
+its corner badges. Hidden fixture checks passed right alignment and nonoverlap
+with long Unicode names at narrow/wide, reordered Name columns.
+
+Oliver's annotated screenshot showed text-preview spacing, which the earlier
+0.8.16 PDF/document-only margin change had missed. The native text branch now
+uses 6 pt outer padding, a 6 pt title gap, 2 pt native text insets and zero extra
+line-fragment padding. Text size, selection, copying and session reuse remain.
+The native text smoke check passed; the first full-window spacing assertion used
+the content probe rather than the outer preview frame and was corrected. That
+latest assertion has not been rerun.
+
+The Nextcloud/status changes passed the full suite (123 application tests,
+62 terminal tests, offline native fixtures and hidden GPUI checks) before the
+text-margin change. During this work Oliver reported crashes in his live 0.9.0;
+its local diagnostics contain SIGSEGV markers, without a stack or established
+cause. A separate sandboxed nextcloudctl diagnostic invocation also aborted.
+All test processes have ended. Oliver is actively using Schnauz as his terminal
+for this chat: current work is compile/sign/stage only, with no more native/UI
+tests, helper launches, live app interaction, restarts or bundle replacement.
+Keep the running bundle and all terminal/SSH sessions intact. No release requested.
+
+Optimized 0.9.1 compilation, bundle allowlist, helper architectures and deep/strict
+Apple Development signing checks passed. The safe installer deferred the update
+to `.build-cache/pending-apps/3ab6c3edb5d533a6/Schnauz.app`, preserving the live
+bundle. Apply with `./update.sh` only after Oliver deliberately quits. No new app
+or helper was launched during the rebuild. Logs:
+`.build-cache/nextcloud-boolean-build.log`, `.build-cache/nextcloud-boolean-tests.log`
+and `.build-cache/cloud-text-ui-tests.log` (the latter records the spacing-probe
+failure described above, not a passing final full-window check).
+
+## Local 0.9.2 — outline cloud and stable status refresh
+
+Oliver requested an outline cloud matching the pin's light native styling,
+retaining Schnauz blue #3478c5. Use Apple's `cloud` SF Symbol instead of
+`cloud.fill`; right-aligned Name-column placement and other status symbols stay.
+
+The reported pin-to-cloud flicker came from the five-second provider cache expiry:
+`nextcloud_local::read` replaced the whole entry with an empty pending entry and
+returned None until the helper replied, so rendering fell back to generic folder
+availability. Refresh now preserves the confirmed snapshot in place. Display
+retains it during background revalidation for at most 30 seconds; action/menu
+eligibility still requires metadata newer than five seconds, and provider writes
+still perform their own fresh validation. A completed failed refresh clears the
+snapshot and shows Unknown rather than misrepresenting provider policy as a cloud.
+Refreshing an existing entry no longer evicts another cached row at capacity.
+
+Two pure cache regressions cover display- and menu-initiated refresh, retained
+pin status, request deduplication, strict action freshness and bounded display
+grace. They were added but not run: Oliver is using Schnauz for this conversation,
+and current verification remains compile/sign/stage only. No native/UI test,
+helper invocation or live app interaction is authorized during this rebuild.
+
+Optimized 0.9.2 compiled successfully and passed the bundle allowlist,
+architecture and deep/strict certificate signature checks. The update is staged
+for `./update.sh` after a deliberate quit; the running bundle was preserved.
+Build log: `.build-cache/cloud-status-refresh-build.log`. No app/helper or test
+binary was launched as part of this change; live visual confirmation is pending.
+
+## Authorized 0.9.2 publication — 2026-10-25
+
+Oliver approved publishing the current build on GitHub, superseding the paused
+0.9.0 release preparation. Use the existing public repository, both signed DMGs,
+exact MPL source archive and checksums, as an unnotarized Apple Development early
+prerelease. Release notes cover changes since 0.8.9 and outstanding limitations.
+He is actively using Schnauz: no native/UI suite or release-binary/helper smoke
+launches during publication. Verify package contents, architectures, signatures,
+mounted installers, exact source and asset digests without launching apps. Preserve
+the installed bundle in place and compare fingerprints before/after.
+
+Current command-line Rust checks passed all 125 application tests, including
+both cache-refresh regressions. The first sandboxed attempt failed two existing
+Quick Action fixtures; the outside-sandbox rerun passed. Existing native/UI results
+remain historical, and the final text-layout assertion has not been rerun. Issues
+#1/#2 remain open; no claim of verified live Nextcloud pinning or resolved 0.9.0
+SIGSEGV crashes is authorized. Website/video production and test.csv stay local.

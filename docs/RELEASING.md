@@ -4,6 +4,39 @@ Official repository: https://github.com/weiaoli2/Schnauz (public).
 Current release: **v0.8.9**, public Apple Silicon + Intel early preview.
 Previous published release: **v0.8.1**.
 
+## Authorized release — 0.9.2
+
+On 2026-10-25 Oliver requested publishing the current 0.9.2 test build to GitHub.
+This supersedes the paused 0.9.0 preparation. Publish new public source and both
+signed architecture DMGs as an early prerelease; preserve all previous tags/assets.
+Include exact MPL sources, checksums, English changes since 0.8.9 and the homepage.
+Exclude website/video production and test.csv. Do not claim issues #1/#2 resolved.
+
+Oliver is using the live Schnauz terminal for this session. Preserve its executable
+and bundle in place, all windows/PTYs/SSH sessions and privacy attribution. This
+release's checks use command-line Rust tests and static architecture/signature,
+DMG/source/checksum checks. Do not rerun native/UI suites or launch either release
+binary/helper for smoke tests while he is working. Report that validation limit
+explicitly; earlier native/UI results are historical, not a fresh 0.9.2 smoke test.
+Direct Nextcloud pin-action QA and the cause of reported 0.9.0 SIGSEGVs remain
+unresolved. Apple Development signed, not notarized; no physical Intel validation.
+
+## Authorized release — 0.9.0
+
+On 2026-10-24 Oliver requested reviewing all changes since 0.8.9 and publishing
+0.9.0 with both architectures, plus triage of the two open GitHub issues.
+Preserve the existing early-prerelease policy, Apple Development / unnotarized
+disclosure, exact MPL sources, dependency notices and safe live-app staging.
+The release includes project-specific exclusion filters and blue project chrome,
+seamless active tabs, finer native icons, startup-disk inspection fixes, audio
+preview and compact document margins, Nextcloud menu/status cleanup and measured
+mouse editing for Rename. Exclude local website/video production and test.csv.
+Issues #1 and #2 remain open: direct persistent offline policy has an implemented
+runtime-checked bridge but awaits real provider QA; returning to preserved search
+results after Show in Folder is not implemented. Oliver paused
+release preparation to correct Nextcloud behavior; its rejected Finder handoff
+has been removed. Do not resume publication until he requests it.
+
 ## Published release — 0.8.9
 
 Published 2026-10-23 at https://github.com/weiaoli2/Schnauz/releases/tag/v0.8.9,

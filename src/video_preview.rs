@@ -1,4 +1,4 @@
-//! Native, initially muted AVKit playback in the file preview.
+//! Native AVKit media preview. Paused initially; videos also start muted.
 use super::*;
 use crate::native_preview::frames;
 use objc2::{class, msg_send, rc::Retained};
@@ -34,6 +34,28 @@ pub(super) fn is_video(path: &Path) -> bool {
                 | "m2ts"
         )
     })
+}
+pub(super) fn is_audio(path: &Path) -> bool {
+    path.extension().is_some_and(|e| {
+        matches!(
+            e.to_string_lossy().to_ascii_lowercase().as_str(),
+            "mp3"
+                | "wav"
+                | "flac"
+                | "aac"
+                | "m4a"
+                | "m4b"
+                | "aiff"
+                | "aif"
+                | "aifc"
+                | "caf"
+                | "ogg"
+                | "opus"
+        )
+    })
+}
+pub(super) fn is_media(path: &Path) -> bool {
+    is_video(path) || is_audio(path)
 }
 pub(super) fn is_picture(path: &Path) -> bool {
     path.extension().is_some_and(|e| {
@@ -90,16 +112,33 @@ impl Session {
         assert!(!self.clip.isHidden(),"Native video must be visible before metadata finishes: state {:?}, active {}, blocked {}, frame {:?}",self.state.get(),self.active.get(),self.blocked.get(),self.clip.frame());
         let frame = self.view.frame();
         assert!(
-            frame.size.width > 200. && frame.size.height > 100.,
-            "Native video needs a real viewport: {frame:?}"
+            frame.size.width > 200.
+                && frame.size.height > if is_audio(&self.path) { 60. } else { 100. },
+            "Native media needs a real viewport: {frame:?}"
         );
         assert!(
             unsafe { self.clip.superview() }.is_some(),
             "Player must attach to the actual GPUI view"
         );
+        if is_audio(&self.path) {
+            assert!(frame.size.height <= 90., "Audio controls stay compact");
+            assert!(
+                !self.state.get().playing && !self.state.get().muted,
+                "Audio starts paused with sound enabled for an explicit Play click"
+            );
+        }
+    }
+    #[cfg(feature = "ui-checks")]
+    pub(super) fn check_deactivated(&self) {
+        assert!(!self.active.get());
+        assert!(self.clip.isHidden());
+        assert!(unsafe { self.clip.superview() }.is_none());
+        let rate: f32 = unsafe { msg_send![&*self.player, rate] };
+        assert_eq!(rate, 0.);
     }
     fn new(path: PathBuf) -> Option<Rc<Self>> {
         let mtm = objc2::MainThreadMarker::new()?;
+        let muted = !is_audio(&path);
         let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
         // The selectors and ABI types below come directly from the AVKit and
         // AVFoundation SDK headers. AVPlayer loads local media asynchronously.
@@ -111,7 +150,7 @@ impl Session {
             let item: Retained<objc2::runtime::AnyObject> = msg_send![class!(AVPlayerItem), playerItemWithAsset: &*asset, automaticallyLoadedAssetKeys: &*keys];
             let player: Retained<objc2::runtime::AnyObject> =
                 msg_send![class!(AVPlayer), playerWithPlayerItem: &*item];
-            let _: () = msg_send![&*player, setMuted: true];
+            let _: () = msg_send![&*player, setMuted: muted];
             let view: Retained<PlayerView> = msg_send![PlayerView::alloc(mtm), initWithFrame: NSRect::new(NSPoint::new(0., 0.), NSSize::new(320., 180.))];
             let _: () = msg_send![&*view, setPlayer: &*player];
             let _: () = msg_send![&*view, setControlsStyle: 1_isize]; // Inline.
@@ -140,7 +179,7 @@ impl Session {
                 state: Cell::new(Snapshot {
                     aspect: 16. / 9.,
                     dimensions: None,
-                    muted: true,
+                    muted,
                     playing: false,
                     ready: false,
                     failed: false,
@@ -256,7 +295,7 @@ impl Schnauz {
         let wanted = (prefs().preview && tab.remote.is_none() && tab.selection.len() == 1)
             .then(|| tab.selection.iter().next().cloned())
             .flatten()
-            .filter(|p| is_video(p));
+            .filter(|p| is_media(p));
         if self.video_preview.as_ref().map(|s| &s.path) != wanted.as_ref() {
             if let Some(old) = self.video_preview.take() {
                 old.deactivate();
@@ -301,7 +340,12 @@ impl Schnauz {
         let t = theme();
         let width = preview_panel::preview_width(self, self.panes.len() - 1).max(1.);
         let content_width = (width - 1.).max(1.);
-        let height = (content_width / state.aspect).max(40.);
+        let audio = is_audio(&session.path);
+        let height = if audio {
+            88.
+        } else {
+            (content_width / state.aspect).max(40.)
+        };
         let information = prefs().info.then(|| {
             native_preview::information(
                 &session.path,
@@ -320,16 +364,16 @@ impl Schnauz {
                     .child(if state.playing { "Pause" } else { "Play" })
                     .on_click(move |_, _, cx| { play.toggle_play(); let _ = owner.update(cx, |_, cx| cx.notify()); }))
                 .child(div().id("preview-video-mute").px_2().py_1().rounded_md().cursor_pointer()
-                    .text_color(rgb(t.accent)).tooltip(tip("Videos start muted. Click to change sound."))
+                    .text_color(rgb(t.accent)).tooltip(tip(if audio { "Mute or unmute audio." } else { "Videos start muted. Click to change sound." }))
                     .child(if state.muted { "Unmute" } else { "Mute" })
                     .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| { mute.toggle_mute(); cx.notify(); }))))
             .child(if state.failed {
                 div().flex_1().min_h_0().flex().items_center().justify_center().p_4()
-                    .child("This video format cannot be played by macOS. Double-click the file to open it in another app.").into_any_element()
+                    .child(if audio { "This audio file cannot be played by macOS. Double-click the file to open it in another app." } else { "This video format cannot be played by macOS. Double-click the file to open it in another app." }).into_any_element()
             } else {
                 div().id("video-preview-scroll").w(px(content_width)).flex_1().min_h_0().overflow_y_scroll()
                     .child(div().w(px(content_width)).flex_none().flex().flex_col().gap_3()
-                        .when(!state.ready,|d|d.child(div().w(px(content_width)).px_3().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_dim)).child("Loading video…")))
+                        .when(!state.ready,|d|d.child(div().w(px(content_width)).px_3().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_dim)).child(if audio { "Loading audio…" } else { "Loading video…" })))
                         .child(gpui::canvas(|bounds, _, _| bounds, move |_, bounds, window, _| session.paint(bounds, window))
                             .flex_none().w(px(content_width)).h(px(height)))
                         .children(information))
@@ -346,10 +390,15 @@ pub(super) fn smoke_test(path: PathBuf) -> Result<String, String> {
     if toolbar_icons::apple_share(rgb(0x334455)).is_none() {
         return Err("Apple Share symbol failed to render".into());
     }
+    let audio = is_audio(&path);
     let session = Session::new(path).ok_or("Cannot create the native player")?;
     session.refresh();
-    if !session.state.get().muted || session.state.get().playing {
-        return Err("Player must start paused and muted".into());
+    if session.state.get().muted == audio || session.state.get().playing {
+        return Err("Player must start paused, audio audible and video muted".into());
+    }
+    // Integration checks are always silent, including audio's unmuted default.
+    unsafe {
+        let _: () = msg_send![&*session.player, setVolume: 0_f32];
     }
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(8) {
@@ -362,20 +411,27 @@ pub(super) fn smoke_test(path: PathBuf) -> Result<String, String> {
             session.toggle_play();
             NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.15));
             session.refresh();
-            if !session.state.get().playing || !session.state.get().muted {
-                return Err("Muted playback failed".into());
+            if !session.state.get().playing || session.state.get().muted == audio {
+                return Err("Playback or initial mute state failed".into());
             }
             session.toggle_mute();
-            if session.state.get().muted {
-                return Err("Unmute failed".into());
+            if session.state.get().muted != audio {
+                return Err("Mute toggle failed".into());
             }
             session.toggle_mute();
+            session.block(true);
+            session.refresh();
+            if session.state.get().playing {
+                return Err("Modal blocking did not pause playback".into());
+            }
+            session.block(false);
+            session.toggle_play();
             session.deactivate();
             let rate: f32 = unsafe { msg_send![&*session.player, rate] };
             if rate != 0. {
                 return Err("Leaving the preview did not stop playback".into());
             }
-            return Ok(format!("Apple Share symbol rendered; AVKit: ready, paused/muted by default, playback/unmute/cleanup passed · aspect {:.3}", session.state.get().aspect));
+            return Ok(format!("Apple Share symbol rendered; AVKit {}: ready, paused by default, initial sound state, playback/mute/modal pause/cleanup passed · aspect {:.3}", if audio { "audio" } else { "video" }, session.state.get().aspect));
         }
     }
     Err("Media did not become ready".into())
@@ -384,6 +440,26 @@ pub(super) fn smoke_test(path: PathBuf) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn audio_files_route_to_media_without_changing_video_or_text() {
+        for name in [
+            "song.MP3",
+            "song.m4a",
+            "song.wav",
+            "song.flac",
+            "song.aiff",
+            "song.caf",
+            "book.m4b",
+            "song.opus",
+        ] {
+            assert!(is_audio(Path::new(name)));
+            assert!(is_media(Path::new(name)));
+            assert!(!is_video(Path::new(name)));
+        }
+        assert!(is_media(Path::new("clip.mp4")));
+        assert!(!is_audio(Path::new("clip.mp4")));
+        assert!(!is_media(Path::new("notes.txt")));
+    }
     #[test]
     fn clipped_video_retains_full_width_and_never_covers_headers() {
         let full = Bounds::new(point(px(600.), px(100.)), size(px(400.), px(800.)));

@@ -293,7 +293,7 @@ impl Schnauz {
                     .text_size(px(11.))
                     .text_color(rgb(t.text_muted))
                     .child(format!(
-                        "{} · {} {}",
+                        "Scanned files: {} · {} {}",
                         format_size(false, tree.nodes[root].bytes),
                         tree.counts[root],
                         if tree.counts[root] == 1 {
@@ -303,9 +303,31 @@ impl Schnauz {
                         }
                     )),
             );
+            if let Some((total, available)) = tree.capacity {
+                panel = panel.child(div().flex_none().px_3().pb_2().text_size(px(11.))
+                    .text_color(rgb(t.text_muted)).child(format!(
+                        "Volume capacity: {} · available: {}",
+                        format_size(false, total), format_size(false, available)
+                    )));
+            }
+            if tree.unreadable > 0 || tree.limited || tree.skipped_volumes > 0 {
+                let mut details = Vec::new();
+                if tree.limited {
+                    details.push(format!("{}-item safety limit reached; scan a smaller folder", space_map::MAX_NODES));
+                }
+                if tree.unreadable > 0 {
+                    details.push(format!("{} entries could not be read", tree.unreadable));
+                }
+                if tree.skipped_volumes > 0 {
+                    details.push(format!("{} entries on other volumes excluded", tree.skipped_volumes));
+                }
+                let label = if tree.limited || tree.unreadable > 0 { "Partial map" } else { "Scan scope" };
+                panel = panel.child(div().flex_none().px_3().pb_2().text_size(px(11.))
+                    .text_color(rgb(t.text_muted)).child(format!("{label}: {}.", details.join("; "))));
+            }
             if tree.nodes[root].bytes == 0 {
                 panel = panel.child(div().flex_1().p_4().text_color(rgb(t.text_muted)).child(
-                    "No file data to display. This folder is empty or its files have zero size.",
+                    "No readable file data found. Check the scan details above for exclusions or read errors.",
                 ));
             } else {
                 let geometry = state.geometry.clone();
@@ -434,20 +456,6 @@ impl Schnauz {
                         ),
                 );
             }
-            if tree.unreadable > 0 || tree.limited {
-                panel = panel.child(
-                    div()
-                        .px_3()
-                        .py_1()
-                        .text_size(px(10.))
-                        .text_color(rgb(t.text_muted))
-                        .child(if tree.limited {
-                            "Partial map: inspect a smaller folder to see every item."
-                        } else {
-                            "Partial map: some folders could not be read."
-                        }),
-                );
-            }
             let node = &tree.nodes[state.hovered.or(state.selected).unwrap_or(root)];
             panel = panel.child(
                 div()
@@ -501,7 +509,7 @@ impl Schnauz {
                 .py_2()
                 .text_size(px(10.))
                 .text_color(rgb(t.text_dim))
-                .child("Area = file size · color = file type · includes hidden items"),
+                .child("Area = logical file size, not disk capacity · includes hidden items; snapshots and filesystem overhead are not mapped"),
         );
         Some(panel.into_any_element())
     }

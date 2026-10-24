@@ -12,6 +12,18 @@ mkdir -p "$NATIVE_TEST_DIR"
 xcrun swiftc -parse-as-library -module-cache-path "$NATIVE_TEST_DIR/modules" \
     native/nextcloud/Core.swift native/nextcloud/Tests.swift -o "$NATIVE_TEST_DIR/run"
 "$NATIVE_TEST_DIR/run"
+xcrun clang -fobjc-arc -fblocks -DSCHNAUZ_NEXTCLOUD_TESTS -fmodules-cache-path="$NATIVE_TEST_DIR/modules" \
+    -framework AppKit -framework FileProvider native/nextcloud/Local.m native/nextcloud/LocalTests.m \
+    -o "$NATIVE_TEST_DIR/local-run"
+"$NATIVE_TEST_DIR/local-run"
+xcrun clang -fobjc-arc -fblocks -fmodules-cache-path="$NATIVE_TEST_DIR/modules" \
+    -c native/nextcloud/Local.m -o "$NATIVE_TEST_DIR/local.o"
+xcrun swiftc -parse-as-library -D SCHNAUZ_NEXTCLOUD_UI_TESTS \
+    -module-cache-path "$NATIVE_TEST_DIR/modules" \
+    -import-objc-header native/nextcloud/Local.h \
+    native/nextcloud/Core.swift native/nextcloud/main.swift native/nextcloud/ShareUITests.swift \
+    "$NATIVE_TEST_DIR/local.o" -framework FileProvider -o "$NATIVE_TEST_DIR/share-ui-run"
+"$NATIVE_TEST_DIR/share-ui-run"
 TODOIST_TEST_DIR="${CARGO_TARGET_DIR:-target}/todoist-tests"
 mkdir -p "$TODOIST_TEST_DIR"
 xcrun swiftc -parse-as-library -module-cache-path "$TODOIST_TEST_DIR/modules" \

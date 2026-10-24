@@ -173,6 +173,8 @@ pub(crate) struct WebLink {
 /// Nonsecret project shortcuts and account routing. Connections remain in Settings.
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub(crate) struct Sidebar {
+    #[serde(skip_serializing_if = "crate::project_file_filter::Rule::is_default")]
+    pub file_filter: crate::project_file_filter::Rule,
     pub shortcuts: Vec<Shortcut>,
     pub web_links: Vec<WebLink>,
     pub servers: Vec<SftpServer>,
@@ -299,6 +301,7 @@ impl<'de> Deserialize<'de> for Sidebar {
         #[derive(Default, Deserialize)]
         #[serde(default)]
         struct Stored {
+            file_filter: crate::project_file_filter::Rule,
             shortcuts: Vec<Shortcut>,
             web_links: Vec<WebLink>,
             locations: Vec<PathBuf>,
@@ -311,6 +314,7 @@ impl<'de> Deserialize<'de> for Sidebar {
         }
         let old = Stored::deserialize(deserializer)?;
         let mut sidebar = Self {
+            file_filter: old.file_filter,
             shortcuts: Vec::new(),
             web_links: old.web_links,
             servers: old.servers,

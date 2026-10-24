@@ -246,6 +246,32 @@ struct NCShare {
   }
 }
 
+// A write and the following list refresh are separate operations. In particular,
+// a successful POST must not become a failed/retryable POST when its GET fails.
+struct NCShareWorkflow {
+  private(set) var pending = false
+  private(set) var requiresRefresh = true
+  private(set) var changeConfirmed = false
+
+  var canChange: Bool { !pending && !requiresRefresh }
+  var canRefresh: Bool { !pending }
+
+  mutating func begin(changing: Bool) -> Bool {
+    guard !pending, !changing || !requiresRefresh else { return false }
+    pending = true
+    if changing {
+      // Also require a read after an uncertain write outcome, such as a lost
+      // network response. Never encourage blindly submitting the write again.
+      requiresRefresh = true
+      changeConfirmed = false
+    }
+    return true
+  }
+  mutating func confirmedChange() { changeConfirmed = true }
+  mutating func refreshed() { requiresRefresh = false }
+  mutating func finish() { pending = false }
+}
+
 final class NCClient {
   let account: NCAccount, password: String, transport: NCTransport
   let base: URL
