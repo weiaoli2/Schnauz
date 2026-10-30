@@ -237,8 +237,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   The direct offline bridge targets Nextcloud Desktop 34.0.1; older clients
   need not be supported. Discover installations/accounts per user; never depend
   on Oliver's paths, SwiftBar or ncstatus. Internal macOS File Provider selectors
-  require availability and ABI checks. Real provider-action QA remains pending;
-  do not advertise it as verified before the scoped live test. Omit Finder handoff.
+  require availability and ABI checks. Oliver confirmed live sharing/offline-provider QA on 2026-10-30;
+  these actions work in his actual workflow and issue #1 is resolved in 0.9.22. Omit Finder handoff.
   Never recursively scan a folder while constructing a cloud menu. Test Nextcloud
   with URLProtocol fixtures and temporary settings, not Oliver's live server or
   Keychain. `./test.sh` includes those native tests. Live login remains manual QA.
@@ -919,7 +919,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   show local file data with a green check, online placeholders with a blue cloud,
   and explicit unknown status on metadata failure. A materialized directory
   does not imply all descendants are offline. The direct keep-downloaded bridge is implemented with runtime checks,
-  but issue #1 remains open until real provider QA. Offer it only for verified
+  and Oliver confirmed live offline/sharing behavior on 2026-10-30;
+  issue #1 is resolved in published 0.9.22. Offer it only for verified
   nonlocal Nextcloud items, excluding kept/downloading items. Omit Finder handoff.
   Never import desktop credentials or scan descendants for a menu/status badge.
 
@@ -1003,3 +1004,11 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   staged; all live bundle files/windows/PTYs/SSH were preserved. Issues #1/#2
   received version-specific status comments and remain open for unfinished work.
   Request complete; future releases need a new request. Preserve all tags/assets.
+
+
+- Oliver confirmed the Nextcloud controls were already verified in live use,
+  including making files available offline where his Finder workflow fails.
+  Issue #1 is closed as completed in published 0.9.22; the earlier pending-QA
+  notes are superseded. Attribute this runtime evidence to Oliver's workflow,
+  not to automated tests. Issue #2's preserved-search-results return remains
+  unimplemented and open; ordinary recent-search recall is a separate feature.

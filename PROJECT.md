@@ -2408,3 +2408,15 @@ to 0.9.22, keeping both open because their full acceptance criteria remain unmet
 
 Publication and requested issue review are complete. Future publication needs a
 new request; preserve v0.9.22 and all earlier tags/assets and live sessions.
+
+
+## Nextcloud issue #1 — live verification confirmed
+
+Oliver clarified that sharing/offline controls were already verified during the
+cloud/icon work. He explicitly confirmed making files available offline works
+in Schnauz, including a case where Finder fails. This supersedes the pending
+provider-QA status above. Issue #1 is closed as completed in published 0.9.22,
+with a corrective explanation crediting his live verification. Release notes
+were updated accordingly; binaries, tag and asset checksums are unchanged.
+Issue #2 remains open because returning to preserved search results/selection
+after Show in Folder is not implemented; recent-search recall reruns a search.

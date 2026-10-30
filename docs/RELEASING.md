@@ -23,8 +23,10 @@ safely staged for deliberate after-quit application. No session was restarted.
 
 Receipts: dist/0.9.22/{LOCAL-,DRAFT-,RELEASE-}VERIFICATION.json,
 SOURCE-PREFLIGHT.json, NORMAL-LOCAL-BUILD.json and PUBLIC-RELEASE.json.
-Issues #1 and #2 were reviewed and received version-specific status comments;
-both remain open for their documented unfinished work. Publication is complete.
+Issues #1 and #2 were reviewed and received version-specific status comments.
+Oliver then confirmed live Nextcloud sharing/offline verification: issue #1 is
+closed as completed in 0.9.22 and its release notes are corrected. Issue #2
+remains open for preserved search-results return. Publication is complete.
 Future releases require a new request. Preserve this tag/assets and prior releases.
 
 ## Authorized release — 0.9.22 (2026-10-30)
