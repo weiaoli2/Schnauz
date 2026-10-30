@@ -2374,3 +2374,37 @@ binary launches or live account/hardware operations. Preserve the running app,
 all terminals and SSH, and all existing release tags/assets. Exclude website/,
 video/ and test.csv. Do not claim issues #1/#2 or the specific SSH/Codex redraw
 symptom resolved. The normal signed local 0.9.22 build is already safely staged.
+
+
+## Published 0.9.22 — 2026-10-30
+
+https://github.com/weiaoli2/Schnauz/releases/tag/v0.9.22
+
+Source 2538957e5d1842bc581be19bf1f130df2754e829. Published both signed DMGs,
+exact MPL component sources and SHA256SUMS.txt as an early prerelease, signed
+with the existing Apple Development certificate and not notarized. Notes cover
+all changes since public 0.8.9, including progressive Disk Usage, project filters,
+search history, audio previews, file-operation/persistence/worker improvements,
+immediate Devices notifications, Info/Eject controls and the .ai attribute-loop fix.
+
+Both architecture bundles and every helper passed static architecture/signature
+and allowlist checks. Read-only-mounted DMGs exactly match those apps and current
+installer notes/credits/licenses. All four GitHub asset digests match local files;
+all 1767 GitHub source-archive files match the tagged source. Public unauthenticated
+visibility and exact notes/digests were independently checked. Rust/ui-checks
+fixtures compiled; no app/helper/test binaries were executed, so no fresh runtime,
+UI/Rosetta/physical Intel or real account/hardware verification is claimed.
+Receipts and source preflight: dist/0.9.22. All 19 recorded installed live bundle
+file identities/hashes remained unchanged. Normal signed 0.9.22 is already staged
+for ./update.sh after a deliberate quit; no app/terminal/SSH session was restarted.
+
+Reviewed both open issues at Oliver's request. Added status explanations linked
+to 0.9.22, keeping both open because their full acceptance criteria remain unmet:
+- #1: sharing is implemented; the offline-policy bridge awaits live provider QA.
+  https://github.com/weiaoli2/Schnauz/issues/1#issuecomment-6512726005
+- #2: project search recall exists; returning to preserved results/selection after
+  Show in Folder remains unimplemented.
+  https://github.com/weiaoli2/Schnauz/issues/2#issuecomment-6512726403
+
+Publication and requested issue review are complete. Future publication needs a
+new request; preserve v0.9.22 and all earlier tags/assets and live sessions.

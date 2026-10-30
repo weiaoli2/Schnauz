@@ -992,3 +992,14 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   This supersedes the preview hold above. Use both verified signed architecture
   installers, exact MPL sources, checksums and English notes since 0.8.9.
   Retain compile/sign/package-only QA and preserve all live app/terminal sessions.
+
+
+- Published 0.9.22 on 2026-10-30, source 2538957, at
+  https://github.com/weiaoli2/Schnauz/releases/tag/v0.9.22. Both signed DMGs,
+  exact MPL sources, checksums, all four GitHub digests and all 1767 tagged
+  source-archive files verified. Compile/sign/package-only validation; no fresh
+  app/helper/test execution or Intel hardware test. Apple Development signed,
+  not notarized, early prerelease. Receipts: dist/0.9.22. Normal local 0.9.22 is
+  staged; all live bundle files/windows/PTYs/SSH were preserved. Issues #1/#2
+  received version-specific status comments and remain open for unfinished work.
+  Request complete; future releases need a new request. Preserve all tags/assets.

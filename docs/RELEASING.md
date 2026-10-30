@@ -1,8 +1,31 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Current release: **v0.8.9**, public Apple Silicon + Intel early preview.
-Previous published release: **v0.8.1**.
+Current release: **v0.9.22**, public Apple Silicon + Intel early preview.
+Previous published release: **v0.8.9**.
+
+## Published release — 0.9.22
+
+Published 2026-10-30 at https://github.com/weiaoli2/Schnauz/releases/tag/v0.9.22,
+source 2538957e5d1842bc581be19bf1f130df2754e829. Both signed architecture DMGs,
+exact MPL source ZIP and checksum asset match all four GitHub SHA-256 digests.
+Every executable architecture/signature and bundle allowlist passed. Read-only
+mounted installer contents match the verified apps, credits, licenses and current
+install notes. All 1767 GitHub source-archive files match the source tag; public
+unauthenticated visibility, notes and asset digests were checked after publication.
+
+Validation was compile/sign/package only under the live-session restriction:
+Rust/ui-checks fixtures compiled, but no app/helper/test binaries were executed.
+There was no new UI/Rosetta/physical Intel or live account/hardware QA. The release
+is an Apple Development-signed, unnotarized early prerelease. All 19 recorded live
+bundle file identities/hashes remained unchanged; normal local 0.9.22 remains
+safely staged for deliberate after-quit application. No session was restarted.
+
+Receipts: dist/0.9.22/{LOCAL-,DRAFT-,RELEASE-}VERIFICATION.json,
+SOURCE-PREFLIGHT.json, NORMAL-LOCAL-BUILD.json and PUBLIC-RELEASE.json.
+Issues #1 and #2 were reviewed and received version-specific status comments;
+both remain open for their documented unfinished work. Publication is complete.
+Future releases require a new request. Preserve this tag/assets and prior releases.
 
 ## Authorized release — 0.9.22 (2026-10-30)
 
