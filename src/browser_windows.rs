@@ -84,7 +84,7 @@ impl Schnauz {
             this.close_context_menu(cx);
             this.close_sidebar_menu(cx);
             window.focus(&this.focus);
-            if this.palette_open && this.file_search.inline {
+            if this.palette_open {
                 this.close_palette(cx);
             }
             if tab_folder.network.is_some() {this.active_pane=pane;this.open_network_favourite(tab_folder.clone(),false,false,cx);return;}
@@ -141,7 +141,7 @@ impl Schnauz {
         } else if changed_link {
             self.ensure_todoist(false, cx);
         }
-        if self.apply_project_file_filters() && self.palette_open && self.file_search.inline { self.refresh_file_search(cx); }
+        if self.apply_project_file_filters() && self.palette_open { self.refresh_file_search(cx); }
         cx.notify();
     }
 }

@@ -171,8 +171,18 @@ pub(crate) struct WebLink {
 }
 
 /// Nonsecret project shortcuts and account routing. Connections remain in Settings.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub(crate) struct RecentSearch {
+    pub query: String,
+    pub content: bool,
+    pub drive: bool,
+}
+
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub(crate) struct Sidebar {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub recent_searches: Vec<RecentSearch>,
     #[serde(skip_serializing_if = "crate::project_file_filter::Rule::is_default")]
     pub file_filter: crate::project_file_filter::Rule,
     pub shortcuts: Vec<Shortcut>,
@@ -184,6 +194,15 @@ pub(crate) struct Sidebar {
     pub todoist_create_request: Option<String>,
 }
 impl Sidebar {
+    pub fn remember_search(&mut self, mut search: RecentSearch) -> bool {
+        search.query = search.query.trim().to_string();
+        if search.query.is_empty() || self.recent_searches.first() == Some(&search) { return false; }
+        self.recent_searches.retain(|old| old != &search);
+        self.recent_searches.insert(0, search);
+        self.recent_searches.truncate(10);
+        true
+    }
+
     pub fn contains(&self, shortcut: &Shortcut) -> bool {
         shortcut.is_home() || self.shortcuts.iter().any(|s| s.same_place(shortcut))
     }
@@ -301,6 +320,7 @@ impl<'de> Deserialize<'de> for Sidebar {
         #[derive(Default, Deserialize)]
         #[serde(default)]
         struct Stored {
+            recent_searches: Vec<RecentSearch>,
             file_filter: crate::project_file_filter::Rule,
             shortcuts: Vec<Shortcut>,
             web_links: Vec<WebLink>,
@@ -314,6 +334,7 @@ impl<'de> Deserialize<'de> for Sidebar {
         }
         let old = Stored::deserialize(deserializer)?;
         let mut sidebar = Self {
+            recent_searches: Vec::new(),
             file_filter: old.file_filter,
             shortcuts: Vec::new(),
             web_links: old.web_links,
@@ -321,6 +342,9 @@ impl<'de> Deserialize<'de> for Sidebar {
             todoist: old.todoist,
             todoist_create_request: old.todoist_create_request,
         };
+        for search in old.recent_searches.into_iter().rev() {
+            sidebar.remember_search(search);
+        }
         for shortcut in old.shortcuts {
             sidebar.set_shortcut(shortcut, true);
         }
@@ -584,7 +608,7 @@ impl Library {
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let bytes = serde_json::to_vec_pretty(self)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        atomic_write(path, &bytes)
+        crate::persistence::write_now(path, &bytes)
     }
 }
 

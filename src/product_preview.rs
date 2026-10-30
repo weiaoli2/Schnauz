@@ -92,7 +92,6 @@ pub(super) fn run() {
         let mut p=prefs();p.file_access_intro_seen=true;p.sidebar_collapsed=false;p.preview=false;p.tools_width=350;
         set_active_prefs(p);cx.set_global(PrefsGlobal(p));
         cx.set_global(nextcloud::State::default());
-        cx.set_global(MenuStyleGlobal(MenuStyle::default()));
         cx.set_global(KeymapGlobal(Keymap::defaults()));
         cx.set_global(SftpServersGlobal(Vec::new(),None));
         cx.set_global(FolderViewsGlobal(Rc::new(RefCell::new(folder_views::Library::open(None)))));

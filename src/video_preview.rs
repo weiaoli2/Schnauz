@@ -247,7 +247,7 @@ impl Session {
             }
         }
     }
-    fn deactivate(&self) {
+    pub(super) fn deactivate(&self) {
         self.active.set(false);
         self.clip.setHidden(true);
         unsafe {
@@ -295,7 +295,7 @@ impl Schnauz {
         let wanted = (prefs().preview && tab.remote.is_none() && tab.selection.len() == 1)
             .then(|| tab.selection.iter().next().cloned())
             .flatten()
-            .filter(|p| is_media(p));
+            .filter(|p| is_media(p) && !volumes::is_ejecting(p,cx));
         if self.video_preview.as_ref().map(|s| &s.path) != wanted.as_ref() {
             if let Some(old) = self.video_preview.take() {
                 old.deactivate();
@@ -383,6 +383,7 @@ impl Schnauz {
 }
 
 /// Integration check used by --video-preview-test. No windows or profile writes.
+#[cfg(feature="ui-checks")]
 pub(super) fn smoke_test(path: PathBuf) -> Result<String, String> {
     use objc2_foundation::{NSDate, NSRunLoop};
     let mtm = objc2::MainThreadMarker::new().ok_or("Video must initialize on the main thread")?;

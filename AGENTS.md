@@ -922,3 +922,59 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   but issue #1 remains open until real provider QA. Offer it only for verified
   nonlocal Nextcloud items, excluding kept/downloading items. Omit Finder handoff.
   Never import desktop credentials or scan descendants for a menu/status badge.
+
+- Local 0.9.19 implements the approved Shuffle cleanup review. File copies and
+  moves use `src/file_transfer.rs`: private staging, exclusive destination
+  publication and cancellation during preparation. Never restore check-then-
+  overwrite moves or delete a destination the job did not create. A filesystem
+  without exclusive rename must report an error rather than silently clobber.
+- Folder constructors perform no reads. `reload_pane` loads both listing passes
+  on owned workers, with tab identity/generation checks and cancellation.
+  Parked terminal cwd updates mark listings dirty; load when their tab is shown.
+  `src/workers.rs` isolates blocking processes from GPUI's shared work pool;
+  cancellation/deadlines signal only the newly owned child, never a live SSH mux.
+- Session autosaves use `src/persistence.rs` for ordered background commits.
+  Explicit Library.save transactions share its generation order, and quit
+  flushes pending saves. Do not bypass it with a second projects.json writer.
+- The inherited Waterfall folder tree is retired, including its preference,
+  prefetch, cached directory polling and UI. Keep user-created sidebar groups
+  and every existing folder/reference. The floating command palette, its action
+  panel and unused MenuStyle/opacity state are also removed. Search has one
+  per-project history for its menu and keyboard, controlled by Search history;
+  retain old keybinding identifiers and read the old preference as a fallback,
+  but never import the shared palette_history.txt into individual projects.
+- Remote preview cache keys include server/account/port/alias plus path, separate
+  from local keys. Downloads use private, bounded temporary storage and literal
+  SFTP arguments; cancellation rejects stale results. Bound/serialize PDF source
+  reads as well as decoded caches. Never show a local text preview or local
+  Information metadata for an identically named SSH file.
+- `native/sftp/` and signed `sftpctl` handle native Keychain writes/reads with
+  private stdin/stdout. No passwords in argv, environment, files or logs. Retain
+  the read-only CLI fallback in legacy.rs for existing credentials created with
+  that client's access policy; never rewrite/delete them merely to migrate.
+  Password authentication sends an encoded private stdin line to the owned
+  expect helper. Live CLI diagnostics accepting credentials or running scripts
+  are removed; other diagnostics require ui-checks. Unknown options exit before
+  opening the app. Current verification remains compile/sign/stage only; do not
+  run test binaries, helpers, apps or live account operations during this chat.
+
+- Local 0.9.20 adds native Devices → right-click → Eject for eligible external
+  local volumes. volumectl.swift + native/volumes/Core.swift capture a persistent
+  identity plus kernel mount ID and revalidate against fresh mounted volumes
+  before NSWorkspace's normal unmount/eject operation. Never force unmount,
+  eject the startup disk, terminate jobs, unmount network shares or perform an
+  eject while opening/rendering a menu. Busy errors use the fixed footer.
+  Coordinate requests across windows, release related previews and refresh
+  Devices after completion. Preserve tabs' paths and live PTYs; an ejected
+  location shows an unavailable/reconnect message. Native/Rust eject fixtures
+  are compile-only under the current live-session restriction; no real drive
+  may be ejected for QA without a separate scoped user request.
+
+
+- Local 0.9.21: Devices listens to NSWorkspace mount/unmount/rename/wake events
+  as well as its 30-second capacity timer. Notification callbacks only wake
+  subscribers; listing stays on owned workers and coalesces overlapping requests.
+  Drive right-click always offers Info, using cached capacity/path without a
+  recursive scan. Show Eject and a native eject symbol only for eligible drives;
+  omit both and any cannot-eject placeholder otherwise. Eject button clicks never
+  navigate. Oliver requested continuing the public release with these changes.

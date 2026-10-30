@@ -71,10 +71,12 @@ cp THIRD_PARTY_NOTICES.txt "$APP/Contents/Resources/Licenses/THIRD_PARTY_NOTICES
 SWIFT_CACHE="$TARGET/swift-module-cache/$APP_ARCH"
 mkdir -p "$SWIFT_CACHE"
 SWIFT_ARGS=(-module-cache-path "$SWIFT_CACHE" -target "$APP_ARCH-apple-macosx14.0" -O)
-for helper in removebg cloudctl volumectl; do
+for helper in removebg cloudctl; do
     xcrun swiftc "${SWIFT_ARGS[@]}" "$helper.swift" -o "$APP/Contents/MacOS/$helper"
     codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/$helper"
 done
+xcrun swiftc -parse-as-library "${SWIFT_ARGS[@]}" native/volumes/Core.swift volumectl.swift -o "$APP/Contents/MacOS/volumectl"
+codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/volumectl"
 xcrun clang -fobjc-arc -fblocks -target "$APP_ARCH-apple-macosx14.0" -O2 \
     -fmodules-cache-path="$SWIFT_CACHE" -c native/nextcloud/Local.m -o "$SWIFT_CACHE/nextcloud-local.o"
 xcrun swiftc -parse-as-library "${SWIFT_ARGS[@]}" -import-objc-header native/nextcloud/Local.h \
@@ -87,6 +89,8 @@ xcrun swiftc -parse-as-library "${SWIFT_ARGS[@]}" native/weblinks/Form.swift nat
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/weblinkctl"
 xcrun swiftc -parse-as-library "${SWIFT_ARGS[@]}" native/network/Core.swift native/network/System.swift native/network/Form.swift native/network/main.swift -o "$APP/Contents/MacOS/networkctl"
 codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/networkctl"
+xcrun swiftc "${SWIFT_ARGS[@]}" native/sftp/Core.swift native/sftp/System.swift native/sftp/main.swift -o "$APP/Contents/MacOS/sftpctl"
+codesign --force --timestamp=none --sign "$SIGNING_IDENTITY" "$APP/Contents/MacOS/sftpctl"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

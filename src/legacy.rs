@@ -38,6 +38,23 @@ pub(super) fn script_environment(dir: &Path, paths: &str) -> [(&'static str, OsS
     ]
 }
 
+/// Read-only compatibility for credentials created by the former CLI client.
+/// Runs on an owned worker, never in rendering. Only nonsecret account/service
+/// names appear in argv; secret output is retained in memory and never logged.
+pub(super) fn read_sftp_password(account:&str)->Option<String> {
+    use std::{process::Command,sync::{Arc,atomic::AtomicBool},time::Duration};
+    for service in ["local.schnauz.sftp",SFTP_KEYCHAIN_SERVICE] {
+        let mut command=Command::new("/usr/bin/security");
+        command.args(["find-generic-password","-w","-s",service,"-a",account]);
+        let Ok(output)=crate::workers::command(command,Vec::new(),Duration::from_secs(15),Arc::new(AtomicBool::new(false))) else{continue;};
+        if output.status.success() {
+            let value=String::from_utf8(output.stdout).ok()?;
+            return Some(value.trim_end_matches(['\n','\r']).to_string());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

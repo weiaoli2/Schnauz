@@ -11,8 +11,8 @@ Cargo package authors are listed as supplied by each package.
 
 Unmodified MPL-2.0 sources (option-ext 0.2.0 and build tool cbindgen 0.28.0)
 are available at https://github.com/weiaoli2/Schnauz/tree/main/vendor/mpl-sources
-and in Schnauz-0.5.0-rc.1-MPL-sources.zip alongside the release downloads:
-https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.0-rc.1
+and exact source archives accompany the published release downloads:
+https://github.com/weiaoli2/Schnauz/releases
 
 ============================================================================
 adler2 2.0.1
@@ -2748,40 +2748,33 @@ Notice: src/polyfill/once_cell/LICENSE-MIT → TEXT-0245
 Notice: third_party/fiat/LICENSE → TEXT-0246
 
 ============================================================================
-ropey 1.6.1
-License: MIT
-Authors: Nathan Vegdahl <cessen@cessen.com>
-Source: https://github.com/cessen/ropey
-Notice: LICENSE.md → TEXT-0247
-
-============================================================================
 roxmltree 0.20.0
 License: MIT OR Apache-2.0
 Authors: Yevhenii Reizner <razrfalcon@gmail.com>
 Source: https://github.com/RazrFalcon/roxmltree
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0248
+Notice: LICENSE-MIT → TEXT-0247
 
 ============================================================================
 rust-embed 8.11.0
 License: MIT
 Authors: pyrossh
 Source: https://pyrossh.dev/repos/rust-embed
-Notice: LICENSE → TEXT-0249
+Notice: LICENSE → TEXT-0248
 
 ============================================================================
 rust-embed-impl 8.11.0
 License: MIT
 Authors: pyrossh
 Source: https://pyrossh.dev/repos/rust-embed
-Notice: license → TEXT-0249
+Notice: license → TEXT-0248
 
 ============================================================================
 rust-embed-utils 8.11.0
 License: MIT
 Authors: pyrossh
 Source: https://pyrossh.dev/repos/rust-embed
-Notice: license → TEXT-0249
+Notice: license → TEXT-0248
 
 ============================================================================
 rustc-hash 1.1.0
@@ -2796,7 +2789,7 @@ rustc-hash 2.1.2
 License: Apache-2.0 OR MIT
 Authors: The Rust Project Developers
 Source: https://github.com/rust-lang/rustc-hash
-Notice: LICENSE-APACHE → TEXT-0250
+Notice: LICENSE-APACHE → TEXT-0249
 Notice: LICENSE-MIT → TEXT-0107
 
 ============================================================================
@@ -2812,9 +2805,9 @@ rustix 0.38.44
 License: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 Authors: Dan Gohman <dev@sunfishcode.online>; Jakub Konka <kubkon@jakubkonka.com>
 Source: https://github.com/bytecodealliance/rustix
-Notice: COPYRIGHT → TEXT-0251
+Notice: COPYRIGHT → TEXT-0250
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-Apache-2.0_WITH_LLVM-exception → TEXT-0252
+Notice: LICENSE-Apache-2.0_WITH_LLVM-exception → TEXT-0251
 Notice: LICENSE-MIT → TEXT-0003
 
 ============================================================================
@@ -2822,9 +2815,9 @@ rustix 1.1.4
 License: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 Authors: Dan Gohman <dev@sunfishcode.online>; Jakub Konka <kubkon@jakubkonka.com>
 Source: https://github.com/bytecodealliance/rustix
-Notice: COPYRIGHT → TEXT-0251
+Notice: COPYRIGHT → TEXT-0250
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-Apache-2.0_WITH_LLVM-exception → TEXT-0252
+Notice: LICENSE-Apache-2.0_WITH_LLVM-exception → TEXT-0251
 Notice: LICENSE-MIT → TEXT-0003
 
 ============================================================================
@@ -2832,9 +2825,9 @@ rustix-openpty 0.2.0
 License: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 Authors: Dan Gohman <dev@sunfishcode.online>
 Source: https://github.com/sunfishcode/rustix-openpty
-Notice: COPYRIGHT → TEXT-0253
+Notice: COPYRIGHT → TEXT-0252
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-Apache-2.0_WITH_LLVM-exception → TEXT-0252
+Notice: LICENSE-Apache-2.0_WITH_LLVM-exception → TEXT-0251
 Notice: LICENSE-MIT → TEXT-0003
 
 ============================================================================
@@ -2851,7 +2844,7 @@ rustls-native-certs 0.8.4
 License: Apache-2.0 OR ISC OR MIT
 Authors: See supplied notices
 Source: https://github.com/rustls/rustls-native-certs
-Notice: LICENSE → TEXT-0254
+Notice: LICENSE → TEXT-0253
 Notice: LICENSE-APACHE → TEXT-0008
 Notice: LICENSE-ISC → TEXT-0138
 Notice: LICENSE-MIT → TEXT-0139
@@ -2861,7 +2854,7 @@ rustls-pemfile 2.2.0
 License: Apache-2.0 OR ISC OR MIT
 Authors: See supplied notices
 Source: https://github.com/rustls/pemfile
-Notice: LICENSE → TEXT-0255
+Notice: LICENSE → TEXT-0254
 Notice: LICENSE-APACHE → TEXT-0008
 Notice: LICENSE-ISC → TEXT-0138
 Notice: LICENSE-MIT → TEXT-0139
@@ -2871,15 +2864,15 @@ rustls-pki-types 1.14.1
 License: MIT OR Apache-2.0
 Authors: See supplied notices
 Source: https://github.com/rustls/pki-types
-Notice: LICENSE-APACHE → TEXT-0256
-Notice: LICENSE-MIT → TEXT-0257
+Notice: LICENSE-APACHE → TEXT-0255
+Notice: LICENSE-MIT → TEXT-0256
 
 ============================================================================
 rustls-webpki 0.103.13
 License: ISC
 Authors: See supplied notices
 Source: https://github.com/rustls/webpki
-Notice: LICENSE → TEXT-0258
+Notice: LICENSE → TEXT-0257
 
 ============================================================================
 rustversion 1.0.22
@@ -2894,8 +2887,8 @@ rustybuzz 0.20.1
 License: MIT
 Authors: Caleb Maclennan <caleb@alerque.com>; Laurenz Stampfl <laurenz.stampfl@gmail.com>; Yevhenii Reizner <razrfalcon@gmail.com>; خالد حسني (Khaled Hosny) <khaled@aliftype.com>
 Source: https://github.com/harfbuzz/rustybuzz
-Notice: LICENSE → TEXT-0259
-Notice: scripts/ms-use/COPYING → TEXT-0260
+Notice: LICENSE → TEXT-0258
+Notice: scripts/ms-use/COPYING → TEXT-0259
 
 ============================================================================
 ryu 1.0.23
@@ -2903,7 +2896,7 @@ License: Apache-2.0 OR BSL-1.0
 Authors: David Tolnay <dtolnay@gmail.com>
 Source: https://github.com/dtolnay/ryu
 Notice: LICENSE-APACHE → TEXT-0011
-Notice: LICENSE-BOOST → TEXT-0261
+Notice: LICENSE-BOOST → TEXT-0260
 
 ============================================================================
 same-file 1.0.6
@@ -2911,7 +2904,7 @@ License: Unlicense/MIT
 Authors: Andrew Gallant <jamslam@gmail.com>
 Source: https://github.com/BurntSushi/same-file
 Notice: COPYING → TEXT-0004
-Notice: LICENSE-MIT → TEXT-0262
+Notice: LICENSE-MIT → TEXT-0261
 Notice: UNLICENSE → TEXT-0006
 
 ============================================================================
@@ -2919,14 +2912,14 @@ schemars 1.2.1
 License: MIT
 Authors: Graham Esau <gesau@hotmail.co.uk>
 Source: https://github.com/GREsau/schemars
-Notice: LICENSE → TEXT-0263
+Notice: LICENSE → TEXT-0262
 
 ============================================================================
 schemars_derive 1.2.1
 License: MIT
 Authors: Graham Esau <gesau@hotmail.co.uk>
 Source: https://github.com/GREsau/schemars
-Notice: LICENSE → TEXT-0263
+Notice: LICENSE → TEXT-0262
 
 ============================================================================
 scopeguard 1.2.0
@@ -2934,7 +2927,7 @@ License: MIT OR Apache-2.0
 Authors: bluss
 Source: https://github.com/bluss/scopeguard
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0264
+Notice: LICENSE-MIT → TEXT-0263
 
 ============================================================================
 seahash 4.1.0
@@ -2942,7 +2935,7 @@ License: MIT
 Authors: ticki <ticki@users.noreply.github.com>; Tom Almeida <tom@tommoa.me>
 Source: https://gitlab.redox-os.org/redox-os/seahash
 Notice: vendor/licenses/supplemental/seahash-4.1.0/Declared-MIT.txt → TEXT-0034
-Notice: vendor/licenses/supplemental/seahash-4.1.0/Cargo-attribution-seahash.txt → TEXT-0265
+Notice: vendor/licenses/supplemental/seahash-4.1.0/Cargo-attribution-seahash.txt → TEXT-0264
 
 ============================================================================
 security-framework 3.7.0
@@ -2950,7 +2943,7 @@ License: MIT OR Apache-2.0
 Authors: Steven Fackler <sfackler@gmail.com>; Kornel <kornel@geekhood.net>
 Source: https://github.com/kornelski/rust-security-framework
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0266
+Notice: LICENSE-MIT → TEXT-0265
 
 ============================================================================
 security-framework-sys 2.17.0
@@ -2958,7 +2951,7 @@ License: MIT OR Apache-2.0
 Authors: Steven Fackler <sfackler@gmail.com>; Kornel <kornel@geekhood.net>
 Source: https://github.com/kornelski/rust-security-framework
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0266
+Notice: LICENSE-MIT → TEXT-0265
 
 ============================================================================
 semver 1.0.28
@@ -3006,7 +2999,7 @@ License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Source: https://github.com/KodrAus/serde_fmt.git
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0267
+Notice: LICENSE-MIT → TEXT-0266
 
 ============================================================================
 serde_json 1.0.150
@@ -3030,7 +3023,7 @@ License: MIT OR Apache-2.0
 Authors: See supplied notices
 Source: https://github.com/toml-rs/toml
 Notice: LICENSE-APACHE → TEXT-0066
-Notice: LICENSE-MIT → TEXT-0268
+Notice: LICENSE-MIT → TEXT-0267
 
 ============================================================================
 serde_urlencoded 0.7.1
@@ -3038,23 +3031,23 @@ License: MIT/Apache-2.0
 Authors: Anthony Ramine <n.oxyde@gmail.com>
 Source: https://github.com/nox/serde_urlencoded
 Notice: LICENSE-APACHE → TEXT-0011
-Notice: LICENSE-MIT → TEXT-0269
+Notice: LICENSE-MIT → TEXT-0268
 
 ============================================================================
 serial2 0.2.38
 License: BSD-2-Clause OR Apache-2.0
 Authors: See supplied notices
 Source: https://github.com/de-vri-es/serial2-rs
-Notice: LICENSE-APACHE → TEXT-0270
-Notice: LICENSE-BSD → TEXT-0271
+Notice: LICENSE-APACHE → TEXT-0269
+Notice: LICENSE-BSD → TEXT-0270
 
 ============================================================================
 sha1_smol 1.0.1
 License: BSD-3-Clause
 Authors: Armin Ronacher <armin.ronacher@active-4.com>
 Source: https://github.com/mitsuhiko/sha1-smol
-Notice: AUTHORS → TEXT-0272
-Notice: LICENSE → TEXT-0273
+Notice: AUTHORS → TEXT-0271
+Notice: LICENSE → TEXT-0272
 
 ============================================================================
 sha2 0.10.9
@@ -3062,31 +3055,31 @@ License: MIT OR Apache-2.0
 Authors: RustCrypto Developers
 Source: https://github.com/RustCrypto/hashes
 Notice: LICENSE-APACHE → TEXT-0039
-Notice: LICENSE-MIT → TEXT-0274
+Notice: LICENSE-MIT → TEXT-0273
 
 ============================================================================
 shell-words 1.1.1
 License: MIT/Apache-2.0
 Authors: Tomasz Miąsko <tomasz.miasko@gmail.com>
 Source: https://github.com/tmiasko/shell-words
-Notice: LICENSE-APACHE → TEXT-0275
-Notice: LICENSE-MIT → TEXT-0276
+Notice: LICENSE-APACHE → TEXT-0274
+Notice: LICENSE-MIT → TEXT-0275
 
 ============================================================================
 shlex 1.3.0
 License: MIT OR Apache-2.0
 Authors: comex <comexk@gmail.com>; Fenhl <fenhl@fenhl.net>; Adrian Taylor <adetaylor@chromium.org>; Alex Touchet <alextouchet@outlook.com>; Daniel Parks <dp+git@oxidized.org>; Garrett Berg <googberg@gmail.com>
 Source: https://github.com/comex/rust-shlex
-Notice: LICENSE-APACHE → TEXT-0277
-Notice: LICENSE-MIT → TEXT-0278
+Notice: LICENSE-APACHE → TEXT-0276
+Notice: LICENSE-MIT → TEXT-0277
 
 ============================================================================
 shlex 2.0.1
 License: MIT OR Apache-2.0
 Authors: comex <comexk@gmail.com>; Fenhl <fenhl@fenhl.net>; Adrian Taylor <adetaylor@chromium.org>; Alex Touchet <alextouchet@outlook.com>; Daniel Parks <dp+git@oxidized.org>; Garrett Berg <googberg@gmail.com>
 Source: https://github.com/comex/rust-shlex
-Notice: LICENSE-APACHE → TEXT-0277
-Notice: LICENSE-MIT → TEXT-0278
+Notice: LICENSE-APACHE → TEXT-0276
+Notice: LICENSE-MIT → TEXT-0277
 
 ============================================================================
 signal-hook 0.3.18
@@ -3094,7 +3087,7 @@ License: Apache-2.0/MIT
 Authors: Michal 'vorner' Vaner <vorner@vorner.cz>; Thomas Himmelstoss <thimm@posteo.de>
 Source: https://github.com/vorner/signal-hook
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0279
+Notice: LICENSE-MIT → TEXT-0278
 
 ============================================================================
 signal-hook-registry 1.4.8
@@ -3102,14 +3095,14 @@ License: MIT OR Apache-2.0
 Authors: Michal 'vorner' Vaner <vorner@vorner.cz>; Masaki Hara <ackie.h.gmai@gmail.com>
 Source: https://github.com/vorner/signal-hook
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0279
+Notice: LICENSE-MIT → TEXT-0278
 
 ============================================================================
 simd-adler32 0.3.9
 License: MIT
 Authors: Marvin Countryman <me@maar.vin>
 Source: https://github.com/mcountryman/simd-adler32
-Notice: LICENSE.md → TEXT-0280
+Notice: LICENSE.md → TEXT-0279
 
 ============================================================================
 simd_helpers 0.1.0
@@ -3117,37 +3110,37 @@ License: MIT
 Authors: Luca Barbato <lu_zero@gentoo.org>
 Source: https://github.com/lu-zero/simd_helpers
 Notice: vendor/licenses/supplemental/simd_helpers-0.1.0/Declared-MIT.txt → TEXT-0034
-Notice: vendor/licenses/supplemental/simd_helpers-0.1.0/Cargo-attribution-simd_helpers.txt → TEXT-0281
+Notice: vendor/licenses/supplemental/simd_helpers-0.1.0/Cargo-attribution-simd_helpers.txt → TEXT-0280
 
 ============================================================================
 simplecss 0.2.2
 License: Apache-2.0 OR MIT
 Authors: See supplied notices
 Source: https://github.com/linebender/simplecss
-Notice: AUTHORS → TEXT-0282
+Notice: AUTHORS → TEXT-0281
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0283
+Notice: LICENSE-MIT → TEXT-0282
 
 ============================================================================
 siphasher 1.0.3
 License: MIT/Apache-2.0
 Authors: Frank Denis <github@pureftpd.org>
 Source: https://github.com/jedisct1/rust-siphash
-Notice: COPYING → TEXT-0284
+Notice: COPYING → TEXT-0283
 
 ============================================================================
 slab 0.4.12
 License: MIT
 Authors: Carl Lerche <me@carllerche.com>
 Source: https://github.com/tokio-rs/slab
-Notice: LICENSE → TEXT-0285
+Notice: LICENSE → TEXT-0284
 
 ============================================================================
 slotmap 1.1.1
 License: Zlib
 Authors: Orson Peters <orsonpeters@gmail.com>
 Source: https://github.com/orlp/slotmap
-Notice: LICENSE → TEXT-0286
+Notice: LICENSE → TEXT-0285
 
 ============================================================================
 smallvec 1.15.2
@@ -3155,7 +3148,7 @@ License: MIT OR Apache-2.0
 Authors: The Servo Project Developers
 Source: https://github.com/servo/rust-smallvec
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0287
+Notice: LICENSE-MIT → TEXT-0286
 
 ============================================================================
 smol 2.0.2
@@ -3178,7 +3171,7 @@ spin 0.9.8
 License: MIT
 Authors: Mathijs van de Nes <git@mathijs.vd-nes.nl>; John Ericson <git@JohnEricson.me>; Joshua Barretto <joshua.s.barretto@gmail.com>
 Source: https://github.com/mvdnes/spin-rs.git
-Notice: LICENSE → TEXT-0288
+Notice: LICENSE → TEXT-0287
 
 ============================================================================
 spirv 0.3.0+sdk-1.3.268.0
@@ -3186,8 +3179,8 @@ License: Apache-2.0
 Authors: Lei Zhang <antiagainst@gmail.com>
 Source: https://github.com/gfx-rs/rspirv
 Notice: vendor/licenses/supplemental/spirv-0.3.0+sdk-1.3.268.0/LICENSE → TEXT-0059
-Notice: vendor/licenses/supplemental/spirv-0.3.0+sdk-1.3.268.0/Declared-Apache-2.0.txt → TEXT-0289
-Notice: vendor/licenses/supplemental/spirv-0.3.0+sdk-1.3.268.0/Cargo-attribution-spirv.txt → TEXT-0290
+Notice: vendor/licenses/supplemental/spirv-0.3.0+sdk-1.3.268.0/Declared-Apache-2.0.txt → TEXT-0288
+Notice: vendor/licenses/supplemental/spirv-0.3.0+sdk-1.3.268.0/Cargo-attribution-spirv.txt → TEXT-0289
 
 ============================================================================
 stable_deref_trait 1.2.1
@@ -3195,7 +3188,7 @@ License: MIT OR Apache-2.0
 Authors: Robert Grosse <n210241048576@gmail.com>
 Source: https://github.com/storyyeller/stable_deref_trait
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0291
+Notice: LICENSE-MIT → TEXT-0290
 
 ============================================================================
 stacker 0.1.24
@@ -3211,9 +3204,9 @@ License: Apache-2.0
 Authors: See supplied notices
 Source: https://github.com/fast/stacksafe
 Notice: vendor/licenses/supplemental/stacksafe-0.1.4/LICENSE → TEXT-0060
-Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Declared-Apache-2.0.txt → TEXT-0289
-Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Cargo-attribution-stacksafe.txt → TEXT-0292
-Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Cargo-attribution-stacksafe-macro.txt → TEXT-0293
+Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Declared-Apache-2.0.txt → TEXT-0288
+Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Cargo-attribution-stacksafe.txt → TEXT-0291
+Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Cargo-attribution-stacksafe-macro.txt → TEXT-0292
 
 ============================================================================
 stacksafe-macro 0.1.4
@@ -3221,9 +3214,9 @@ License: Apache-2.0
 Authors: See supplied notices
 Source: https://github.com/fast/stacksafe
 Notice: vendor/licenses/supplemental/stacksafe-0.1.4/LICENSE → TEXT-0060
-Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Declared-Apache-2.0.txt → TEXT-0289
-Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Cargo-attribution-stacksafe.txt → TEXT-0292
-Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Cargo-attribution-stacksafe-macro.txt → TEXT-0293
+Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Declared-Apache-2.0.txt → TEXT-0288
+Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Cargo-attribution-stacksafe.txt → TEXT-0291
+Notice: vendor/licenses/supplemental/stacksafe-0.1.4/Cargo-attribution-stacksafe-macro.txt → TEXT-0292
 
 ============================================================================
 static_assertions 1.1.0
@@ -3231,57 +3224,49 @@ License: MIT OR Apache-2.0
 Authors: Nikolai Vazquez
 Source: https://github.com/nvzqz/static-assertions-rs
 Notice: LICENSE-APACHE → TEXT-0059
-Notice: LICENSE-MIT → TEXT-0294
-
-============================================================================
-str_indices 0.4.4
-License: MIT OR Apache-2.0
-Authors: Nathan Vegdahl <cessen@cessen.com>
-Source: https://github.com/cessen/str_indices
-Notice: LICENSE-APACHE → TEXT-0295
-Notice: LICENSE-MIT → TEXT-0128
+Notice: LICENSE-MIT → TEXT-0293
 
 ============================================================================
 strict-num 0.1.1
 License: MIT
 Authors: Yevhenii Reizner <razrfalcon@gmail.com>
 Source: https://github.com/RazrFalcon/strict-num
-Notice: LICENSE → TEXT-0296
+Notice: LICENSE → TEXT-0294
 
 ============================================================================
 strum 0.26.3
 License: MIT
 Authors: Peter Glotfelty <peter.glotfelty@microsoft.com>
 Source: https://github.com/Peternator7/strum
-Notice: LICENSE → TEXT-0297
+Notice: LICENSE → TEXT-0295
 
 ============================================================================
 strum 0.27.2
 License: MIT
 Authors: Peter Glotfelty <peter.glotfelty@microsoft.com>
 Source: https://github.com/Peternator7/strum
-Notice: LICENSE → TEXT-0297
+Notice: LICENSE → TEXT-0295
 
 ============================================================================
 strum_macros 0.26.4
 License: MIT
 Authors: Peter Glotfelty <peter.glotfelty@microsoft.com>
 Source: https://github.com/Peternator7/strum
-Notice: LICENSE → TEXT-0297
+Notice: LICENSE → TEXT-0295
 
 ============================================================================
 strum_macros 0.27.2
 License: MIT
 Authors: Peter Glotfelty <peter.glotfelty@microsoft.com>
 Source: https://github.com/Peternator7/strum
-Notice: LICENSE → TEXT-0297
+Notice: LICENSE → TEXT-0295
 
 ============================================================================
 subtle 2.6.1
 License: BSD-3-Clause
 Authors: Isis Lovecruft <isis@patternsinthevoid.net>; Henry de Valence <hdevalence@hdevalence.ca>
 Source: https://github.com/dalek-cryptography/subtle
-Notice: LICENSE → TEXT-0298
+Notice: LICENSE → TEXT-0296
 
 ============================================================================
 sval 2.20.0
@@ -3289,7 +3274,7 @@ License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Source: https://github.com/sval-rs/sval
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0299
+Notice: LICENSE-MIT → TEXT-0297
 
 ============================================================================
 sval_buffer 2.20.0
@@ -3297,7 +3282,7 @@ License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Source: https://github.com/sval-rs/sval
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0299
+Notice: LICENSE-MIT → TEXT-0297
 
 ============================================================================
 sval_dynamic 2.20.0
@@ -3305,7 +3290,7 @@ License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Source: https://github.com/sval-rs/sval
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0299
+Notice: LICENSE-MIT → TEXT-0297
 
 ============================================================================
 sval_fmt 2.20.0
@@ -3313,7 +3298,7 @@ License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Source: https://github.com/sval-rs/sval
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0299
+Notice: LICENSE-MIT → TEXT-0297
 
 ============================================================================
 sval_json 2.20.0
@@ -3321,15 +3306,15 @@ License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Source: https://github.com/sval-rs/sval
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0299
+Notice: LICENSE-MIT → TEXT-0297
 
 ============================================================================
 sval_nested 2.20.0
 License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Source: https://github.com/sval-rs/sval
-Notice: LICENSE-APACHE → TEXT-0300
-Notice: LICENSE-MIT → TEXT-0301
+Notice: LICENSE-APACHE → TEXT-0298
+Notice: LICENSE-MIT → TEXT-0299
 
 ============================================================================
 sval_ref 2.20.0
@@ -3337,7 +3322,7 @@ License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Source: https://github.com/sval-rs/sval
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0299
+Notice: LICENSE-MIT → TEXT-0297
 
 ============================================================================
 sval_serde 2.20.0
@@ -3345,25 +3330,25 @@ License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Source: https://github.com/sval-rs/sval
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0299
+Notice: LICENSE-MIT → TEXT-0297
 
 ============================================================================
 svg_fmt 0.4.5
 License: MIT/Apache-2.0
 Authors: Nicolas Silva <nical@fastmail.com>
 Source: https://github.com/nical/rust_debug
-Notice: vendor/licenses/supplemental/svg_fmt-0.4.5/LICENSE → TEXT-0302
+Notice: vendor/licenses/supplemental/svg_fmt-0.4.5/LICENSE → TEXT-0300
 Notice: vendor/licenses/supplemental/svg_fmt-0.4.5/Declared-MIT.txt → TEXT-0034
-Notice: vendor/licenses/supplemental/svg_fmt-0.4.5/Cargo-attribution-svg_fmt.txt → TEXT-0303
+Notice: vendor/licenses/supplemental/svg_fmt-0.4.5/Cargo-attribution-svg_fmt.txt → TEXT-0301
 
 ============================================================================
 svgtypes 0.15.3
 License: Apache-2.0 OR MIT
 Authors: See supplied notices
 Source: https://github.com/linebender/svgtypes
-Notice: AUTHORS → TEXT-0304
+Notice: AUTHORS → TEXT-0302
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0305
+Notice: LICENSE-MIT → TEXT-0303
 
 ============================================================================
 syn 1.0.109
@@ -3393,7 +3378,7 @@ synstructure 0.13.2
 License: MIT
 Authors: Nika Layzell <nika@thelayzells.com>
 Source: https://github.com/mystor/synstructure
-Notice: LICENSE → TEXT-0306
+Notice: LICENSE → TEXT-0304
 
 ============================================================================
 system-configuration 0.6.1
@@ -3401,7 +3386,7 @@ License: MIT OR Apache-2.0
 Authors: Mullvad VPN
 Source: https://github.com/mullvad/system-configuration-rs
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0307
+Notice: LICENSE-MIT → TEXT-0305
 
 ============================================================================
 system-configuration-sys 0.6.0
@@ -3409,23 +3394,23 @@ License: MIT OR Apache-2.0
 Authors: Mullvad VPN
 Source: https://github.com/mullvad/system-configuration-rs
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0307
+Notice: LICENSE-MIT → TEXT-0305
 
 ============================================================================
 taffy 0.9.0
 License: MIT
 Authors: Alice Cecile <alice.i.cecile@gmail.com>; Johnathan Kelley <jkelleyrtp@gmail.com>; Nico Burns <nico@nicoburns.com>
 Source: https://github.com/DioxusLabs/taffy
-Notice: vendor/licenses/supplemental/taffy-0.9.0/LICENSE.md → TEXT-0308
+Notice: vendor/licenses/supplemental/taffy-0.9.0/LICENSE.md → TEXT-0306
 Notice: vendor/licenses/supplemental/taffy-0.9.0/Declared-MIT.txt → TEXT-0034
-Notice: vendor/licenses/supplemental/taffy-0.9.0/Cargo-attribution-taffy.txt → TEXT-0309
+Notice: vendor/licenses/supplemental/taffy-0.9.0/Cargo-attribution-taffy.txt → TEXT-0307
 
 ============================================================================
 take-until 0.2.0
 License: MIT
 Authors: Hannes De Valkeneer <hannes@de-valkeneer.be>
 Source: https://github.com/hdevalke/take-until.git
-Notice: LICENSE → TEXT-0310
+Notice: LICENSE → TEXT-0308
 
 ============================================================================
 tempfile 3.27.0
@@ -3433,7 +3418,7 @@ License: MIT OR Apache-2.0
 Authors: Steven Allen <steven@stebalien.com>; The Rust Project Developers; Ashley Mannix <ashleymannix@live.com.au>; Jason White <me@jasonwhite.io>
 Source: https://github.com/Stebalien/tempfile
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0311
+Notice: LICENSE-MIT → TEXT-0309
 
 ============================================================================
 termcolor 1.4.1
@@ -3481,22 +3466,22 @@ tiff 0.11.3
 License: MIT
 Authors: The image-rs Developers
 Source: https://github.com/image-rs/image-tiff
-Notice: LICENSE → TEXT-0312
-Notice: tests/COPYRIGHT → TEXT-0313
+Notice: LICENSE → TEXT-0310
+Notice: tests/COPYRIGHT → TEXT-0311
 
 ============================================================================
 tiny-skia 0.11.4
 License: BSD-3-Clause
 Authors: Yevhenii Reizner <razrfalcon@gmail.com>
 Source: https://github.com/RazrFalcon/tiny-skia
-Notice: LICENSE → TEXT-0314
+Notice: LICENSE → TEXT-0312
 
 ============================================================================
 tiny-skia-path 0.11.4
 License: BSD-3-Clause
 Authors: Yevhenii Reizner <razrfalcon@gmail.com>
 Source: https://github.com/RazrFalcon/tiny-skia/tree/master/path
-Notice: LICENSE → TEXT-0314
+Notice: LICENSE → TEXT-0312
 
 ============================================================================
 tinystr 0.8.3
@@ -3511,7 +3496,7 @@ License: Zlib OR Apache-2.0 OR MIT
 Authors: Lokathor <zefria@gmail.com>
 Source: https://github.com/Lokathor/tinyvec
 Notice: LICENSE-APACHE.md → TEXT-0059
-Notice: LICENSE-MIT.md → TEXT-0315
+Notice: LICENSE-MIT.md → TEXT-0313
 Notice: LICENSE-ZLIB.md → TEXT-0049
 
 ============================================================================
@@ -3519,38 +3504,38 @@ tinyvec_macros 0.1.1
 License: MIT OR Apache-2.0 OR Zlib
 Authors: Soveu <marx.tomasz@gmail.com>
 Source: https://github.com/Soveu/tinyvec_macros
-Notice: LICENSE-APACHE.md → TEXT-0316
-Notice: LICENSE-MIT.md → TEXT-0317
-Notice: LICENSE-ZLIB.md → TEXT-0318
+Notice: LICENSE-APACHE.md → TEXT-0314
+Notice: LICENSE-MIT.md → TEXT-0315
+Notice: LICENSE-ZLIB.md → TEXT-0316
 
 ============================================================================
 tokio 1.52.3
 License: MIT
 Authors: Tokio Contributors <team@tokio.rs>
 Source: https://github.com/tokio-rs/tokio
-Notice: LICENSE → TEXT-0319
+Notice: LICENSE → TEXT-0317
 
 ============================================================================
 tokio-rustls 0.26.4
 License: MIT OR Apache-2.0
 Authors: See supplied notices
 Source: https://github.com/rustls/tokio-rustls
-Notice: LICENSE-APACHE → TEXT-0320
-Notice: LICENSE-MIT → TEXT-0321
+Notice: LICENSE-APACHE → TEXT-0318
+Notice: LICENSE-MIT → TEXT-0319
 
 ============================================================================
 tokio-socks 0.5.3
 License: MIT
 Authors: Yilin Chen <sticnarf@gmail.com>
 Source: https://github.com/sticnarf/tokio-socks
-Notice: LICENSE → TEXT-0322
+Notice: LICENSE → TEXT-0320
 
 ============================================================================
 tokio-util 0.7.18
 License: MIT
 Authors: Tokio Contributors <team@tokio.rs>
 Source: https://github.com/tokio-rs/tokio
-Notice: LICENSE → TEXT-0319
+Notice: LICENSE → TEXT-0317
 
 ============================================================================
 toml 0.8.23
@@ -3558,7 +3543,7 @@ License: MIT OR Apache-2.0
 Authors: See supplied notices
 Source: https://github.com/toml-rs/toml
 Notice: LICENSE-APACHE → TEXT-0066
-Notice: LICENSE-MIT → TEXT-0268
+Notice: LICENSE-MIT → TEXT-0267
 
 ============================================================================
 toml_datetime 0.6.11
@@ -3566,7 +3551,7 @@ License: MIT OR Apache-2.0
 Authors: See supplied notices
 Source: https://github.com/toml-rs/toml
 Notice: LICENSE-APACHE → TEXT-0066
-Notice: LICENSE-MIT → TEXT-0268
+Notice: LICENSE-MIT → TEXT-0267
 
 ============================================================================
 toml_edit 0.22.27
@@ -3574,7 +3559,7 @@ License: MIT OR Apache-2.0
 Authors: See supplied notices
 Source: https://github.com/toml-rs/toml
 Notice: LICENSE-APACHE → TEXT-0066
-Notice: LICENSE-MIT → TEXT-0268
+Notice: LICENSE-MIT → TEXT-0267
 
 ============================================================================
 toml_write 0.1.2
@@ -3582,57 +3567,57 @@ License: MIT OR Apache-2.0
 Authors: See supplied notices
 Source: https://github.com/toml-rs/toml
 Notice: LICENSE-APACHE → TEXT-0066
-Notice: LICENSE-MIT → TEXT-0268
+Notice: LICENSE-MIT → TEXT-0267
 
 ============================================================================
 tower 0.5.3
 License: MIT
 Authors: Tower Maintainers <team@tower-rs.com>
 Source: https://github.com/tower-rs/tower
-Notice: LICENSE → TEXT-0323
+Notice: LICENSE → TEXT-0321
 
 ============================================================================
 tower-layer 0.3.3
 License: MIT
 Authors: Tower Maintainers <team@tower-rs.com>
 Source: https://github.com/tower-rs/tower
-Notice: LICENSE → TEXT-0323
+Notice: LICENSE → TEXT-0321
 
 ============================================================================
 tower-service 0.3.3
 License: MIT
 Authors: Tower Maintainers <team@tower-rs.com>
 Source: https://github.com/tower-rs/tower
-Notice: LICENSE → TEXT-0323
+Notice: LICENSE → TEXT-0321
 
 ============================================================================
 tracing 0.1.44
 License: MIT
 Authors: Eliza Weisman <eliza@buoyant.io>; Tokio Contributors <team@tokio.rs>
 Source: https://github.com/tokio-rs/tracing
-Notice: LICENSE → TEXT-0324
+Notice: LICENSE → TEXT-0322
 
 ============================================================================
 tracing-attributes 0.1.31
 License: MIT
 Authors: Tokio Contributors <team@tokio.rs>; Eliza Weisman <eliza@buoyant.io>; David Barsky <dbarsky@amazon.com>
 Source: https://github.com/tokio-rs/tracing
-Notice: LICENSE → TEXT-0324
+Notice: LICENSE → TEXT-0322
 
 ============================================================================
 tracing-core 0.1.36
 License: MIT
 Authors: Tokio Contributors <team@tokio.rs>
 Source: https://github.com/tokio-rs/tracing
-Notice: LICENSE → TEXT-0324
-Notice: src/spin/LICENSE → TEXT-0325
+Notice: LICENSE → TEXT-0322
+Notice: src/spin/LICENSE → TEXT-0323
 
 ============================================================================
 try-lock 0.2.5
 License: MIT
 Authors: Sean McArthur <sean@seanmonstar.com>
 Source: https://github.com/seanmonstar/try-lock
-Notice: LICENSE → TEXT-0326
+Notice: LICENSE → TEXT-0324
 
 ============================================================================
 ttf-parser 0.25.1
@@ -3640,7 +3625,7 @@ License: MIT OR Apache-2.0
 Authors: Caleb Maclennan <caleb@alerque.com>; Laurenz Stampfl <laurenz.stampfl@gmail.com>; Yevhenii Reizner <razrfalcon@gmail.com>; خالد حسني (Khaled Hosny) <khaled@aliftype.com>
 Source: https://github.com/harfbuzz/ttf-parser
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0305
+Notice: LICENSE-MIT → TEXT-0303
 
 ============================================================================
 typeid 1.0.3
@@ -3655,9 +3640,9 @@ typenum 1.20.1
 License: MIT OR Apache-2.0
 Authors: See supplied notices
 Source: https://github.com/paholg/typenum
-Notice: LICENSE → TEXT-0327
-Notice: LICENSE-APACHE → TEXT-0328
-Notice: LICENSE-MIT → TEXT-0329
+Notice: LICENSE → TEXT-0325
+Notice: LICENSE-APACHE → TEXT-0326
+Notice: LICENSE-MIT → TEXT-0327
 
 ============================================================================
 unicase 2.9.0
@@ -3665,15 +3650,15 @@ License: MIT OR Apache-2.0
 Authors: Sean McArthur <sean@seanmonstar.com>
 Source: https://github.com/seanmonstar/unicase
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0330
+Notice: LICENSE-MIT → TEXT-0328
 
 ============================================================================
 unicode-bidi 0.3.18
 License: MIT OR Apache-2.0
 Authors: The Servo Project Developers
 Source: https://github.com/servo/unicode-bidi
-Notice: AUTHORS → TEXT-0331
-Notice: COPYRIGHT → TEXT-0332
+Notice: AUTHORS → TEXT-0329
+Notice: COPYRIGHT → TEXT-0330
 Notice: LICENSE-APACHE → TEXT-0008
 Notice: LICENSE-MIT → TEXT-0130
 
@@ -3700,14 +3685,14 @@ Authors: David Tolnay <dtolnay@gmail.com>
 Source: https://github.com/dtolnay/unicode-ident
 Notice: LICENSE-APACHE → TEXT-0011
 Notice: LICENSE-MIT → TEXT-0003
-Notice: LICENSE-UNICODE → TEXT-0333
+Notice: LICENSE-UNICODE → TEXT-0331
 
 ============================================================================
 unicode-properties 0.1.4
 License: MIT/Apache-2.0
 Authors: Charles Lew <crlf0710@gmail.com>; Manish Goregaokar <manishsmail@gmail.com>
 Source: https://github.com/unicode-rs/unicode-properties
-Notice: COPYRIGHT → TEXT-0334
+Notice: COPYRIGHT → TEXT-0332
 Notice: LICENSE-APACHE → TEXT-0008
 Notice: LICENSE-MIT → TEXT-0130
 
@@ -3716,8 +3701,8 @@ unicode-script 0.5.8
 License: MIT OR Apache-2.0
 Authors: Manish Goregaokar <manishsmail@gmail.com>
 Source: https://github.com/unicode-rs/unicode-script
-Notice: LICENSE-APACHE → TEXT-0335
-Notice: LICENSE-MIT → TEXT-0336
+Notice: LICENSE-APACHE → TEXT-0333
+Notice: LICENSE-MIT → TEXT-0334
 
 ============================================================================
 unicode-vo 0.1.0
@@ -3725,14 +3710,14 @@ License: MIT/Apache-2.0
 Authors: Evgeniy Reizner <razrfalcon@gmail.com>
 Source: https://github.com/RazrFalcon/unicode-vo
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0283
+Notice: LICENSE-MIT → TEXT-0282
 
 ============================================================================
 unicode-width 0.2.2
 License: MIT OR Apache-2.0
 Authors: kwantam <kwantam@gmail.com>; Manish Goregaokar <manishsmail@gmail.com>
 Source: https://github.com/unicode-rs/unicode-width
-Notice: COPYRIGHT → TEXT-0334
+Notice: COPYRIGHT → TEXT-0332
 Notice: LICENSE-APACHE → TEXT-0008
 Notice: LICENSE-MIT → TEXT-0130
 
@@ -3741,7 +3726,7 @@ untrusted 0.9.0
 License: ISC
 Authors: Brian Smith <brian@briansmith.org>
 Source: https://github.com/briansmith/untrusted
-Notice: LICENSE.txt → TEXT-0337
+Notice: LICENSE.txt → TEXT-0335
 
 ============================================================================
 url 2.5.8
@@ -3764,7 +3749,7 @@ utf8_iter 1.0.4
 License: Apache-2.0 OR MIT
 Authors: Henri Sivonen <hsivonen@hsivonen.fi>
 Source: https://github.com/hsivonen/utf8_iter
-Notice: COPYRIGHT → TEXT-0338
+Notice: COPYRIGHT → TEXT-0336
 Notice: LICENSE-APACHE → TEXT-0059
 Notice: LICENSE-MIT → TEXT-0090
 
@@ -3774,14 +3759,14 @@ License: Apache-2.0 OR MIT
 Authors: Ashley Mannix<ashleymannix@live.com.au>; Dylan DPC<dylan.dpc@gmail.com>; Hunar Roop Kahlon<hunar.roop@gmail.com>
 Source: https://github.com/uuid-rs/uuid
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0339
+Notice: LICENSE-MIT → TEXT-0337
 
 ============================================================================
 v_frame 0.3.9
 License: BSD-2-Clause
 Authors: Luca Barbato <lu_zero@gentoo.org>
 Source: https://github.com/rust-av/v_frame
-Notice: LICENSE → TEXT-0340
+Notice: LICENSE → TEXT-0338
 
 ============================================================================
 value-bag 1.12.0
@@ -3789,21 +3774,21 @@ License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Source: https://github.com/sval-rs/value-bag
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0299
+Notice: LICENSE-MIT → TEXT-0297
 
 ============================================================================
 value-bag-serde1 1.12.0
 License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0299
+Notice: LICENSE-MIT → TEXT-0297
 
 ============================================================================
 value-bag-sval2 1.12.0
 License: Apache-2.0 OR MIT
 Authors: Ashley Mannix <ashleymannix@live.com.au>
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0299
+Notice: LICENSE-MIT → TEXT-0297
 
 ============================================================================
 version_check 0.9.5
@@ -3811,7 +3796,7 @@ License: MIT/Apache-2.0
 Authors: Sergio Benitez <sb@sergio.bz>
 Source: https://github.com/SergioBenitez/version_check
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0341
+Notice: LICENSE-MIT → TEXT-0339
 
 ============================================================================
 vte 0.15.0
@@ -3819,7 +3804,7 @@ License: Apache-2.0 OR MIT
 Authors: Joe Wilm <joe@jwilm.com>; Christian Duerr <contact@christianduerr.com>
 Source: https://github.com/alacritty/vte
 Notice: LICENSE-APACHE → TEXT-0011
-Notice: LICENSE-MIT → TEXT-0342
+Notice: LICENSE-MIT → TEXT-0340
 
 ============================================================================
 waker-fn 1.2.0
@@ -3843,7 +3828,7 @@ want 0.3.1
 License: MIT
 Authors: Sean McArthur <sean@seanmonstar.com>
 Source: https://github.com/seanmonstar/want
-Notice: LICENSE → TEXT-0343
+Notice: LICENSE → TEXT-0341
 
 ============================================================================
 wasm-bindgen 0.2.126
@@ -3883,21 +3868,21 @@ License: MIT OR Apache-2.0
 Authors: The image-rs Developers
 Source: https://github.com/image-rs/weezl
 Notice: LICENSE-APACHE → TEXT-0121
-Notice: LICENSE-MIT → TEXT-0344
+Notice: LICENSE-MIT → TEXT-0342
 
 ============================================================================
 which 6.0.3
 License: MIT
 Authors: Harry Fei <tiziyuanfang@gmail.com>
 Source: https://github.com/harryfei/which-rs.git
-Notice: LICENSE.txt → TEXT-0345
+Notice: LICENSE.txt → TEXT-0343
 
 ============================================================================
 winnow 0.7.15
 License: MIT
 Authors: See supplied notices
 Source: https://github.com/winnow-rs/winnow
-Notice: LICENSE-MIT → TEXT-0346
+Notice: LICENSE-MIT → TEXT-0344
 
 ============================================================================
 writeable 0.6.3
@@ -3912,28 +3897,28 @@ License: MIT/Apache-2.0
 Authors: Steven Allen <steven@stebalien.com>
 Source: https://github.com/Stebalien/xattr
 Notice: LICENSE-APACHE → TEXT-0008
-Notice: LICENSE-MIT → TEXT-0311
+Notice: LICENSE-MIT → TEXT-0309
 
 ============================================================================
 xmlwriter 0.1.0
 License: MIT
 Authors: Evgeniy Reizner <razrfalcon@gmail.com>
 Source: https://github.com/RazrFalcon/xmlwriter
-Notice: LICENSE → TEXT-0347
+Notice: LICENSE → TEXT-0345
 
 ============================================================================
 y4m 0.8.0
 License: MIT
 Authors: Kagami Hiiragi <kagami@genshiken.org>
 Source: https://github.com/image-rs/y4m.git
-Notice: LICENSE → TEXT-0348
+Notice: LICENSE → TEXT-0346
 
 ============================================================================
 yeslogic-fontconfig-sys 6.0.1
 License: MIT
 Authors: Austin Bonander <austin.bonander@gmail.com>; The Servo Project Developers; YesLogic Pty. Ltd. <info@yeslogic.com>
 Source: https://github.com/yeslogic/fontconfig-rs
-Notice: LICENSE → TEXT-0349
+Notice: LICENSE → TEXT-0347
 
 ============================================================================
 yoke 0.8.3
@@ -3970,26 +3955,26 @@ zed-reqwest 0.12.15-zed
 License: MIT OR Apache-2.0
 Authors: Sean McArthur <sean@seanmonstar.com>
 Source: https://github.com/seanmonstar/reqwest
-Notice: LICENSE-APACHE → TEXT-0350
-Notice: LICENSE-MIT → TEXT-0351
+Notice: LICENSE-APACHE → TEXT-0348
+Notice: LICENSE-MIT → TEXT-0349
 
 ============================================================================
 zerocopy 0.8.52
 License: BSD-2-Clause OR Apache-2.0 OR MIT
 Authors: Joshua Liebow-Feeser <joshlf@google.com>; Jack Wrenn <jswrenn@amazon.com>
 Source: https://github.com/google/zerocopy
-Notice: LICENSE-APACHE → TEXT-0352
-Notice: LICENSE-BSD → TEXT-0353
-Notice: LICENSE-MIT → TEXT-0354
+Notice: LICENSE-APACHE → TEXT-0350
+Notice: LICENSE-BSD → TEXT-0351
+Notice: LICENSE-MIT → TEXT-0352
 
 ============================================================================
 zerocopy-derive 0.8.52
 License: BSD-2-Clause OR Apache-2.0 OR MIT
 Authors: Joshua Liebow-Feeser <joshlf@google.com>; Jack Wrenn <jswrenn@amazon.com>
 Source: https://github.com/google/zerocopy
-Notice: LICENSE-APACHE → TEXT-0352
-Notice: LICENSE-BSD → TEXT-0353
-Notice: LICENSE-MIT → TEXT-0354
+Notice: LICENSE-APACHE → TEXT-0350
+Notice: LICENSE-BSD → TEXT-0351
+Notice: LICENSE-MIT → TEXT-0352
 
 ============================================================================
 zerofrom 0.1.8
@@ -4011,7 +3996,7 @@ License: Apache-2.0 OR MIT
 Authors: The RustCrypto Project Developers
 Source: https://github.com/RustCrypto/utils
 Notice: LICENSE-APACHE → TEXT-0059
-Notice: LICENSE-MIT → TEXT-0355
+Notice: LICENSE-MIT → TEXT-0353
 
 ============================================================================
 zeroize_derive 1.5.0
@@ -4019,7 +4004,7 @@ License: Apache-2.0 OR MIT
 Authors: The RustCrypto Project Developers
 Source: https://github.com/RustCrypto/utils
 Notice: LICENSE-APACHE → TEXT-0059
-Notice: LICENSE-MIT → TEXT-0356
+Notice: LICENSE-MIT → TEXT-0354
 
 ============================================================================
 zerotrie 0.2.4
@@ -4055,17 +4040,17 @@ License: MIT OR Apache-2.0 OR Zlib
 Authors: See supplied notices
 Source: https://github.com/etemesi254/zune-image
 Notice: LICENSE-APACHE → TEXT-0060
-Notice: LICENSE-MIT → TEXT-0357
-Notice: LICENSE-ZLIB → TEXT-0358
+Notice: LICENSE-MIT → TEXT-0355
+Notice: LICENSE-ZLIB → TEXT-0356
 
 ============================================================================
 zune-inflate 0.2.54
 License: MIT OR Apache-2.0 OR Zlib
 Authors: See supplied notices
-Notice: vendor/licenses/supplemental/zune-inflate-0.2.54/LICENSE-ZLIB → TEXT-0359
-Notice: vendor/licenses/supplemental/zune-inflate-0.2.54/LICENSE.md → TEXT-0360
+Notice: vendor/licenses/supplemental/zune-inflate-0.2.54/LICENSE-ZLIB → TEXT-0357
+Notice: vendor/licenses/supplemental/zune-inflate-0.2.54/LICENSE.md → TEXT-0358
 Notice: vendor/licenses/supplemental/zune-inflate-0.2.54/Declared-MIT.txt → TEXT-0034
-Notice: vendor/licenses/supplemental/zune-inflate-0.2.54/Cargo-attribution-zune-inflate.txt → TEXT-0361
+Notice: vendor/licenses/supplemental/zune-inflate-0.2.54/Cargo-attribution-zune-inflate.txt → TEXT-0359
 
 ============================================================================
 zune-jpeg 0.5.15
@@ -4073,8 +4058,8 @@ License: MIT OR Apache-2.0 OR Zlib
 Authors: caleb <etemesicaleb@gmail.com>
 Source: https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg
 Notice: LICENSE-APACHE → TEXT-0060
-Notice: LICENSE-MIT → TEXT-0357
-Notice: LICENSE-ZLIB → TEXT-0358
+Notice: LICENSE-MIT → TEXT-0355
+Notice: LICENSE-ZLIB → TEXT-0356
 
 LICENSE AND NOTICE TEXTS
 
@@ -24777,29 +24762,6 @@ limitations under the License.
 ----------------------------------------------------------------------------
 TEXT-0247
 ----------------------------------------------------------------------------
-Copyright (c) 2017 Nathan Vegdahl
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-----------------------------------------------------------------------------
-TEXT-0248
-----------------------------------------------------------------------------
 The MIT License (MIT)
 
 Copyright (c) 2018 Yevhenii Reizner
@@ -24823,7 +24785,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0249
+TEXT-0248
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -24848,7 +24810,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0250
+TEXT-0249
 ----------------------------------------------------------------------------
                               Apache License
                         Version 2.0, January 2004
@@ -25028,7 +24990,7 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 END OF TERMS AND CONDITIONS
 
 ----------------------------------------------------------------------------
-TEXT-0251
+TEXT-0250
 ----------------------------------------------------------------------------
 Short version for non-lawyers:
 
@@ -25061,7 +25023,7 @@ is licensed under:
 at your option.
 
 ----------------------------------------------------------------------------
-TEXT-0252
+TEXT-0251
 ----------------------------------------------------------------------------
 
                                  Apache License
@@ -25284,7 +25246,7 @@ the License, but only in their entirety and only with respect to the Combined
 Software.
 
 ----------------------------------------------------------------------------
-TEXT-0253
+TEXT-0252
 ----------------------------------------------------------------------------
 Short version for non-lawyers:
 
@@ -25317,7 +25279,7 @@ is licensed under:
 at your option.
 
 ----------------------------------------------------------------------------
-TEXT-0254
+TEXT-0253
 ----------------------------------------------------------------------------
 Rustls is distributed under the following three licenses:
 
@@ -25330,7 +25292,7 @@ respectively.  You may use this software under the terms of any
 of these licenses, at your option.
 
 ----------------------------------------------------------------------------
-TEXT-0255
+TEXT-0254
 ----------------------------------------------------------------------------
 rustls-pemfile is distributed under the following three licenses:
 
@@ -25343,7 +25305,7 @@ respectively.  You may use this software under the terms of any
 of these licenses, at your option.
 
 ----------------------------------------------------------------------------
-TEXT-0256
+TEXT-0255
 ----------------------------------------------------------------------------
                               Apache License
                         Version 2.0, January 2004
@@ -25548,7 +25510,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ----------------------------------------------------------------------------
-TEXT-0257
+TEXT-0256
 ----------------------------------------------------------------------------
 Copyright (c) 2023 Dirkjan Ochtman <dirkjan@ochtman.nl>
 
@@ -25577,7 +25539,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0258
+TEXT-0257
 ----------------------------------------------------------------------------
 Except as otherwise noted, this project is licensed under the following
 (ISC-style) terms:
@@ -25600,7 +25562,7 @@ The files under third-party/chromium are licensed as described in
 third-party/chromium/LICENSE.
 
 ----------------------------------------------------------------------------
-TEXT-0259
+TEXT-0258
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -25626,7 +25588,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0260
+TEXT-0259
 ----------------------------------------------------------------------------
     MIT License
 
@@ -25651,7 +25613,7 @@ TEXT-0260
     SOFTWARE
 
 ----------------------------------------------------------------------------
-TEXT-0261
+TEXT-0260
 ----------------------------------------------------------------------------
 Boost Software License - Version 1.0 - August 17th, 2003
 
@@ -25678,7 +25640,7 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0262
+TEXT-0261
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -25703,7 +25665,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0263
+TEXT-0262
 ----------------------------------------------------------------------------
 MIT License
 
@@ -25728,7 +25690,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0264
+TEXT-0263
 ----------------------------------------------------------------------------
 Copyright (c) 2016-2019 Ulrik Sverdrup "bluss" and scopeguard developers
 
@@ -25757,7 +25719,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0265
+TEXT-0264
 ----------------------------------------------------------------------------
 Package attribution and SPDX license declaration, as supplied in Cargo.toml
 Full declared terms are included separately; SPDX template fields are not
@@ -25802,7 +25764,7 @@ In action:
 [![The hash function in action.](http://ticki.github.io/img/seahash_construction_diagram.svg)](http://ticki.github.io/img/seahash_construction_diagram.svg)
 
 ----------------------------------------------------------------------------
-TEXT-0266
+TEXT-0265
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -25826,7 +25788,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0267
+TEXT-0266
 ----------------------------------------------------------------------------
 MIT License
 
@@ -25851,7 +25813,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0268
+TEXT-0267
 ----------------------------------------------------------------------------
 Copyright (c) Individual contributors
 
@@ -25874,7 +25836,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0269
+TEXT-0268
 ----------------------------------------------------------------------------
 Copyright (c) 2016 Anthony Ramine
 
@@ -25903,7 +25865,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0270
+TEXT-0269
 ----------------------------------------------------------------------------
 Copyright 2021, Maarten de Vries <maarten@de-vri.es>
 
@@ -25920,7 +25882,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ----------------------------------------------------------------------------
-TEXT-0271
+TEXT-0270
 ----------------------------------------------------------------------------
 BSD 2-Clause License
 
@@ -25948,13 +25910,13 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ----------------------------------------------------------------------------
-TEXT-0272
+TEXT-0271
 ----------------------------------------------------------------------------
 - Armin Ronacher
 - Koka El Kiwi
 
 ----------------------------------------------------------------------------
-TEXT-0273
+TEXT-0272
 ----------------------------------------------------------------------------
 BSD 3-Clause License
 
@@ -26018,7 +25980,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0274
+TEXT-0273
 ----------------------------------------------------------------------------
 Copyright (c) 2006-2009 Graydon Hoare
 Copyright (c) 2009-2013 Mozilla Foundation
@@ -26049,7 +26011,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0275
+TEXT-0274
 ----------------------------------------------------------------------------
                                Apache License
                          Version 2.0, January 2004
@@ -26254,7 +26216,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ----------------------------------------------------------------------------
-TEXT-0276
+TEXT-0275
 ----------------------------------------------------------------------------
 Copyright (c) 2016 Tomasz Miąsko
 
@@ -26283,7 +26245,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0277
+TEXT-0276
 ----------------------------------------------------------------------------
 Copyright 2015 Nicholas Allegra (comex).
 
@@ -26300,7 +26262,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ----------------------------------------------------------------------------
-TEXT-0278
+TEXT-0277
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -26325,7 +26287,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0279
+TEXT-0278
 ----------------------------------------------------------------------------
 Copyright (c) 2017 tokio-jsonrpc developers
 
@@ -26354,7 +26316,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0280
+TEXT-0279
 ----------------------------------------------------------------------------
 MIT License
 
@@ -26379,7 +26341,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0281
+TEXT-0280
 ----------------------------------------------------------------------------
 Package attribution and SPDX license declaration, as supplied in Cargo.toml
 Full declared terms are included separately; SPDX template fields are not
@@ -26426,7 +26388,7 @@ fn fallback_simple_impl() { ... }
 ```
 
 ----------------------------------------------------------------------------
-TEXT-0282
+TEXT-0281
 ----------------------------------------------------------------------------
 # This is the list of SimpleCSS's significant contributors.
 #
@@ -26437,7 +26399,7 @@ TEXT-0282
 Yevhenii Reizner
 
 ----------------------------------------------------------------------------
-TEXT-0283
+TEXT-0282
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -26462,7 +26424,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0284
+TEXT-0283
 ----------------------------------------------------------------------------
 Copyright 2012-2016 The Rust Project Developers.
 Copyright 2016-2026 Frank Denis.
@@ -26473,7 +26435,7 @@ http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
 option.
 
 ----------------------------------------------------------------------------
-TEXT-0285
+TEXT-0284
 ----------------------------------------------------------------------------
 Copyright (c) 2019 Carl Lerche
 
@@ -26502,7 +26464,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0286
+TEXT-0285
 ----------------------------------------------------------------------------
 Copyright (c) 2021 Orson Peters <orsonpeters@gmail.com>
 
@@ -26525,7 +26487,7 @@ the following restrictions:
  3. This notice may not be removed or altered from any source distribution.
 
 ----------------------------------------------------------------------------
-TEXT-0287
+TEXT-0286
 ----------------------------------------------------------------------------
 Copyright (c) 2018 The Servo Project Developers
 
@@ -26554,7 +26516,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0288
+TEXT-0287
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -26579,7 +26541,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0289
+TEXT-0288
 ----------------------------------------------------------------------------
 Apache License
 Version 2.0, January 2004
@@ -26656,7 +26618,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ----------------------------------------------------------------------------
-TEXT-0290
+TEXT-0289
 ----------------------------------------------------------------------------
 Package attribution and SPDX license declaration, as supplied in Cargo.toml
 Full declared terms are included separately; SPDX template fields are not
@@ -26735,7 +26697,7 @@ Please see the [documentation][doc-headers] and project's
 [rust-1.20]: https://blog.rust-lang.org/2017/08/31/Rust-1.20.html
 
 ----------------------------------------------------------------------------
-TEXT-0291
+TEXT-0290
 ----------------------------------------------------------------------------
 Copyright (c) 2017 Robert Grosse
 
@@ -26764,7 +26726,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0292
+TEXT-0291
 ----------------------------------------------------------------------------
 Package attribution and SPDX license declaration, as supplied in Cargo.toml
 Full declared terms are included separately; SPDX template fields are not
@@ -26913,7 +26875,7 @@ This project is licensed under the [Apache-2.0](LICENSE) license.
 Inspired by the the excellent [`recursive`](https://crates.io/crates/recursive) by Orson Peters.
 
 ----------------------------------------------------------------------------
-TEXT-0293
+TEXT-0292
 ----------------------------------------------------------------------------
 Package attribution and SPDX license declaration, as supplied in Cargo.toml
 Full declared terms are included separately; SPDX template fields are not
@@ -26954,7 +26916,7 @@ This is an implementation crate for the [`stacksafe`](https://crates.io/crates/s
 This crate contains the procedural macro that powers the `#[stacksafe]` attribute and should not be used directly.
 
 ----------------------------------------------------------------------------
-TEXT-0294
+TEXT-0293
 ----------------------------------------------------------------------------
 MIT License
 
@@ -26979,212 +26941,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0295
-----------------------------------------------------------------------------
-                              Apache License
-                        Version 2.0, January 2004
-                     https://www.apache.org/licenses/
-
-TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
-
-1. Definitions.
-
-   "License" shall mean the terms and conditions for use, reproduction,
-   and distribution as defined by Sections 1 through 9 of this document.
-
-   "Licensor" shall mean the copyright owner or entity authorized by
-   the copyright owner that is granting the License.
-
-   "Legal Entity" shall mean the union of the acting entity and all
-   other entities that control, are controlled by, or are under common
-   control with that entity. For the purposes of this definition,
-   "control" means (i) the power, direct or indirect, to cause the
-   direction or management of such entity, whether by contract or
-   otherwise, or (ii) ownership of fifty percent (50%) or more of the
-   outstanding shares, or (iii) beneficial ownership of such entity.
-
-   "You" (or "Your") shall mean an individual or Legal Entity
-   exercising permissions granted by this License.
-
-   "Source" form shall mean the preferred form for making modifications,
-   including but not limited to software source code, documentation
-   source, and configuration files.
-
-   "Object" form shall mean any form resulting from mechanical
-   transformation or translation of a Source form, including but
-   not limited to compiled object code, generated documentation,
-   and conversions to other media types.
-
-   "Work" shall mean the work of authorship, whether in Source or
-   Object form, made available under the License, as indicated by a
-   copyright notice that is included in or attached to the work
-   (an example is provided in the Appendix below).
-
-   "Derivative Works" shall mean any work, whether in Source or Object
-   form, that is based on (or derived from) the Work and for which the
-   editorial revisions, annotations, elaborations, or other modifications
-   represent, as a whole, an original work of authorship. For the purposes
-   of this License, Derivative Works shall not include works that remain
-   separable from, or merely link (or bind by name) to the interfaces of,
-   the Work and Derivative Works thereof.
-
-   "Contribution" shall mean any work of authorship, including
-   the original version of the Work and any modifications or additions
-   to that Work or Derivative Works thereof, that is intentionally
-   submitted to Licensor for inclusion in the Work by the copyright owner
-   or by an individual or Legal Entity authorized to submit on behalf of
-   the copyright owner. For the purposes of this definition, "submitted"
-   means any form of electronic, verbal, or written communication sent
-   to the Licensor or its representatives, including but not limited to
-   communication on electronic mailing lists, source code control systems,
-   and issue tracking systems that are managed by, or on behalf of, the
-   Licensor for the purpose of discussing and improving the Work, but
-   excluding communication that is conspicuously marked or otherwise
-   designated in writing by the copyright owner as "Not a Contribution."
-
-   "Contributor" shall mean Licensor and any individual or Legal Entity
-   on behalf of whom a Contribution has been received by Licensor and
-   subsequently incorporated within the Work.
-
-2. Grant of Copyright License. Subject to the terms and conditions of
-   this License, each Contributor hereby grants to You a perpetual,
-   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-   copyright license to reproduce, prepare Derivative Works of,
-   publicly display, publicly perform, sublicense, and distribute the
-   Work and such Derivative Works in Source or Object form.
-
-3. Grant of Patent License. Subject to the terms and conditions of
-   this License, each Contributor hereby grants to You a perpetual,
-   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-   (except as stated in this section) patent license to make, have made,
-   use, offer to sell, sell, import, and otherwise transfer the Work,
-   where such license applies only to those patent claims licensable
-   by such Contributor that are necessarily infringed by their
-   Contribution(s) alone or by combination of their Contribution(s)
-   with the Work to which such Contribution(s) was submitted. If You
-   institute patent litigation against any entity (including a
-   cross-claim or counterclaim in a lawsuit) alleging that the Work
-   or a Contribution incorporated within the Work constitutes direct
-   or contributory patent infringement, then any patent licenses
-   granted to You under this License for that Work shall terminate
-   as of the date such litigation is filed.
-
-4. Redistribution. You may reproduce and distribute copies of the
-   Work or Derivative Works thereof in any medium, with or without
-   modifications, and in Source or Object form, provided that You
-   meet the following conditions:
-
-   (a) You must give any other recipients of the Work or
-       Derivative Works a copy of this License; and
-
-   (b) You must cause any modified files to carry prominent notices
-       stating that You changed the files; and
-
-   (c) You must retain, in the Source form of any Derivative Works
-       that You distribute, all copyright, patent, trademark, and
-       attribution notices from the Source form of the Work,
-       excluding those notices that do not pertain to any part of
-       the Derivative Works; and
-
-   (d) If the Work includes a "NOTICE" text file as part of its
-       distribution, then any Derivative Works that You distribute must
-       include a readable copy of the attribution notices contained
-       within such NOTICE file, excluding those notices that do not
-       pertain to any part of the Derivative Works, in at least one
-       of the following places: within a NOTICE text file distributed
-       as part of the Derivative Works; within the Source form or
-       documentation, if provided along with the Derivative Works; or,
-       within a display generated by the Derivative Works, if and
-       wherever such third-party notices normally appear. The contents
-       of the NOTICE file are for informational purposes only and
-       do not modify the License. You may add Your own attribution
-       notices within Derivative Works that You distribute, alongside
-       or as an addendum to the NOTICE text from the Work, provided
-       that such additional attribution notices cannot be construed
-       as modifying the License.
-
-   You may add Your own copyright statement to Your modifications and
-   may provide additional or different license terms and conditions
-   for use, reproduction, or distribution of Your modifications, or
-   for any such Derivative Works as a whole, provided Your use,
-   reproduction, and distribution of the Work otherwise complies with
-   the conditions stated in this License.
-
-5. Submission of Contributions. Unless You explicitly state otherwise,
-   any Contribution intentionally submitted for inclusion in the Work
-   by You to the Licensor shall be under the terms and conditions of
-   this License, without any additional terms or conditions.
-   Notwithstanding the above, nothing herein shall supersede or modify
-   the terms of any separate license agreement you may have executed
-   with Licensor regarding such Contributions.
-
-6. Trademarks. This License does not grant permission to use the trade
-   names, trademarks, service marks, or product names of the Licensor,
-   except as required for reasonable and customary use in describing the
-   origin of the Work and reproducing the content of the NOTICE file.
-
-7. Disclaimer of Warranty. Unless required by applicable law or
-   agreed to in writing, Licensor provides the Work (and each
-   Contributor provides its Contributions) on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-   implied, including, without limitation, any warranties or conditions
-   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
-   PARTICULAR PURPOSE. You are solely responsible for determining the
-   appropriateness of using or redistributing the Work and assume any
-   risks associated with Your exercise of permissions under this License.
-
-8. Limitation of Liability. In no event and under no legal theory,
-   whether in tort (including negligence), contract, or otherwise,
-   unless required by applicable law (such as deliberate and grossly
-   negligent acts) or agreed to in writing, shall any Contributor be
-   liable to You for damages, including any direct, indirect, special,
-   incidental, or consequential damages of any character arising as a
-   result of this License or out of the use or inability to use the
-   Work (including but not limited to damages for loss of goodwill,
-   work stoppage, computer failure or malfunction, or any and all
-   other commercial damages or losses), even if such Contributor
-   has been advised of the possibility of such damages.
-
-9. Accepting Warranty or Additional Liability. While redistributing
-   the Work or Derivative Works thereof, You may choose to offer,
-   and charge a fee for, acceptance of support, warranty, indemnity,
-   or other liability obligations and/or rights consistent with this
-   License. However, in accepting such obligations, You may act only
-   on Your own behalf and on Your sole responsibility, not on behalf
-   of any other Contributor, and only if You agree to indemnify,
-   defend, and hold each Contributor harmless for any liability
-   incurred by, or claims asserted against, such Contributor by reason
-   of your accepting any such warranty or additional liability.
-
-END OF TERMS AND CONDITIONS
-
-APPENDIX: How to apply the Apache License to your work.
-
-   To apply the Apache License to your work, attach the following
-   boilerplate notice, with the fields enclosed by brackets "[]"
-   replaced with your own identifying information. (Don't include
-   the brackets!)  The text should be enclosed in the appropriate
-   comment syntax for the file format. We also recommend that a
-   file or class name and description of purpose be included on the
-   same "printed page" as the copyright notice for easier
-   identification within third-party archives.
-
-Copyright [yyyy] [name of copyright owner]
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
-----------------------------------------------------------------------------
-TEXT-0296
+TEXT-0294
 ----------------------------------------------------------------------------
 Copyright (c) 2022 Yevhenii Reizner
 
@@ -27207,7 +26964,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0297
+TEXT-0295
 ----------------------------------------------------------------------------
 MIT License
 
@@ -27232,7 +26989,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0298
+TEXT-0296
 ----------------------------------------------------------------------------
 Copyright (c) 2016-2017 Isis Agora Lovecruft, Henry de Valence. All rights reserved.
 Copyright (c) 2016-2024 Isis Agora Lovecruft. All rights reserved.
@@ -27265,7 +27022,7 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ----------------------------------------------------------------------------
-TEXT-0299
+TEXT-0297
 ----------------------------------------------------------------------------
 MIT License
 
@@ -27290,17 +27047,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0300
+TEXT-0298
 ----------------------------------------------------------------------------
 ../LICENSE-APACHE
 
 ----------------------------------------------------------------------------
-TEXT-0301
+TEXT-0299
 ----------------------------------------------------------------------------
 ../LICENSE-MIT
 
 ----------------------------------------------------------------------------
-TEXT-0302
+TEXT-0300
 ----------------------------------------------------------------------------
 MIT License
 
@@ -27325,7 +27082,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0303
+TEXT-0301
 ----------------------------------------------------------------------------
 Package attribution and SPDX license declaration, as supplied in Cargo.toml
 Full declared terms are included separately; SPDX template fields are not
@@ -27376,7 +27133,7 @@ println!("{}", EndSvg);
 ```
 
 ----------------------------------------------------------------------------
-TEXT-0304
+TEXT-0302
 ----------------------------------------------------------------------------
 # This is the list of svgtypes' significant contributors.
 #
@@ -27387,7 +27144,7 @@ TEXT-0304
 Yevhenii Reizner
 
 ----------------------------------------------------------------------------
-TEXT-0305
+TEXT-0303
 ----------------------------------------------------------------------------
 Copyright (c) 2018 Yevhenii Reizner
 
@@ -27410,7 +27167,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0306
+TEXT-0304
 ----------------------------------------------------------------------------
 Copyright 2016 Nika Layzell
 
@@ -27421,7 +27178,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0307
+TEXT-0305
 ----------------------------------------------------------------------------
 Copyright (c) 2024 Mullvad VPN AB
 
@@ -27450,7 +27207,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0308
+TEXT-0306
 ----------------------------------------------------------------------------
 # License
 
@@ -27479,7 +27236,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0309
+TEXT-0307
 ----------------------------------------------------------------------------
 Package attribution and SPDX license declaration, as supplied in Cargo.toml
 Full declared terms are included separately; SPDX template fields are not
@@ -27727,7 +27484,7 @@ if you'd like to use, improve or build `taffy`, feel free to join the conversati
 If you have questions about how to use `taffy`, open a [discussion](https://github.com/DioxusLabs/taffy/discussions) so we can answer your questions in a way that others can find.
 
 ----------------------------------------------------------------------------
-TEXT-0310
+TEXT-0308
 ----------------------------------------------------------------------------
 Copyright 2019 Hannes De Valkeneer
 
@@ -27750,7 +27507,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0311
+TEXT-0309
 ----------------------------------------------------------------------------
 Copyright (c) 2015 Steven Allen
 
@@ -27779,7 +27536,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0312
+TEXT-0310
 ----------------------------------------------------------------------------
 MIT License
 
@@ -27804,7 +27561,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0313
+TEXT-0311
 ----------------------------------------------------------------------------
 subsubifd.tif:
   url: https://data.kitware.com/api/v1/file/hashsum/sha512/372ca32735c8a8fdbe2286dabead9e779da63f10ba81eda84625e5273f76d74ca1a47a978f67e9c00c12f7f72009c7b2c07a641e643bb0c463812f4ae7f15d6e/download
@@ -27816,7 +27573,7 @@ usda/*.tif
   license: Public Domain
 
 ----------------------------------------------------------------------------
-TEXT-0314
+TEXT-0312
 ----------------------------------------------------------------------------
 Copyright (c) 2011 Google Inc. All rights reserved.
 Copyright (c) 2020 Yevhenii Reizner All rights reserved.
@@ -27850,7 +27607,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ----------------------------------------------------------------------------
-TEXT-0315
+TEXT-0313
 ----------------------------------------------------------------------------
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -27859,7 +27616,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0316
+TEXT-0314
 ----------------------------------------------------------------------------
                                  Apache License
                            Version 2.0, January 2004
@@ -28064,7 +27821,7 @@ TEXT-0316
    limitations under the License.
 
 ----------------------------------------------------------------------------
-TEXT-0317
+TEXT-0315
 ----------------------------------------------------------------------------
 MIT License
 
@@ -28089,7 +27846,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0318
+TEXT-0316
 ----------------------------------------------------------------------------
 zlib License
 
@@ -28112,7 +27869,7 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 
 ----------------------------------------------------------------------------
-TEXT-0319
+TEXT-0317
 ----------------------------------------------------------------------------
 MIT License
 
@@ -28137,7 +27894,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0320
+TEXT-0318
 ----------------------------------------------------------------------------
                               Apache License
                         Version 2.0, January 2004
@@ -28342,7 +28099,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ----------------------------------------------------------------------------
-TEXT-0321
+TEXT-0319
 ----------------------------------------------------------------------------
 Copyright (c) 2017 quininer kel
 
@@ -28371,7 +28128,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0322
+TEXT-0320
 ----------------------------------------------------------------------------
 MIT License
 
@@ -28396,7 +28153,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0323
+TEXT-0321
 ----------------------------------------------------------------------------
 Copyright (c) 2019 Tower Contributors
 
@@ -28425,7 +28182,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0324
+TEXT-0322
 ----------------------------------------------------------------------------
 Copyright (c) 2019 Tokio Contributors
 
@@ -28454,7 +28211,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0325
+TEXT-0323
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -28479,7 +28236,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0326
+TEXT-0324
 ----------------------------------------------------------------------------
 Copyright (c) 2018-2023 Sean McArthur
 Copyright (c) 2016 Alex Crichton
@@ -28503,12 +28260,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0327
+TEXT-0325
 ----------------------------------------------------------------------------
 MIT OR Apache-2.0
 
 ----------------------------------------------------------------------------
-TEXT-0328
+TEXT-0326
 ----------------------------------------------------------------------------
                               Apache License
                         Version 2.0, January 2004
@@ -28713,7 +28470,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ----------------------------------------------------------------------------
-TEXT-0329
+TEXT-0327
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -28738,7 +28495,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0330
+TEXT-0328
 ----------------------------------------------------------------------------
 Copyright (c) 2014-2026 Sean McArthur
 
@@ -28761,7 +28518,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0331
+TEXT-0329
 ----------------------------------------------------------------------------
 This software was written by the following people:
 
@@ -28769,7 +28526,7 @@ Matt Brubeck <mbrubeck@limpet.net>
 Behnam Esfahbod <behnam@zwnj.org>
 
 ----------------------------------------------------------------------------
-TEXT-0332
+TEXT-0330
 ----------------------------------------------------------------------------
 This project is copyright 2015, The Servo Project Developers (given in the
 file AUTHORS).
@@ -28781,7 +28538,7 @@ carrying such notice may not be copied, modified, or distributed except
 according to those terms.
 
 ----------------------------------------------------------------------------
-TEXT-0333
+TEXT-0331
 ----------------------------------------------------------------------------
 UNICODE LICENSE V3
 
@@ -28824,7 +28581,7 @@ dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
 
 ----------------------------------------------------------------------------
-TEXT-0334
+TEXT-0332
 ----------------------------------------------------------------------------
 Licensed under the Apache License, Version 2.0
 <LICENSE-APACHE or
@@ -28835,7 +28592,7 @@ notice may not be copied, modified, or distributed except
 according to those terms.
 
 ----------------------------------------------------------------------------
-TEXT-0335
+TEXT-0333
 ----------------------------------------------------------------------------
                               Apache License
                         Version 2.0, January 2004
@@ -29040,7 +28797,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ----------------------------------------------------------------------------
-TEXT-0336
+TEXT-0334
 ----------------------------------------------------------------------------
 MIT License
 
@@ -29071,7 +28828,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0337
+TEXT-0335
 ----------------------------------------------------------------------------
 // Copyright 2015-2016 Brian Smith.
 //
@@ -29088,7 +28845,7 @@ TEXT-0337
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0338
+TEXT-0336
 ----------------------------------------------------------------------------
 Copyright Mozilla Foundation
 
@@ -29134,7 +28891,7 @@ licensed under the Apache License, Version 2.0 <LICENSE-APACHE> or
 <LICENSE-MIT> or <http://opensource.org/licenses/MIT>, at your option.
 
 ----------------------------------------------------------------------------
-TEXT-0339
+TEXT-0337
 ----------------------------------------------------------------------------
 Copyright (c) 2014 The Rust Project Developers
 Copyright (c) 2018 Ashley Mannix, Christopher Armstrong, Dylan DPC, Hunar Roop Kahlon
@@ -29164,7 +28921,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0340
+TEXT-0338
 ----------------------------------------------------------------------------
 BSD 2-Clause License
 
@@ -29193,7 +28950,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ----------------------------------------------------------------------------
-TEXT-0341
+TEXT-0339
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 Copyright (c) 2017-2018 Sergio Benitez
@@ -29216,7 +28973,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0342
+TEXT-0340
 ----------------------------------------------------------------------------
 Copyright (c) 2016 Joe Wilm
 
@@ -29245,7 +29002,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0343
+TEXT-0341
 ----------------------------------------------------------------------------
 Copyright (c) 2018-2019 Sean McArthur
 
@@ -29268,7 +29025,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0344
+TEXT-0342
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -29293,7 +29050,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0345
+TEXT-0343
 ----------------------------------------------------------------------------
 Copyright (c) 2015 fangyuanziti
 
@@ -29316,7 +29073,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0346
+TEXT-0344
 ----------------------------------------------------------------------------
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -29338,7 +29095,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0347
+TEXT-0345
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -29363,7 +29120,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0348
+TEXT-0346
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -29389,7 +29146,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0349
+TEXT-0347
 ----------------------------------------------------------------------------
 The MIT License (MIT)
 
@@ -29417,7 +29174,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0350
+TEXT-0348
 ----------------------------------------------------------------------------
                               Apache License
                         Version 2.0, January 2004
@@ -29622,7 +29379,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ----------------------------------------------------------------------------
-TEXT-0351
+TEXT-0349
 ----------------------------------------------------------------------------
 Copyright (c) 2016-2025 Sean McArthur
 
@@ -29645,7 +29402,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0352
+TEXT-0350
 ----------------------------------------------------------------------------
                                  Apache License
                            Version 2.0, January 2004
@@ -29850,7 +29607,7 @@ TEXT-0352
    limitations under the License.
 
 ----------------------------------------------------------------------------
-TEXT-0353
+TEXT-0351
 ----------------------------------------------------------------------------
 Copyright 2019 The Fuchsia Authors.
 
@@ -29878,7 +29635,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ----------------------------------------------------------------------------
-TEXT-0354
+TEXT-0352
 ----------------------------------------------------------------------------
 Copyright 2023 The Fuchsia Authors
 
@@ -29907,7 +29664,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0355
+TEXT-0353
 ----------------------------------------------------------------------------
 Copyright (c) 2018-2026 The RustCrypto Project Developers
 
@@ -29936,7 +29693,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0356
+TEXT-0354
 ----------------------------------------------------------------------------
 Copyright (c) 2019-2026 The RustCrypto Project Developers
 
@@ -29965,7 +29722,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0357
+TEXT-0355
 ----------------------------------------------------------------------------
 MIT License
 
@@ -29990,7 +29747,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------------
-TEXT-0358
+TEXT-0356
 ----------------------------------------------------------------------------
 zlib License
 
@@ -30013,7 +29770,7 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 
 ----------------------------------------------------------------------------
-TEXT-0359
+TEXT-0357
 ----------------------------------------------------------------------------
 This software is provided 'as-is', without any express or implied
 warranty. In no event will the authors be held liable for any damages
@@ -30032,7 +29789,7 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 
 ----------------------------------------------------------------------------
-TEXT-0360
+TEXT-0358
 ----------------------------------------------------------------------------
 // Copyright (c) 2022 zune-image developers
 // Licensed under the Apache License, Version 2.0
@@ -30044,7 +29801,7 @@ TEXT-0360
 // according to those terms
 
 ----------------------------------------------------------------------------
-TEXT-0361
+TEXT-0359
 ----------------------------------------------------------------------------
 Package attribution and SPDX license declaration, as supplied in Cargo.toml
 Full declared terms are included separately; SPDX template fields are not

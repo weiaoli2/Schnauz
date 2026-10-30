@@ -7,6 +7,84 @@ enum ColorTarget {
     Bg,
     Text,
     Hover,
+    Selection,
+}
+
+impl ColorTarget {
+    fn value(self, t: Theme) -> u32 {
+        match self { Self::Bg => t.bg, Self::Text => t.text, Self::Hover => t.hover, Self::Selection => t.selected }
+    }
+
+    fn apply(self, t: Theme, color: u32) -> Theme {
+        match self {
+            Self::Bg => t.with_background(color),
+            Self::Text => t.with_text(color),
+            Self::Hover => Theme { hover: color, ..t },
+            Self::Selection => Theme { selected: color, ..t },
+        }
+    }
+
+    fn reset(self, t: Theme) -> Theme {
+        let base = PRESETS[if t.is_light() { 0 } else { 1 }].1;
+        match self {
+            Self::Bg => Theme { text: t.text, text_muted: t.text_muted,
+                text_dim: t.text_dim, accent: t.accent, ..base },
+            Self::Text => Theme { text: base.text, text_muted: base.text_muted,
+                text_dim: base.text_dim, ..t },
+            _ => self.apply(t, self.value(base)),
+        }
+    }
+}
+
+fn parse_theme_hex(text: &str) -> Option<u32> {
+    let text = text.trim().strip_prefix('#').unwrap_or(text.trim());
+    (text.len() == 6 && text.bytes().all(|c| c.is_ascii_hexdigit()))
+        .then(|| u32::from_str_radix(text, 16).ok()).flatten()
+}
+
+#[cfg(test)]
+mod customization_tests {
+    use super::*;
+
+    #[test]
+    fn hex_entry_rejects_incomplete_out_of_range_and_non_hex_values() {
+        assert_eq!(parse_theme_hex(" #E7E8FB \n"), Some(0xe7e8fb));
+        assert_eq!(parse_theme_hex("171923"), Some(0x171923));
+        for text in ["", "abc", "12345", "1000000", "gggggg", "#1234567", "123 45"] {
+            assert_eq!(parse_theme_hex(text), None);
+        }
+    }
+
+    #[test]
+    fn selection_and_hover_change_only_their_own_fields() {
+        let t = PRESETS[1].1;
+        assert!(ColorTarget::Selection.apply(t, 0x314159) == Theme { selected: 0x314159, ..t });
+        assert!(ColorTarget::Hover.apply(t, 0x314159) == Theme { hover: 0x314159, ..t });
+        let custom = ColorTarget::Selection.apply(t, 0x314159);
+        assert!(ColorTarget::Selection.reset(custom) == t);
+    }
+
+    #[test]
+    fn grouped_colors_preserve_unrelated_choices_and_restore_readable_mode() {
+        let t = PRESETS[1].1;
+        let custom = ColorTarget::Text.apply(t, 0xf0eeee);
+        assert_ne!(custom.text_muted, t.text_muted);
+        assert_ne!(custom.text_dim, t.text_dim);
+        assert_eq!(custom.bg, t.bg);
+        assert_eq!(custom.selected, t.selected);
+        assert!(ColorTarget::Text.reset(custom) == t);
+        let dark_bg = ColorTarget::Bg.apply(custom, 0x202020);
+        assert_eq!(dark_bg.text, custom.text);
+        assert_eq!(dark_bg.text_muted, custom.text_muted);
+        assert_ne!(dark_bg.sidebar, t.sidebar);
+        assert_ne!(dark_bg.hover, t.hover);
+        assert_ne!(dark_bg.selected, t.selected);
+        let light_bg = ColorTarget::Bg.apply(custom, 0xfafbfd);
+        assert!(light_bg.is_light());
+        assert_eq!(light_bg.text, 0);
+        assert_eq!(light_bg.text_muted, 0);
+        assert_eq!(light_bg.text_dim, 0);
+    }
 }
 
 /// The Settings window: a tabbed customization surface.
@@ -26,6 +104,10 @@ struct Settings {
     file_access_error: Option<String>,
     /// In-progress hex color entry: (which color, typed hex digits).
     color_edit: Option<(ColorTarget, String)>,
+    color_error: Option<String>,
+    more_themes: bool,
+    custom_colors: bool,
+    expanded_color: Option<ColorTarget>,
 }
 
 /// Section names shown as nested rail items for a settings tab (and the order
@@ -89,6 +171,10 @@ impl Settings {
             keybind_error: None,
             file_access_error: None,
             color_edit: None,
+            color_error: None,
+            more_themes: false,
+            custom_colors: false,
+            expanded_color: None,
         }
     }
 
@@ -101,62 +187,53 @@ impl Settings {
         }
     }
 
-    /// Capture typed hex digits for a color field; Enter applies, Esc cancels.
+    /// Exact six-digit entry; invalid values stay editable and never change the theme.
     fn handle_hex_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
-        let Some((target, _)) = self.color_edit.clone() else {
-            return;
-        };
-        match ev.keystroke.key.as_str() {
-            "escape" => {
-                self.color_edit = None;
-                cx.notify();
-            }
-            "backspace" => {
-                if let Some((_, s)) = self.color_edit.as_mut() {
-                    s.pop();
-                }
-                cx.notify();
-            }
-            "enter" => {
-                if let Some((_, s)) = &self.color_edit {
-                    if let Ok(c) = u32::from_str_radix(s, 16) {
-                        match target {
-                            ColorTarget::Bg => {
-                                let mut nt = theme();
-                                nt.bg = c;
-                                apply_theme(nt, cx);
-                            }
-                            ColorTarget::Text => {
-                                let mut nt = theme();
-                                nt.text = c;
-                                apply_theme(nt, cx);
-                            }
-                            ColorTarget::Hover => {
-                                let mut nt = theme();
-                                nt.hover = c;
-                                apply_theme(nt, cx);
-                            }
-
+        let Some((_, text)) = self.color_edit.as_mut() else { return; };
+        if ev.keystroke.modifiers.platform {
+            match ev.keystroke.key.as_str() {
+                "v" => {
+                    if let Some(pasted) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        if let Some(color) = parse_theme_hex(&pasted) {
+                            *text = format!("{color:06x}");
+                            self.color_error = None;
+                        } else {
+                            self.color_error = Some("Use six hex digits, for example #E7E8FB.".into());
                         }
                     }
                 }
-                self.color_edit = None;
-                cx.notify();
+                "a" => { text.clear(); self.color_error = None; }
+                _ => return,
             }
+            cx.notify();
+            return;
+        }
+        match ev.keystroke.key.as_str() {
+            "escape" => { self.color_edit = None; self.color_error = None; }
+            "backspace" | "delete" => { text.pop(); self.color_error = None; }
+            "enter" => { self.apply_hex(cx); return; }
             _ => {
                 if let Some(ch) = ev.keystroke.key_char.as_ref() {
-                    // Accept up to 6 hex digits.
-                    if let Some((_, s)) = self.color_edit.as_mut() {
-                        for c in ch.chars() {
-                            if c.is_ascii_hexdigit() && s.len() < 6 {
-                                s.push(c.to_ascii_lowercase());
-                            }
-                        }
+                    for c in ch.chars().filter(|c| c.is_ascii_hexdigit()) {
+                        if text.len() < 6 { text.push(c.to_ascii_lowercase()); }
                     }
-                    cx.notify();
+                    self.color_error = None;
                 }
             }
         }
+        cx.notify();
+    }
+
+    fn apply_hex(&mut self, cx: &mut Context<Self>) {
+        let Some((target, text)) = &self.color_edit else { return; };
+        if let Some(color) = parse_theme_hex(text) {
+            apply_theme(target.apply(theme(), color), cx);
+            self.color_edit = None;
+            self.color_error = None;
+        } else {
+            self.color_error = Some("Use six hex digits, for example #E7E8FB.".into());
+        }
+        cx.notify();
     }
 
     /// Capture the next keystroke for the action being rebound.
@@ -254,6 +331,8 @@ impl Render for Settings {
                     .child(name.to_string())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.tab = i;
+                        this.color_edit = None;
+                        this.color_error = None;
                         this.section = 0;
                         this.content_scroll.set_offset(point(px(0.0), px(0.0)));
                         cx.notify();
@@ -614,11 +693,11 @@ impl Settings {
                     toggle_row(
                         "tg-palette-history",
                         "Search history",
-                        "Remember submitted file searches. Use the configured history shortcuts to revisit them.",
-                        p.palette_history,
+                        "Remember up to ten searches per project. Recall them from Search or with the history shortcuts.",
+                        p.search_history,
                         cx.listener(|_, _: &ClickEvent, _, cx| {
                             let mut np = prefs();
-                            np.palette_history = !np.palette_history;
+                            np.search_history = !np.search_history;
                             apply_prefs(np, cx);
                             cx.notify();
                         }),
@@ -645,19 +724,7 @@ impl Settings {
                         }),
                     )
                     .into_any_element(),
-                    toggle_row(
-                        "tg-waterfall",
-                        "Waterfall folder tree",
-                        "Show an expandable tree of the current folder's subfolders at the bottom of the sidebar. Click a triangle to drill in, click a name to open it in the pane.",
-                        p.waterfall,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.waterfall = !np.waterfall;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
+
 
                 ],
             ),
@@ -839,241 +906,180 @@ impl Settings {
 
     fn render_customization(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let t = theme();
-
-        // Preset palette cards.
-        let mut presets: Vec<AnyElement> = Vec::new();
-        for (i, (name, preset)) in PRESETS.iter().enumerate() {
-            let preset = *preset;
-            let selected = preset == t;
-            presets.push(
-                div()
-                    .id(("preset", i))
-                    .w(px(150.0))
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p_3()
-                    .rounded_lg()
-                    .cursor_pointer()
-                    .border_1()
-                    .border_color(if selected {
-                        rgb(t.accent)
-                    } else {
-                        rgb(t.border)
-                    })
-                    .bg(rgb(preset.bg))
-                    .hover(|s| s.border_color(rgb(t.accent)))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_1()
-                            .child(swatch_dot(preset.sidebar))
-                            .child(swatch_dot(preset.surface))
-                            .child(swatch_dot(preset.accent))
-                            .child(swatch_dot(preset.text)),
-                    )
-                    .child(div().text_color(rgb(preset.text)).child(name.to_string()))
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                        apply_theme(preset, cx);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
+        let current = PRESETS.iter().find(|(_, preset)| *preset == t)
+            .map(|(name, _)| *name).unwrap_or("Custom palette");
+        let primary = div().flex().flex_wrap().gap_3()
+            .children((0..2).map(|i| self.theme_card(i, cx)));
+        let mut theme_rows = vec![primary.into_any_element(),
+            div().id("more-themes").cursor_pointer().text_color(rgb(t.text))
+                .child(if self.more_themes { "▾ Hide additional themes" } else { "▸ More themes" })
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.more_themes = !this.more_themes; cx.notify();
+                })).into_any_element()];
+        if self.more_themes {
+            theme_rows.push(div().flex().flex_wrap().gap_2()
+                .children((2..PRESETS.len()).map(|i| self.theme_card(i, cx))).into_any_element());
         }
-        let presets_grid = div()
-            .flex()
-            .flex_wrap()
-            .gap_3()
-            .children(presets)
-            .into_any_element();
+        theme_rows.push(div().flex().flex_col().gap_2()
+            .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted))
+                .child(format!("Current: {current} · Changes apply immediately")))
+            .child(theme_preview(t)).into_any_element());
 
-        // A color control: name + description on the left, hex field on the
-        // right, and the swatch spectrum below.
-        let color_block = |title: &str,
-                           desc: &str,
-                           target: ColorTarget,
-                           current: u32,
-                           spectrum: AnyElement,
-                           hex: AnyElement| {
-            let t = theme();
-            let _ = (target, current);
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap_1()
-                                .child(div().text_color(rgb(t.text)).child(title.to_string()))
-                                .child(
-                                    div()
-                                        .text_size(px(UI_SMALL_FONT_SIZE))
-                                        .text_color(rgb(t.text_muted))
-                                        .child(desc.to_string()),
-                                ),
-                        )
-                        .child(hex),
-                )
-                .child(spectrum)
-                .into_any_element()
-        };
-
+        let mut color_rows = vec![div().id("custom-colors").flex().items_center()
+            .justify_between().gap_3().cursor_pointer()
+            .child(div().flex_1().min_w_0().child("Adjust individual colors")
+                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted))
+                    .child("Optional. Your chosen theme already includes a complete palette.")))
+            .child(if self.custom_colors { "Hide ▴" } else { "Show ▾" })
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.custom_colors = !this.custom_colors;
+                this.color_edit = None; this.color_error = None; cx.notify();
+            })).into_any_element()];
+        if self.custom_colors {
+            for (target, title, detail) in [
+                (ColorTarget::Bg, "Background", "Window and sidebar. Rebuilds matching hover and selection shades."),
+                (ColorTarget::Text, "Text", "File names, labels and secondary text."),
+                (ColorTarget::Selection, "Selection", "Selected files and the top project strip."),
+                (ColorTarget::Hover, "Hover", "Rows and controls beneath the pointer."),
+            ] {
+                color_rows.push(self.color_control(target, title, detail, cx));
+            }
+        }
         vec![
-            settings_header(
-                "Customization",
-                "Choose a theme and fine-tune the interface colors.",
-            )
-            .into_any_element(),
-            settings_section(
-                "Theme",
-                Some("Pick a starting palette, then fine-tune the colors below."),
-                vec![presets_grid],
-            ),
-            settings_section(
-                "Colors",
-                Some("Core interface colors. Type a hex value or pick from the swatches."),
-                vec![
-                    color_block(
-                        "Background",
-                        "The main window and file list.",
-                        ColorTarget::Bg,
-                        t.bg,
-                        self.color_row("bg", t.bg, |t, c| t.bg = c, cx)
-                            .into_any_element(),
-                        self.hex_field(ColorTarget::Bg, t.bg, cx).into_any_element(),
-                    ),
-                    color_block(
-                        "Text",
-                        "Primary text throughout the app.",
-                        ColorTarget::Text,
-                        t.text,
-                        self.color_row("text", t.text, |t, c| t.text = c, cx)
-                            .into_any_element(),
-                        self.hex_field(ColorTarget::Text, t.text, cx)
-                            .into_any_element(),
-                    ),
-                    color_block(
-                        "Mouseover",
-                        "The highlight behind hovered rows and buttons.",
-                        ColorTarget::Hover,
-                        t.hover,
-                        self.color_row("hover", t.hover, |t, c| t.hover = c, cx)
-                            .into_any_element(),
-                        self.hex_field(ColorTarget::Hover, t.hover, cx)
-                            .into_any_element(),
-                    ),
-                ],
-            ),
-            div()
-                .pt_1()
-                .child(reset_button(
-                    "reset-customization",
-                    "Reset Customization to Default",
-                    cx.listener(|_, _: &ClickEvent, _, cx| {
-                        apply_theme(Theme::default(), cx);
-                        apply_menu_style(MenuStyle::default(), cx);
-                        cx.notify();
-                    }),
-                ))
-                .into_any_element(),
+            settings_header("Customization", "Make Schnauz feel at home.").into_any_element(),
+            settings_section("Theme", Some("Start with Light or Dark. Extra palettes are available under More themes."), theme_rows),
+            settings_section("Colors", Some("Fine-tune only what you need."), color_rows),
+            reset_button("reset-customization", "Reset to Schnauz Light",
+                cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.color_edit = None; this.color_error = None; this.expanded_color = None;
+                    apply_theme(Theme::default(), cx); cx.notify();
+                })).into_any_element(),
         ]
     }
 
-    /// A grid of color swatches; clicking one sets a single theme field via
-    /// `set`. `tag` keeps element ids unique across rows that share colors.
-    fn color_row(
-        &self,
-        tag: &'static str,
-        current: u32,
-        set: fn(&mut Theme, u32),
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn theme_card(&self, i: usize, cx: &Context<Self>) -> AnyElement {
+        let (name, preset) = PRESETS[i];
         let t = theme();
-        let mut swatches: Vec<AnyElement> = Vec::new();
-        for c in palette_colors() {
-            let selected = c == current;
-            swatches.push(
-                div()
-                    .id((tag, c as usize))
-                    .w(px(22.0))
-                    .h(px(22.0))
-                    .rounded_md()
-                    .cursor_pointer()
-                    .bg(rgb(c))
-                    .border_2()
-                    .border_color(if selected {
-                        rgb(t.accent)
-                    } else {
-                        rgb(t.border)
-                    })
-                    .hover(|s| s.border_color(rgb(t.accent)))
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                        let mut nt = theme();
-                        set(&mut nt, c);
-                        apply_theme(nt, cx);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-        }
-        div().flex().flex_wrap().gap_1().children(swatches)
+        let selected = preset == t;
+        div().id(("preset", i)).w(px(if i < 2 { 204. } else { 142. }))
+            .flex_none().flex().flex_col().gap_2().p_3().rounded_lg().cursor_pointer()
+            .border_2().border_color(rgb(if selected { CHROME_HIGHLIGHT } else { t.border }))
+            .bg(rgb(preset.bg)).hover(|s| s.border_color(rgb(CHROME_HIGHLIGHT)))
+            .child(div().h(px(40.)).flex().rounded_md().overflow_hidden()
+                .border_1().border_color(rgb(preset.border))
+                .child(div().w(px(28.)).bg(rgb(preset.sidebar)))
+                .child(div().flex_1().p_1().flex().flex_col().gap_1().bg(rgb(preset.bg))
+                    .child(div().h(px(6.)).rounded_sm().bg(rgb(preset.selected)))
+                    .child(div().h(px(6.)).w(px(44.)).rounded_sm().bg(Theme::alpha(preset.text, 0x60)))))
+            .child(div().flex().items_center().justify_between().gap_1()
+                .text_color(rgb(preset.text)).text_size(px(UI_SMALL_FONT_SIZE))
+                .child(name.to_string()).child(if selected { "✓" } else { "" }))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.color_edit = None; this.color_error = None;
+                apply_theme(preset, cx); cx.notify();
+            })).into_any_element()
     }
 
-
-    /// A small "current value + editable hex" control for a theme color.
-    fn hex_field(
-        &self,
-        target: ColorTarget,
-        current: u32,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn color_control(&self, target: ColorTarget, title: &'static str, detail: &'static str,
+        cx: &Context<Self>) -> AnyElement {
         let t = theme();
-        let editing = self.color_edit.as_ref().filter(|(tt, _)| *tt == target);
-        let text = match editing {
-            Some((_, s)) => format!("#{s}\u{2502}"),
-            None => format!("#{current:06x}"),
-        };
-        div()
-            .id(("hex", target as usize))
-            .flex_none()
-            .px_2()
-            .py(px(2.0))
-            .rounded_md()
-            .cursor_text()
-            .bg(rgb(t.surface))
-            .border_1()
-            .border_color(if editing.is_some() {
-                rgb(t.accent)
-            } else {
-                rgb(t.border)
-            })
-            .text_size(px(UI_SMALL_FONT_SIZE))
-            .text_color(rgb(t.text))
-            .child(text)
+        let current = target.value(t);
+        let expanded = self.expanded_color == Some(target);
+        let mut row = div().flex().flex_col().gap_3().child(
+            div().id(("color-control", target as usize)).flex().items_center().gap_3().cursor_pointer()
+                .child(div().size(px(26.)).flex_none().rounded_md().bg(rgb(current))
+                    .border_1().border_color(rgb(t.border_strong)))
+                .child(div().flex_1().min_w_0().child(title)
+                    .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child(detail)))
+                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).child(format!("#{current:06X}")))
+                .child(if expanded { "▴" } else { "▾" })
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.expanded_color = if expanded { None } else { Some(target) };
+                    this.color_edit = None; this.color_error = None; cx.notify();
+                })));
+        if expanded {
+            let choices: &[u32] = match target {
+                ColorTarget::Bg => &[0xfafbfd, 0xffffff, 0xf4f1ec, 0xeff6f3, 0xeff3fa, 0xf6f2fe,
+                    0x171923, 0x1e1e22, 0x282a36, 0x20302a, 0x1a2638, 0x2a2035],
+                ColorTarget::Text => if t.is_light() {
+                    &[0x000000, 0x272a3c, 0x374151, 0x1e3a5f, 0x14532d, 0x4c3a66]
+                } else {
+                    &[0xffffff, 0xe8eaf5, 0xcdd6f4, 0xd6ecff, 0xd6f5e3, 0xece0f8]
+                },
+                ColorTarget::Selection | ColorTarget::Hover => if t.is_light() {
+                    &[0xe7e8fb, 0xdce9fc, 0xd8eee4, 0xf6e8cb, 0xf4dde5, 0xe9dff6,
+                      0xeceef6, 0xe2e5eb, 0xe0edf1, 0xede7df, 0xf2e1dc, 0xe0e8d6]
+                } else {
+                    &[0x343758, 0x263f61, 0x27483d, 0x51452b, 0x513240, 0x443456,
+                      0x2b3043, 0x373a43, 0x29434b, 0x433c34, 0x4c3630, 0x3a4430]
+                },
+            };
+            row = row.child(div().flex().flex_wrap().gap_2().children(choices.iter().map(|&color| {
+                div().id(("color-swatch", target as usize * 0x1000000 + color as usize))
+                    .size(px(26.)).rounded_md().bg(rgb(color)).border_2()
+                    .border_color(rgb(if current == color { CHROME_HIGHLIGHT } else { t.border_strong }))
+                    .cursor_pointer().tooltip(tip(format!("#{color:06X}")))
+                    .hover(|d| d.border_color(rgb(CHROME_HIGHLIGHT)))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.color_edit = None; this.color_error = None;
+                        apply_theme(target.apply(theme(), color), cx); cx.notify();
+                    }))
+            })))
+            .child(div().flex().items_center().gap_2().flex_wrap()
+                .child(div().text_size(px(UI_SMALL_FONT_SIZE)).child("Custom hex"))
+                .child(self.hex_field(target, current, cx))
+                .when(self.color_edit.as_ref().is_some_and(|(active, _)| *active == target), |d| {
+                    d.child(div().id("apply-hex").px_2().py_1().rounded_md().bg(rgb(t.surface))
+                        .border_1().border_color(rgb(t.border)).cursor_pointer().child("Apply")
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.apply_hex(cx))))
+                })
+                .child(div().id(("reset-color", target as usize)).px_2().py_1().cursor_pointer()
+                    .child("Reset color")
+                    .tooltip(tip(if t.is_light() { "Use the Schnauz Light default for this color" } else { "Use the Schnauz Dark default for this color" }))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.color_edit = None; this.color_error = None;
+                        apply_theme(target.reset(theme()), cx); cx.notify();
+                    }))));
+            if let Some(error) = &self.color_error {
+                row = row.child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text)).child(error.clone()));
+            }
+        }
+        row.into_any_element()
+    }
+
+    fn hex_field(&self, target: ColorTarget, current: u32, cx: &Context<Self>) -> impl IntoElement {
+        let t = theme();
+        let editing = self.color_edit.as_ref().filter(|(active, _)| *active == target);
+        let text = editing.map(|(_, text)| format!("#{text}│")).unwrap_or(format!("#{current:06X}"));
+        div().id(("hex", target as usize)).flex_none().w(px(100.)).px_2().py_1()
+            .rounded_md().cursor_text().bg(rgb(t.surface)).border_1()
+            .border_color(rgb(if editing.is_some() { CHROME_HIGHLIGHT } else { t.border }))
+            .text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text)).child(text)
+            .tooltip(tip("Type six hex digits or paste #RRGGBB. Enter applies; Escape cancels."))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.color_edit = Some((target, String::new()));
-                window.focus(&this.focus);
-                cx.notify();
+                if !this.color_edit.as_ref().is_some_and(|(active, _)| *active == target) {
+                    this.color_edit = Some((target, String::new())); this.color_error = None;
+                }
+                window.focus(&this.focus); cx.notify();
             }))
     }
 }
 
-/// A small color dot used in preset previews.
-pub(super) fn swatch_dot(color: u32) -> impl IntoElement {
-    div().w(px(14.0)).h(px(14.0)).rounded_full().bg(rgb(color))
+/// A small real-theme preview; no file access or native views.
+fn theme_preview(t: Theme) -> impl IntoElement {
+    div().w_full().flex().rounded_lg().overflow_hidden().border_1().border_color(rgb(t.border))
+        .child(div().flex_none().w(px(88.)).p_3().bg(rgb(t.sidebar)).text_color(rgb(t.text))
+            .child("Folders")
+            .child(div().mt_2().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted)).child("Projects")))
+        .child(div().flex_1().min_w_0().flex().flex_col().bg(rgb(t.bg)).text_color(rgb(t.text))
+            .child(div().h(px(24.)).px_3().flex().items_center().bg(rgb(t.selected))
+                .text_size(px(UI_SMALL_FONT_SIZE)).child("Project strip"))
+            .children([(0, "Documents", t.bg), (1, "Selected file.txt", t.selected), (2, "Hovered file.txt", t.hover)]
+                .into_iter().map(move |(index, name, bg)| div().h(px(26.)).px_3().flex().items_center()
+                    .gap_3().bg(rgb(bg)).child(div().flex_1().min_w_0().truncate().child(name))
+                    .child(div().text_size(px(UI_SMALL_FONT_SIZE)).text_color(rgb(t.text_muted))
+                        .child(if index == 0 { "Folder" } else { "Text" })))))
 }
-
-
 
 /// Pretty-print a stored keystroke string ("cmd-shift-p") with Mac symbols.
 pub(super) fn pretty_keystroke(s: &str) -> String {

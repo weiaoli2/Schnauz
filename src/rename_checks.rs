@@ -52,7 +52,7 @@ pub(super) fn run(
                 b.palette_open=true;
                 b.file_search.pane=pane; b.file_search.tab=b.pane(pane).active;
                 b.file_search.editing=false;
-                    b.palette_items=vec![PaletteItem { title:"Grüße.txt".into(), subtitle:String::new(), action:Action::Open(path.clone(),false), is_dir:false }];
+                    b.palette_items=vec![PaletteItem { title:"Grüße.txt".into(), action:Action::Open(path.clone(),false), is_dir:false }];
             }
             let nodes=b.menu_nodes_root(pane,Some((path.clone(),false)),cx);
             assert!(!nodes.iter().any(|n|matches!(n,MenuNode::Item {label,..} if label.starts_with("Quick Look") || label.starts_with("New "))));

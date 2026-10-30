@@ -83,7 +83,9 @@ mod file_access;
 mod path_editor;
 mod directory_listing;
 mod diagnostics;
-use directory_listing::{read_entries, read_entries_fast};
+use directory_listing::read_entries;
+#[cfg(any(test,feature="ui-checks"))]
+use directory_listing::read_entries_fast;
 use browser_windows::{FolderViewsGlobal, ProjectLibraryGlobal};
 mod text_preview;
 mod text_view;
@@ -91,6 +93,7 @@ mod native_preview;
 mod quick_actions;
 mod new_text_file;
 mod entry_filter;
+mod trash;
 mod project_file_filter;
 use entry_filter::EntryFilter;
 mod schnauz;
@@ -105,6 +108,9 @@ mod search_ui;
 mod space_map;
 mod space_ui;
 mod cache;
+mod workers;
+mod persistence;
+mod file_transfer;
 mod folder_watch;
 mod folder_views;
 mod list_ui;
@@ -164,7 +170,7 @@ struct Prefs {
     info: bool,
     /// Show the leading ".." row that goes up one level.
     show_parent: bool,
-    /// Collapse the left sidebar to its expand button.
+    /// Hide the left sidebar; a header overlay offers reopening.
     sidebar_collapsed: bool,
     /// Percentage used: yellow begins at warning, red above critical.
     drive_warning: u8,
@@ -175,7 +181,7 @@ struct Prefs {
     file_access_intro_seen: bool,
     /// How many Recents to show in the sidebar (0 hides the section).
     /// Give the command palette (Cmd+P) its own Up/Down query history.
-    palette_history: bool,
+    search_history: bool,
     /// Enable custom sidebar "groups" of files/folders.
     groups_enabled: bool,
     /// Show the always-on "Filter" pill in the bottom-right (/ still works).
@@ -189,12 +195,6 @@ struct Prefs {
     ssh_use_system: bool,
     /// Whether the user has made the first-run SFTP auth choice yet.
     ssh_configured: bool,
-    /// Show the expandable "waterfall" folder tree at the bottom of the sidebar.
-    waterfall: bool,
-    /// Command palette / search window opacity, as a percent (20–100). Lower is
-    /// more see-through; the default is nearly opaque so it doesn't read as a
-    /// confusing floating pane over the explorer.
-    palette_opacity: u8,
 }
 
 impl Default for Prefs {
@@ -213,15 +213,13 @@ impl Default for Prefs {
             drive_critical: 90,
             drive_free_percent: false,
             file_access_intro_seen: false,
-            palette_history: false,
+            search_history: true,
             groups_enabled: false,
             show_filter_button: true,
             show_fps: false,
             script_actions: false,
             ssh_use_system: true,
             ssh_configured: false,
-            waterfall: false,
-            palette_opacity: 92,
         }
     }
 }
@@ -245,27 +243,19 @@ thread_local! {
         drive_critical: 90,
         drive_free_percent: false,
         file_access_intro_seen: false,
-        palette_history: false,
+        search_history: true,
         groups_enabled: false,
         show_filter_button: true,
         show_fps: false,
         script_actions: false,
         ssh_use_system: true,
         ssh_configured: false,
-        waterfall: false,
-        palette_opacity: 92,
     }) };
 }
 
 /// The active preferences. Read this anywhere in render code.
 fn prefs() -> Prefs {
     ACTIVE_PREFS.with(|p| *p.borrow())
-}
-
-/// The command palette's background alpha (0–255) from the opacity pref.
-fn palette_alpha() -> u32 {
-    let pct = prefs().palette_opacity.clamp(20, 100) as u32;
-    pct * 255 / 100
 }
 
 fn set_active_prefs(p: Prefs) {
@@ -277,67 +267,6 @@ fn apply_prefs(p: Prefs, cx: &mut App) {
     set_active_prefs(p);
     save_prefs(&p);
     cx.set_global(PrefsGlobal(p));
-    cx.refresh_windows();
-}
-
-// ----- menu style (right-click / dropdown menu appearance) -------------------
-
-/// Customizable look of pop-up menus (right-click menu, dropdowns).
-#[derive(Clone, Copy, PartialEq)]
-struct MenuStyle {
-    /// Menu background color.
-    bg: u32,
-    /// Menu text ("letter") color.
-    text: u32,
-    /// Background opacity, 0..=100 percent.
-    opacity: u8,
-    /// Menu font size in pixels.
-    font_px: f32,
-    /// True once the user picks explicit menu colors. While false, `bg`/`text`
-    /// follow the active theme (so switching to a light theme lightens menus
-    /// too); opacity and size are always user-controlled.
-    custom: bool,
-}
-
-impl Default for MenuStyle {
-    fn default() -> Self {
-        let d = Theme::default();
-        MenuStyle { bg: d.surface, text: d.text, opacity: 100, font_px: UI_FONT_SIZE, custom: false }
-    }
-}
-
-impl MenuStyle {
-    /// Re-derive `bg`/`text` from the theme unless the user set explicit colors.
-    fn follow_theme(&mut self, t: &Theme) {
-        if !self.custom {
-            self.bg = t.surface;
-            self.text = t.text;
-        }
-    }
-}
-
-
-#[derive(Clone, Copy)]
-struct MenuStyleGlobal(MenuStyle);
-impl gpui::Global for MenuStyleGlobal {}
-
-thread_local! {
-    static ACTIVE_MENU: RefCell<MenuStyle> = RefCell::new(MenuStyle::default());
-}
-
-fn menu_style() -> MenuStyle {
-    ACTIVE_MENU.with(|m| *m.borrow())
-}
-
-fn set_active_menu(m: MenuStyle) {
-    ACTIVE_MENU.with(|c| *c.borrow_mut() = m);
-}
-
-/// Apply a menu style everywhere: render copy, persist, global, repaint.
-fn apply_menu_style(m: MenuStyle, cx: &mut App) {
-    set_active_menu(m);
-    save_menu_style(&m);
-    cx.set_global(MenuStyleGlobal(m));
     cx.refresh_windows();
 }
 
@@ -491,12 +420,12 @@ impl KeyAction {
             KeyAction::Undo => "Undo last file operation",
             KeyAction::Paste => "Paste path or files",
             KeyAction::Copy => "Copy files",
-            KeyAction::PaletteCursorStart => "Palette: cursor to start",
-            KeyAction::PaletteCursorEnd => "Palette: cursor to end",
-            KeyAction::PaletteSelectAll => "Palette: select all",
-            KeyAction::PaletteDeleteToStart => "Palette: delete to start",
-            KeyAction::PaletteHistoryPrev => "Palette: previous history",
-            KeyAction::PaletteHistoryNext => "Palette: next history",
+            KeyAction::PaletteCursorStart => "Search: cursor to start",
+            KeyAction::PaletteCursorEnd => "Search: cursor to end",
+            KeyAction::PaletteSelectAll => "Search: select all",
+            KeyAction::PaletteDeleteToStart => "Search: delete to start",
+            KeyAction::PaletteHistoryPrev => "Search: previous history",
+            KeyAction::PaletteHistoryNext => "Search: next history",
         }
     }
 
@@ -689,11 +618,6 @@ fn sort_key_from_name(s: &str) -> Option<SortKey> {
 const ICON_W: f32 = 18.0;
 
 // Command-palette result row height, and how many show before scrolling.
-const PALETTE_ROW_H: f32 = 26.0;
-const PALETTE_MAX_ROWS: usize = 7;
-/// Sidebar width; also the left edge of the content/canvas area.
-/// Sidebar width when collapsed to the expand button only.
-const SIDEBAR_COLLAPSED_W: f32 = 52.0;
 /// Height of the custom titlebar strip (the OS titlebar is transparent, so this
 /// colored bar sits behind the traffic lights).
 const TITLEBAR_H: f32 = 56.0;
@@ -734,22 +658,6 @@ struct ScrollDrag {
 const FOLDER_KEY: &str = "\u{0}folder";
 const FILE_KEY: &str = "\u{0}file";
 const APP_ICON_PREFIX: &str = "\u{0}app:";
-
-/// What activating a command-palette item does.
-/// One entry in the palette's ⌘K actions panel.
-#[derive(Clone, Copy, PartialEq)]
-enum PaletteAction {
-    /// Open the item (navigate into a dir / launch a file's default app).
-    Open,
-    /// Navigate to the file's enclosing folder and select it.
-    RevealSchnauz,
-    /// Open the folder (or the file's folder) in a new tab.
-    OpenNewTab,
-    /// Reveal in Finder.
-    RevealFinder,
-    /// Copy the full path to the clipboard.
-    CopyPath,
-}
 
 #[derive(Clone)]
 enum Action {
@@ -909,7 +817,6 @@ enum SidebarTarget {
 /// what happens on activation.
 struct PaletteItem {
     title: String,
-    subtitle: String,
     action: Action,
     is_dir: bool,
 }
@@ -1020,6 +927,9 @@ struct Tab {
     terminal_height: f32,
     entries: Vec<Entry>,
     listing_error: Option<directory_listing::ListingError>,
+    listing_dirty: bool,
+    local_loading: bool,
+    listing_cancel: Option<Arc<AtomicBool>>,
     /// Back/forward navigation history and our position within it.
     history: Vec<PathBuf>,
     hist_pos: usize,
@@ -1038,7 +948,7 @@ struct Tab {
     entry_filter: EntryFilter,
     project_file_filter: project_file_filter::Rule,
     show_hidden: bool,
-    has_hidden: bool,
+    hidden_count: usize,
     copy_feedback: Option<(String, Instant)>,
     find_results: Vec<usize>,
     /// Text cursor (char index) within `find_query`.
@@ -1086,6 +996,7 @@ struct Tab {
 
 impl Tab {
     fn install_listing(&mut self, result: std::io::Result<Vec<Entry>>) {
+        self.listing_dirty = false;
         (self.entries, self.listing_error) = directory_listing::unpack(result);
         sort_entries(&mut self.entries, self.sort_key, self.sort_asc);
         self.recompute_results();
@@ -1095,6 +1006,10 @@ impl Tab {
         if let Some(location)=self.network.as_ref() {
             self.network=location.at_path(&dir);
         }
+        if let Some(cancel) = self.listing_cancel.take() {cancel.store(true,Ordering::Release);}
+        self.listing_dirty = self.remote.is_none();
+        self.local_loading = false;
+        self.entries.clear();
         self.current_dir = dir;
         self.editing_path = None;
         self.path_anchor = None;
@@ -1128,7 +1043,7 @@ impl Tab {
     }
 
     fn is_filtered(&self) -> bool {
-        self.project_file_filter.active() || self.entry_filter != EntryFilter::All || self.find_query.is_some() || (!self.show_hidden && self.has_hidden)
+        self.project_file_filter.active() || self.entry_filter != EntryFilter::All || self.find_query.is_some() || (!self.show_hidden && self.hidden_count > 0)
     }
 
     fn visible_entries(&self) -> impl Iterator<Item = &Entry> {
@@ -1146,7 +1061,7 @@ impl Tab {
 
     /// Combine the type switch with the text query, preserving the current sort.
     fn recompute_results(&mut self) {
-        self.has_hidden = self.entries.iter().any(Entry::is_hidden);
+        self.hidden_count = self.entries.iter().filter(|entry| entry.is_hidden()).count();
         let tab = self;
         let q = tab.find_query.as_deref().unwrap_or("").trim();
         if q.is_empty() {
@@ -1216,15 +1131,19 @@ impl Tab {
         tab.find_results = scored.into_iter().map(|(_, i)| i).collect();
     }
 
+    #[cfg(any(test,feature="ui-checks"))]
+    fn fixture(dir: PathBuf) -> Self {
+        let mut tab=Self::new(dir.clone());tab.install_listing(read_entries_fast(&dir));tab
+    }
+
     fn new(dir: PathBuf) -> Self {
         Self::at_location(dir, None)
     }
 
     fn at_location(dir: PathBuf, remote: Option<SftpServer>) -> Self { Self::at_network_location(dir,remote,None) }
     fn at_network_location(dir:PathBuf,remote:Option<SftpServer>,network:Option<network::Location>)->Self {
-        // Remote paths belong to the server, never read them on this Mac.
-        let listing = if remote.is_none() && network.is_none() { read_entries_fast(&dir) } else { Ok(Vec::new()) };
-        let (entries, listing_error) = directory_listing::unpack(listing);
+        // Constructors never touch the filesystem, including restored/parked tabs.
+        let listing_dirty = remote.is_none() && network.is_none();
         let mut tab = Tab {
             id: NEXT_TAB_ID.fetch_add(1, Ordering::Relaxed),
             current_dir: dir.clone(),
@@ -1234,8 +1153,11 @@ impl Tab {
             terminal_restore: None,
             terminal_restore_attempted: false,
             terminal_height: 290.0,
-            entries,
-            listing_error,
+            entries: Vec::new(),
+            listing_error: None,
+            listing_dirty,
+            local_loading: false,
+            listing_cancel: None,
             history: vec![dir.clone()],
             hist_pos: 0,
             editing_path: None,
@@ -1247,7 +1169,7 @@ impl Tab {
             entry_filter: EntryFilter::All,
             project_file_filter: Default::default(),
             show_hidden: false,
-            has_hidden: false,
+            hidden_count: 0,
             copy_feedback: None,
             find_results: Vec::new(),
             find_cursor: 0,
@@ -1275,6 +1197,10 @@ impl Tab {
         tab.recompute_results();
         tab
     }
+}
+
+impl Drop for Tab {
+    fn drop(&mut self) {if let Some(cancel)=self.listing_cancel.take(){cancel.store(true,Ordering::Release);}}
 }
 
 /// A pane: a column in the canvas holding a stack of tabs.
@@ -1358,6 +1284,9 @@ impl Render for TabDragPreview {
 /// The root view: a workspace of one or two side-by-side panes.
 struct Schnauz {
     volumes: Vec<volumes::Volume>,
+    volumes_generation: u64,
+    volumes_loading: bool,
+    volumes_refresh_pending: bool,
     panes: Vec<Pane>,
     active_pane: usize,
     /// Left pane's width fraction when two panes are shown (0.2..0.8).
@@ -1402,7 +1331,7 @@ struct Schnauz {
     video_preview: Option<Rc<video_preview::Session>>,
     text_view: Option<Rc<text_view::Session>>,
     info_pending: RefCell<HashMap<PathBuf, Arc<AtomicBool>>>,
-    pdf_pending: RefCell<HashSet<(PathBuf,usize)>>,
+    pdf_pending: RefCell<HashMap<(PathBuf,usize),Arc<AtomicBool>>>,
     query: String,
     /// Text-cursor position in `query`, as a char index (0..=char count).
     query_cursor: usize,
@@ -1410,16 +1339,9 @@ struct Schnauz {
     /// the range between them is selected; Cmd+A selects all, Option+Shift+Arrow
     /// extends by word. `None` means no selection.
     query_anchor: Option<usize>,
-    /// Past palette queries (newest last), when the history setting is on.
-    palette_hist: Vec<String>,
-    /// Which history entry is being browsed with Up/Down (None = live query).
-    palette_hist_pos: Option<usize>,
     palette_items: Vec<PaletteItem>,
     selected: usize,
-    /// The palette's ⌘K actions panel: selected action index (None = closed).
-    palette_actions: Option<usize>,
     search_gen: u64,
-    palette_scroll: ScrollHandle,
     context_menu: Option<ContextMenu>,
     native_menu_pending: bool,
     /// In-progress inline rename, if any.
@@ -1445,6 +1367,9 @@ struct Schnauz {
     sort_menu: Option<(usize, f32, f32)>,
     /// Pending "move to Trash" confirmation: (pane, paths).
     confirm_delete: Option<(usize, Vec<PathBuf>)>,
+    /// Network items are deleted directly after explicit permanent confirmation.
+    permanent_delete: Option<trash::Confirmation>,
+    delete_generation: u64,
     /// Monotonic counter tagging each directory load (for stale-result guards).
     next_load_gen: u64,
     /// In-progress marquee (box) selection: (pane, start, current) window coords.
@@ -1467,14 +1392,6 @@ struct Schnauz {
     hovered: Option<(usize, PathBuf)>,
     /// Last SFTP error, shown in the fixed footer until dismissed.
     remote_error: Option<String>,
-    /// Waterfall sidebar tree: which folders are expanded, their cached child
-    /// subfolders, and which are being loaded (to avoid duplicate reads).
-    waterfall_expanded: HashSet<PathBuf>,
-    waterfall_children: HashMap<PathBuf, Vec<PathBuf>>,
-    waterfall_pending: HashSet<PathBuf>,
-    /// Each cached waterfall folder's mtime, so the folder watcher can spot an
-    /// outside change and invalidate just that folder for a live refresh.
-    waterfall_mtime: HashMap<PathBuf, SystemTime>,
     /// Cloud files with a download/evict in flight — shown with the syncing
     /// badge until the operation finishes and the listing is re-read.
     cloud_busy: HashSet<PathBuf>,
@@ -1537,7 +1454,13 @@ impl Schnauz {
         cx.on_app_quit(|this, cx| {
             this.save_session(cx);
             let job = this.folder_views.borrow().write_job();
-            async move { if let Some(job) = job { let _ = job.run(); } }
+            async move {
+                let _=workers::run("schnauz-save-on-quit",move|| {
+                    let result=persistence::flush_all();
+                    if let Some(job)=job {let _=job.run();}
+                    result
+                }).await;
+            }
         }).detach();
         ensure_base_icons(); // real folder/file icons ready before first render
         cx.observe_global::<ProjectLibraryGlobal>(|this, cx| this.observe_project_library(cx)).detach();
@@ -1585,12 +1508,6 @@ impl Schnauz {
             cx.notify();
         })
         .detach();
-        // Sync + repaint whenever the menu style changes (e.g. from Settings).
-        cx.observe_global::<MenuStyleGlobal>(|_, cx| {
-            set_active_menu(cx.global::<MenuStyleGlobal>().0);
-            cx.notify();
-        })
-        .detach();
         // Sync the keymap when it changes (e.g. from the Settings window).
         cx.observe_global::<KeymapGlobal>(|_, cx| {
             set_active_keymap(cx.global::<KeymapGlobal>().0.clone());
@@ -1614,10 +1531,9 @@ impl Schnauz {
                     (dirs, previews)
                 }) { Ok(paths) => paths, Err(_) => break };
                 let wanted = dirs.iter().flatten().cloned().chain(previews.iter().cloned()).collect();
-                let (returned, changed) = cx.background_spawn(async move {
-                    let changed = watcher.changes(wanted); (watcher, changed)
-                }).await;
-                watcher = returned;
+                let result=workers::run("schnauz-folder-watch",move||{let changed=watcher.changes(wanted);(watcher,changed)}).await;
+                let Ok((returned,changed))=result else{break;};
+                watcher=returned;
                 if this.update(cx, |this,cx| {
                     this.refresh_changed_previews(&changed, cx);
                     for (pane,dir) in dirs.into_iter().enumerate() {
@@ -1629,7 +1545,6 @@ impl Schnauz {
 
                     }
                     if maintenance.elapsed() >= Duration::from_secs(1) {
-                        this.refresh_waterfall(cx);
                         this.save_session(cx);
                         maintenance = Instant::now();
                     }
@@ -1640,6 +1555,7 @@ impl Schnauz {
         // programmatically and log what the auto-scroll loop does. Synthetic OS
         // mouse events don't reach gpui, so this is how the mechanics are
         // verified end-to-end in-process.
+        #[cfg(feature="ui-checks")]
         if std::env::var_os("SCHNAUZ_MQ_SIM").is_some() {
             cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(Duration::from_secs(3)).await;
@@ -1691,6 +1607,9 @@ impl Schnauz {
         Self {
             panes: vec![Pane { tabs: vec![Tab::at_network_location(location.path, location.server, location.network)], active: 0 }],
             volumes: Vec::new(),
+            volumes_generation: 0,
+            volumes_loading: false,
+            volumes_refresh_pending: false,
             active_pane: 0,
             split_ratio: 0.5,
             divider_drag: None,
@@ -1719,17 +1638,13 @@ impl Schnauz {
             video_preview: None,
             text_view: None,
             info_pending: RefCell::new(HashMap::new()),
-            pdf_pending: RefCell::new(HashSet::new()),
+            pdf_pending: RefCell::new(HashMap::new()),
             query: String::new(),
             query_cursor: 0,
             query_anchor: None,
-            palette_hist: read_string_list("palette_history.txt"),
-            palette_hist_pos: None,
             palette_items: Vec::new(),
             selected: 0,
-            palette_actions: None,
             search_gen: 0,
-            palette_scroll: ScrollHandle::new(),
             context_menu: None,
             native_menu_pending: false,
             rename: None,
@@ -1748,6 +1663,8 @@ impl Schnauz {
             todoist: todoist::PaneState::default(),
             sort_menu: None,
             confirm_delete: None,
+            permanent_delete: None,
+            delete_generation: 0,
             next_load_gen: 0,
             marquee: None,
             drag_candidate: None,
@@ -1758,10 +1675,6 @@ impl Schnauz {
             preview_page: 0,
             hovered: None,
             remote_error: None,
-            waterfall_expanded: HashSet::new(),
-            waterfall_children: HashMap::new(),
-            waterfall_pending: HashSet::new(),
-            waterfall_mtime: HashMap::new(),
             cloud_busy: HashSet::new(),
             notice: None,
             notice_gen: 0,
@@ -1818,6 +1731,9 @@ impl Schnauz {
         self.active_pane = pane.min(self.panes.len() - 1);
         let pane = self.active_pane;
         self.rename = None;
+        if let Some((path, _)) = &target {
+            self.select_context_entry(pane, path.clone(), cx);
+        }
         if direct_actions {
             if let Some((path, is_dir)) = target {
                 self.open_quick_actions(pane, x, y, path, is_dir, cx);
@@ -1869,49 +1785,100 @@ impl Schnauz {
         self.reload_pane(pane, cx);
     }
 
-    /// Load (or reload) a pane's directory: a near-instant cheap pass for first
-    /// paint, then a background pass that fills in sizes/dates without blocking.
+    fn find_tab_mut(&mut self, id: u64) -> Option<&mut Tab> {
+        if let Some(tab) = self
+            .panes
+            .iter_mut()
+            .flat_map(|p| &mut p.tabs)
+            .find(|t| t.id == id)
+        {
+            return Some(tab);
+        }
+        self.project_sessions
+            .values_mut()
+            .flat_map(|s| &mut s.panes)
+            .flat_map(|p| &mut p.tabs)
+            .find(|t| t.id == id)
+    }
+
+    fn ensure_local_listings(&mut self, cx: &mut Context<Self>) {
+        let dirty = self
+            .panes
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| {
+                p.active_tab().listing_dirty
+                    && p.active_tab().remote.is_none()
+                    && p.active_tab().network.is_none()
+            })
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+        for pane in dirty {
+            self.reload_pane(pane, cx);
+        }
+    }
+
+    /// Both the names-only pass and metadata fill run away from the UI/pool.
     fn reload_pane(&mut self, pane: usize, cx: &mut Context<Self>) {
-        let rule=self.projects.sidebar().file_filter.clone();
+        let rule = self.projects.sidebar().file_filter.clone();
         self.tab_mut(pane).apply_project_file_filter(&rule);
-        // Remote (SFTP) tabs load over the network on a background thread.
         if self.tab(pane).remote.is_some() {
             self.reload_remote_pane(pane, cx);
             return;
         }
         self.tab_mut(pane).ssh_progress = None;
-        if self.tab(pane).network.is_some() { self.reload_network_pane(pane,cx);return; }
-        let dir = self.tab(pane).current_dir.clone();
-        self.tab_mut(pane).install_listing(read_entries_fast(&dir));
+        if self.tab(pane).network.is_some() {
+            self.reload_network_pane(pane, cx);
+            return;
+        }
         self.next_load_gen += 1;
         let gen = self.next_load_gen;
-        self.tab_mut(pane).load_gen = gen;
-        self.sort_tab(pane);
-        if self.tab(pane).is_filtered() {
-            self.recompute_find(pane);
+        let tab = self.tab_mut(pane);
+        if let Some(cancel) = tab.listing_cancel.take() {
+            cancel.store(true, Ordering::Release);
         }
+        let cancel = Arc::new(AtomicBool::new(false));
+        tab.listing_cancel = Some(cancel.clone());
+        tab.local_loading = true;
+        tab.listing_dirty = false;
+        tab.listing_error = None;
+        tab.load_gen = gen;
+        let (id, dir) = (tab.id, tab.current_dir.clone());
         cx.notify();
-        self.prewarm_icons(cx);
-        if self.tab(pane).listing_error.is_some() { return; }
-
-        // Fill full metadata in the background, then swap it in if still current.
         cx.spawn(async move |this, cx| {
-            let d = dir.clone();
-            let full = cx.background_spawn(async move { read_entries(&d) }).await;
-            let _ = this.update(cx, |this, cx| {
-                if pane < this.panes.len()
-                    && this.tab(pane).load_gen == gen
-                    && this.tab(pane).current_dir == dir
-                {
-                    this.tab_mut(pane).install_listing(full);
-                    this.sort_tab(pane);
-                    if this.tab(pane).is_filtered() {
-                        this.recompute_find(pane);
-                    }
-                    cx.notify();
-                    this.prewarm_icons(cx);
+            for full in [false, true] {
+                if cancel.load(Ordering::Acquire) {
+                    return;
                 }
-            });
+                let (path, stop) = (dir.clone(), cancel.clone());
+                let result = workers::run("schnauz-folder-listing", move || {
+                    directory_listing::read_cancellable(&path, full, &stop)
+                })
+                .await
+                .unwrap_or_else(|error| Err(std::io::Error::other(error)));
+                let success = result.is_ok();
+                let current = this
+                    .update(cx, |this, cx| {
+                        let Some(tab) = this.find_tab_mut(id).filter(|t| {
+                            t.load_gen == gen
+                                && t.current_dir == dir
+                                && !cancel.load(Ordering::Acquire)
+                        }) else {
+                            return false;
+                        };
+                        tab.install_listing(result);
+                        tab.local_loading = success && !full;
+                        if !success || full {
+                            tab.listing_cancel = None;
+                        }
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !current || !success {
+                    return;
+                }
+            }
         })
         .detach();
     }
@@ -1934,23 +1901,26 @@ impl Schnauz {
         cx.notify();
         let tab_id = self.tab(pane).id;
         let progress = self.start_ssh_progress(pane, cx);
+        if let Some(cancel)=self.tab_mut(pane).listing_cancel.take(){cancel.store(true,Ordering::Release);}
+        let cancel=Arc::new(AtomicBool::new(false));
+        self.tab_mut(pane).listing_cancel=Some(cancel.clone());
         let use_system = prefs().ssh_use_system;
         cx.spawn(async move |this, cx| {
             let s = server.clone();
             let p = path.clone();
-            let result = cx
-                .background_spawn(async move {
-                    let result = sftp_list_progress(&s, &p, use_system, Some(&progress));
-                    progress.finish();
-                    result
-                })
-                .await;
+            let stop=cancel.clone();
+            let result = workers::run("schnauz-sftp-listing",move || {
+                let result=sftp_batch_cancellable(&s,&remote_listing::list_command(&p)?,use_system,Some(&progress),stop,None).map(|text|parse_sftp_ls(&text));
+                progress.finish();result
+            }).await.and_then(|r|r);
             let _ = this.update(cx, |this, cx| {
+                if cancel.load(Ordering::Acquire){return;}
                 let Some((pane, tab_ix)) = this.panes.iter().enumerate().find_map(|(pi, p)|
                     p.tabs.iter().position(|t| t.id == tab_id && t.load_gen == gen && t.current_dir == dir).map(|ti| (pi, ti))) else { return; };
                 if this.panes[pane].active != tab_ix {
                     let tab = &mut this.panes[pane].tabs[tab_ix];
                     tab.ssh_progress = None;
+                    tab.listing_cancel = None;
                     match result {
                         Ok(entries) => {
                             tab.entries = entries;
@@ -1969,6 +1939,7 @@ impl Schnauz {
                     return;
                 }
                 this.tab_mut(pane).ssh_progress = None;
+                this.tab_mut(pane).listing_cancel = None;
                 match result {
                     Ok(entries) => {
                         this.tab_mut(pane).entries = entries;
@@ -2000,13 +1971,14 @@ impl Schnauz {
     where
         F: FnOnce() -> Result<(), String> + Send + 'static,
     {
+        let tab_id=self.tab(pane).id;
         cx.spawn(async move |this, cx| {
-            let result = cx.background_spawn(async move { op() }).await;
+            let result = workers::result("schnauz-sftp-operation",op).await;
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(()) => {
                         this.remote_error = None;
-                        if pane < this.panes.len() {
+                        if pane < this.panes.len() && this.tab(pane).id==tab_id {
                             this.reload_pane(pane, cx);
                         }
                     }
@@ -2049,8 +2021,7 @@ impl Schnauz {
         cx.spawn(async move |this, cx| {
             let s = server.clone();
             let rp = remote_path.clone();
-            let r = cx
-                .background_spawn(async move {
+            let r = workers::result("schnauz-sftp-create",move || {
                     if is_dir {
                         sftp_mkdir(&s, &rp, use_system)
                     } else {
@@ -2089,7 +2060,7 @@ impl Schnauz {
         let id = self.begin_file_job(format!("Copying {} to {}", items_label(locals.len()), server.name), prog.clone(), cx);
         cx.spawn(async move |this, cx| {
             let destination = remote_dir.clone();
-            let result = cx.background_spawn(async move {
+            let result = workers::result("schnauz-sftp-transfer",move || {
                 let mut commands = Vec::new();
                 for local in locals {
                     let name = local.file_name().ok_or("Invalid source filename")?;
@@ -2114,8 +2085,8 @@ impl Schnauz {
     fn sort_tab(&mut self, pane: usize) {
         let (key, asc) = (self.tab(pane).sort_key, self.tab(pane).sort_asc);
         sort_entries(&mut self.tab_mut(pane).entries, key, asc);
-        let hidden = self.tab(pane).entries.iter().any(Entry::is_hidden);
-        self.tab_mut(pane).has_hidden = hidden;
+        let hidden = self.tab(pane).entries.iter().filter(|entry| entry.is_hidden()).count();
+        self.tab_mut(pane).hidden_count = hidden;
     }
 
     /// Set the sort criterion (clicking the same column toggles direction).
@@ -2238,14 +2209,15 @@ impl Schnauz {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "download".into());
         let dest_dir = dest_dir.unwrap_or_else(|| home_dir().join("Downloads"));
-        let local = unique_child(&dest_dir, &name);
+        // Keep the extension last so duplicate downloads retain file associations.
+        let local = unique_dest(&dest_dir, &name);
         let remote = remote_path.to_string_lossy().into_owned();
         let use_system = prefs().ssh_use_system;
         let prog = Arc::new(JobProgress::default());
         *prog.network.lock().unwrap() = Some(transfer_status::Meter::default());
         let id = self.begin_file_job(format!("Copying {} to {}", name, path_label(&dest_dir)), prog.clone(), cx);
         cx.spawn(async move |this, cx| {
-            let result = cx.background_spawn(async move {
+            let result = workers::result("schnauz-sftp-download",move || {
                 fs::create_dir_all(local.parent().unwrap_or(&local)).map_err(|e|e.to_string())?;
                 let script = format!("get -R {} {}", sftp_path_arg(&remote)?, sftp_path_arg(local.to_str().ok_or("Unsupported local path")?)?);
                 transfer_status::sftp(&server, &script, use_system, &prog).map(|_|local)
@@ -2277,20 +2249,27 @@ impl Schnauz {
             return;
         }
         paths.sort();
-        self.confirm_delete = Some((pane, paths));
+        if self.tab(pane).remote.is_some() {
+            self.confirm_delete = Some((pane, paths));
+        } else {
+            self.request_local_delete(pane, paths, cx);
+        }
         cx.notify();
     }
 
     /// Carry out a confirmed delete: Trash locally, or permanently remove on a
     /// remote server (no Trash exists there).
     fn perform_delete(&mut self, cx: &mut Context<Self>) {
+        if let Some(confirmation) = self.permanent_delete.take() {
+            self.start_permanent_delete(confirmation.targets, cx);
+            cx.notify();
+            return;
+        }
         if let Some((pane, paths)) = self.confirm_delete.take() {
-            {
+            if let Some(server) = self.tab(pane).remote.clone() {
                 let tab = self.tab_mut(pane);
                 tab.selection.clear();
                 tab.anchor = None;
-            }
-            if let Some(server) = self.tab(pane).remote.clone() {
                 let use_system = prefs().ssh_use_system;
                 let remote_paths: Vec<String> =
                     paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
@@ -2313,18 +2292,8 @@ impl Schnauz {
 
     /// Move local items to the Trash, remembering where each went so ⌘Z can
     /// put them back.
-    fn trash_items(&mut self, pane: usize, paths: &[PathBuf], cx: &mut Context<Self>) {
-        let moved: Vec<(PathBuf, PathBuf)> = paths
-            .iter()
-            .filter_map(|p| trash_path(p).map(|t| (p.clone(), t)))
-            .collect();
-        if moved.is_empty() {
-            return;
-        }
-        if moved.iter().all(|(_, t)| !t.as_os_str().is_empty()) {
-            self.push_undo(UndoOp::Trashed(moved));
-        }
-        self.refresh_pane(pane, cx);
+    fn trash_items(&mut self, _pane: usize, paths: &[PathBuf], cx: &mut Context<Self>) {
+        self.start_trash(paths.to_vec(), cx);
     }
 
     /// Re-read every pane's directory (after a move that may affect two panes).
@@ -2398,13 +2367,16 @@ impl Schnauz {
         undoable: bool,
         cx: &mut Context<Self>,
     ) {
+        let project=self.projects.active;
+        let affected=pairs.iter().flat_map(|(a,b)|[a.parent(),b.parent()]).flatten().map(Path::to_path_buf).collect::<HashSet<_>>();
         let prog = Arc::new(JobProgress::default());
         let id = self.begin_file_job(label, prog.clone(), cx);
         cx.spawn(async move |this, cx| {
-            let (done, err, cancelled) = cx.background_spawn(async move {
+            let result = workers::run("schnauz-file-transfer", move || {
                 let (done, err) = run_transfer(&pairs, kind, &prog);
                 (done, err, prog.cancel.load(Ordering::Relaxed))
             }).await;
+            let (done, err, cancelled) = result.unwrap_or_else(|error| (Vec::new(), Some(error), false));
             let _ = this.update(cx, |this, cx| {
                 this.jobs.retain(|j| j.id != id);
                 if undoable && !done.is_empty() {
@@ -2417,7 +2389,12 @@ impl Schnauz {
                 } else {
                     this.set_notice("Transfer complete · 100%".into(), cx);
                 }
-                this.refresh_all_panes(cx);
+                if this.projects.active==project {
+                    for pane in 0..this.panes.len() {
+                        if this.tab(pane).remote.is_none() && affected.contains(&this.tab(pane).current_dir){this.reload_pane(pane,cx);}
+                    }
+                    if this.palette_open && affected.iter().any(|path|path.starts_with(&this.file_search.root)||this.file_search.root.starts_with(path)){this.refresh_file_search(cx);}
+                }
             });
         })
         .detach();
@@ -2433,21 +2410,48 @@ impl Schnauz {
 
     fn save_session(&mut self, cx: &mut Context<Self>) {
         let session = self.session_string();
-        // Each window remembers what it last saved; another window's layout
-        // updates must not trigger a competing autosave in an idle window.
-        if session.is_empty() || session == self.saved_session { return; }
+        if session.is_empty() || session == self.saved_session || self.project_load_error.is_some()
+        {
+            return;
+        }
+        let Some(project_path) = config_file("projects.json") else {
+            return;
+        };
+        let Some(session_path) = config_file("session.json") else {
+            return;
+        };
         let mut candidate = self.projects.clone();
         candidate.remember_layout(self.capture_layout());
-        if candidate != self.projects {
-            if let Err(error) = self.persist_library(candidate, cx) { eprintln!("{error}"); return; }
-        }
-        if session != self.saved_session {
-            if let Some(path) = config_file("session.json") {
-                if projects::atomic_write(&path, session.as_bytes()).is_ok() {
-                    self.saved_session = session;
-                }
+        let bytes = match serde_json::to_vec_pretty(&candidate) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.set_notice(format!("Couldn't save the session: {error}"), cx);
+                return;
             }
+        };
+        persistence::queue(project_path.clone(), bytes);
+        persistence::queue(session_path.clone(), session.as_bytes().to_vec());
+        self.saved_session = session.clone();
+        if candidate != self.projects {
+            self.projects = candidate.clone();
+            cx.set_global(ProjectLibraryGlobal(candidate, None));
         }
+        cx.spawn(async move |this, cx| {
+            let result = workers::run("schnauz-session-save", move || {
+                persistence::flush(&project_path).and_then(|_| persistence::flush(&session_path))
+            })
+            .await
+            .and_then(|r| r.map_err(|e| e.to_string()));
+            if let Err(error) = result {
+                let _ = this.update(cx, |this, cx| {
+                    if this.saved_session == session {
+                        this.saved_session.clear();
+                    }
+                    this.set_notice(format!("Couldn't save the session: {error}"), cx);
+                });
+            }
+        })
+        .detach();
     }
 
     fn restore_session(&mut self) -> bool {
@@ -2463,44 +2467,112 @@ impl Schnauz {
 
     // ----- Get Info -----
 
-    /// Open the Get Info card for `path`. Cheap facts show at once; a folder's
-    /// total size and item count are summed in the background.
+    /// Explicit information requests never read or recursively scan on the UI thread.
     fn open_get_info(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.close_context_menu(cx);
-        let md = fs::symlink_metadata(&path).ok();
-        let is_dir = md.as_ref().is_some_and(|m| m.is_dir());
-        let perms = md.as_ref().map(|m| {
-            use std::os::unix::fs::PermissionsExt;
-            mode_string(m.permissions().mode(), is_dir)
-        });
+        let cancel = Arc::new(AtomicBool::new(false));
         self.info_panel = Some(InfoPanel {
+            volume: None,
             path: path.clone(),
-            is_dir,
-            info: gather_info(&path),
-            perms: perms.unwrap_or_default(),
+            is_dir: false,
+            info: FileInfo {
+                kind: "Loading…".into(),
+                ..Default::default()
+            },
+            perms: String::new(),
             owner: String::new(),
-            total: if is_dir { None } else { md.as_ref().map(|m| (m.len(), 1)) },
+            total: None,
+            cancel: cancel.clone(),
+            error: None,
         });
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let p = path.clone();
-            let (owner, total) = cx
-                .background_spawn(async move {
-                    let owner = Command::new("stat")
-                        .args(["-f", "%Su (%Sg)"])
-                        .arg(&p)
-                        .output()
-                        .ok()
-                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                        .unwrap_or_default();
-                    (owner, is_dir.then(|| tree_size_count(&p)))
-                })
-                .await;
+            let (p, stop) = (path.clone(), cancel.clone());
+            let facts = workers::run("schnauz-get-info", move || -> Result<_, String> {
+                if stop.load(Ordering::Acquire) {
+                    return Err("Cancelled".into());
+                }
+                let md = fs::symlink_metadata(&p).map_err(|e| e.to_string())?;
+                let dir = md.is_dir();
+                let info = gather_info(&p);
+                use std::os::unix::fs::PermissionsExt;
+                let perms = mode_string(md.permissions().mode(), dir);
+                let mut command = Command::new("/usr/bin/stat");
+                command.args(["-f", "%Su (%Sg)"]).arg(&p);
+                let owner = workers::command(command, Vec::new(), Duration::from_secs(5), stop)
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+                Ok((dir, info, perms, owner, md.len()))
+            })
+            .await
+            .and_then(|r| r);
+            if cancel.load(Ordering::Acquire) {
+                return;
+            }
+            let directory = match facts {
+                Ok((dir, info, perms, owner, size)) => {
+                    let current = this
+                        .update(cx, |this, cx| {
+                            let Some(panel) = this
+                                .info_panel
+                                .as_mut()
+                                .filter(|p| Arc::ptr_eq(&p.cancel, &cancel))
+                            else {
+                                return false;
+                            };
+                            panel.is_dir = dir;
+                            panel.info = info;
+                            panel.perms = perms;
+                            panel.owner = owner;
+                            if !dir {
+                                panel.total = Some((size, 1));
+                            }
+                            cx.notify();
+                            true
+                        })
+                        .unwrap_or(false);
+                    if !current {
+                        return;
+                    }
+                    dir
+                }
+                Err(error) => {
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(panel) = this
+                            .info_panel
+                            .as_mut()
+                            .filter(|p| Arc::ptr_eq(&p.cancel, &cancel))
+                        {
+                            panel.error = Some(error);
+                            cx.notify();
+                        }
+                    });
+                    return;
+                }
+            };
+            if !directory {
+                return;
+            }
+            let stop = cancel.clone();
+            let result = workers::run("schnauz-folder-info-scan", move || {
+                tree_size_count(&path, &stop)
+            })
+            .await
+            .and_then(|r| r);
+            if cancel.load(Ordering::Acquire) {
+                return;
+            }
             let _ = this.update(cx, |this, cx| {
-                if let Some(ip) = this.info_panel.as_mut().filter(|ip| ip.path == path) {
-                    ip.owner = owner;
-                    if total.is_some() {
-                        ip.total = total;
+                if let Some(panel) = this
+                    .info_panel
+                    .as_mut()
+                    .filter(|p| Arc::ptr_eq(&p.cancel, &cancel))
+                {
+                    match result {
+                        Ok(total) => panel.total = Some(total),
+                        Err(error) => panel.error = Some(error),
                     }
                     cx.notify();
                 }
@@ -2512,12 +2584,12 @@ impl Schnauz {
     fn render_info_panel(&self, cx: &Context<Self>) -> impl IntoElement {
         let t = theme();
         let ip = self.info_panel.as_ref().expect("only when open");
-        let name = path_label(&ip.path);
-        let size = match ip.total {
+        let name = ip.volume.as_ref().map(|volume| volume.info_name().to_string()).unwrap_or_else(|| path_label(&ip.path));
+        let size = if let Some(error)=&ip.error {format!("Unavailable: {error}")} else {match ip.total {
             Some((bytes, _)) if !ip.is_dir => format!("{} ({} bytes)", format_size(false, bytes), group_digits(bytes)),
             Some((bytes, items)) => format!("{} on disk · {}", format_size(false, bytes), items_label(items as usize)),
             None => "Calculating…".to_string(),
-        };
+        }};
         let row = |label: &str, value: String| {
             div()
                 .flex()
@@ -2548,6 +2620,10 @@ impl Schnauz {
         rows = rows
             .child(row("Owner", if ip.owner.is_empty() { "…".into() } else { ip.owner.clone() }))
             .child(row("Permissions", ip.perms.clone()));
+        if let Some(volume) = &ip.volume {
+            rows = div().flex().flex_col().gap_1p5().text_size(px(UI_SMALL_FONT_SIZE))
+                .children(volume.info_rows().into_iter().map(|(label, value)| row(label, value)));
+        }
 
         let button = |id: &'static str, label: &'static str| {
             div()
@@ -2586,7 +2662,7 @@ impl Schnauz {
                         .flex()
                         .items_center()
                         .gap_3()
-                        .child(icon_element_sized(&ip.path, ip.is_dir, 48.0))
+                        .child(if ip.volume.is_some() { toolbar_icons::ui_icon(Icon::Drive, 48., rgb(t.accent)) } else { icon_element_sized(&ip.path, ip.is_dir, 48.0) })
                         .child(div().flex_1().min_w_0().text_color(rgb(t.text)).child(name)),
                 )
                 .child(rows)
@@ -2927,12 +3003,18 @@ impl Schnauz {
         match op {
             UndoOp::Transfer { kind: TransferKind::Copy, pairs } => {
                 for (_, c) in pairs.iter().filter(|(_, d)| !gone(d)) {
-                    trash_path(c);
+                    if let Err(error) = trash_path(c) {
+                        self.set_notice(format!("Couldn't undo {what}: {error}"), cx);
+                        return;
+                    }
                 }
             }
             UndoOp::Created(paths) => {
                 for p in paths.iter().filter(|p| !gone(p)) {
-                    trash_path(p);
+                    if let Err(error) = trash_path(p) {
+                        self.set_notice(format!("Couldn't undo {what}: {error}"), cx);
+                        return;
+                    }
                 }
             }
             UndoOp::Transfer { kind: TransferKind::Move, pairs } | UndoOp::Trashed(pairs) => {
@@ -3340,7 +3422,7 @@ impl Schnauz {
         let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let dest = unique_child(parent, &format!("{stem}.zip"));
         cx.spawn(async move |this, cx| {
-            cx.background_spawn(async move {
+            let _=workers::run("schnauz-file-action",move || {
                 let _ = Command::new("ditto")
                     .args(["-c", "-k", "--sequesterRsrc", "--keepParent"])
                     .arg(&path)
@@ -3373,7 +3455,7 @@ impl Schnauz {
         };
         let dest = unique_child(parent, &stem);
         cx.spawn(async move |this, cx| {
-            cx.background_spawn(async move {
+            let _=workers::run("schnauz-file-action",move || {
                 if fs::create_dir_all(&dest).is_err() {
                     return;
                 }
@@ -3410,7 +3492,7 @@ impl Schnauz {
             .join("\n");
         cx.spawn(async move |this, cx| {
             let d = dir.clone();
-            cx.background_spawn(async move {
+            let _=workers::run("schnauz-file-action",move || {
                 let _ = Command::new(&script)
                     .args(&targets)
                     .current_dir(&d)
@@ -3475,8 +3557,7 @@ impl Schnauz {
         let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let dest = unique_child(parent, &format!("{stem} (no background).png"));
         cx.spawn(async move |this, cx| {
-            let ok = cx
-                .background_spawn(async move {
+            let ok = workers::run("schnauz-remove-background",move || {
                     Command::new(&tool)
                         .arg(&path)
                         .arg(&dest)
@@ -3484,7 +3565,7 @@ impl Schnauz {
                         .map(|s| s.success())
                         .unwrap_or(false)
                 })
-                .await;
+                .await.unwrap_or(false);
             if ok {
                 let _ = this.update(cx, |this, cx| this.refresh_pane(pane, cx));
             }
@@ -3544,13 +3625,12 @@ impl Schnauz {
         cx.spawn(async move |this, cx| {
             let d = dir.clone();
             let t = tool.clone();
-            let (out, base) = cx
-                .background_spawn(async move {
+            let (out, base) = workers::run("schnauz-cloud-sync",move || {
                     // Snapshot before the nudge so changes it triggers count.
                     let base = cloud_fingerprint(&d);
-                    (Command::new(&t).arg("sync").arg(&d).output(), base)
-                })
-                .await;
+                    let mut command=Command::new(&t);command.arg("sync").arg(&d);
+                    (workers::command(command,Vec::new(),Duration::from_secs(30),Arc::new(AtomicBool::new(false))),base)
+                }).await.unwrap_or_else(|error|(Err(error),BTreeMap::new()));
             let launched = match out {
                 Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().starts_with("launched"),
                 other => {
@@ -3605,9 +3685,8 @@ impl Schnauz {
                 }
                 let d = dir.clone();
                 let t = tool.clone();
-                let (fp, busy) = cx
-                    .background_spawn(async move { (cloud_fingerprint(&d), cloud_busy_count(&t, &d)) })
-                    .await;
+                let sample=workers::run("schnauz-cloud-status",move|| (cloud_fingerprint(&d),cloud_busy_count(&t,&d))).await;
+                let Ok((fp,busy))=sample else{return;};
                 if fp != last {
                     last = fp;
                     last_change = Some(Instant::now());
@@ -3916,6 +3995,7 @@ impl Schnauz {
                     }));
                 }
             }
+            nodes.extend(self.add_reference_nodes(pane, &targets));
             if !many {
                 let p = path.clone();
                 nodes.push(mi("Reveal in Finder", move |this, _, cx| {
@@ -3925,11 +4005,10 @@ impl Schnauz {
                 let shortcut = self.shortcut_for_path(pane, path.clone());
                 if !shortcut.is_home() {
                     let already = self.projects.sidebar().contains(&shortcut);
-                    let label = if already { "Remove from Favourites" } else { "Add to Favourites" };
-                    nodes.push(mi(label, move |this, _, cx| {
+                    if already { nodes.push(mi("Remove from Favourites", move |this, _, cx| {
                         this.close_context_menu(cx);
-                        this.set_project_shortcut(shortcut.clone(), !already, cx);
-                    }));
+                        this.set_project_shortcut(shortcut.clone(), false, cx);
+                    })); }
                 }
                 // "Add to Group ▸" (only when groups are enabled and exist).
                 if prefs().groups_enabled && !self.groups.is_empty() {
@@ -3964,7 +4043,7 @@ impl Schnauz {
                 let label = if many { format!("Move {n} Items to Trash") } else { "Move to Trash".to_string() };
                 nodes.push(mi_danger(label, Some("⌫"), move |this, _, cx| {
                     this.close_context_menu(cx);
-                    this.trash_items(pane, &ts, cx);
+                    this.request_local_delete(pane, ts.clone(), cx);
                 }));
             }
             push_menu_sep(&mut nodes);
@@ -4007,12 +4086,18 @@ impl Schnauz {
         let mut nodes: Vec<MenuNode> = Vec::new();
         let on_background = target.is_none();
         let pin = target.as_ref().map(|(p, _)| p.clone()).unwrap_or_else(|| self.tab(pane).current_dir.clone());
+        let paths = if self.tab(pane).selection.contains(&pin) {
+            let mut paths: Vec<_> = self.tab(pane).selection.iter().cloned().collect();
+            paths.sort();
+            paths
+        } else { vec![pin.clone()] };
+        nodes.extend(self.add_reference_nodes(pane, &paths));
         let shortcut = self.shortcut_for_path(pane, pin);
         let already = self.projects.sidebar().contains(&shortcut);
-        nodes.push(mi(if already { "Remove from Favourites" } else { "Add to Favourites" }, move |this, _, cx| {
+        if already { nodes.push(mi("Remove from Favourites", move |this, _, cx| {
             this.close_context_menu(cx);
-            this.set_project_shortcut(shortcut.clone(), !already, cx);
-        }));
+            this.set_project_shortcut(shortcut.clone(), false, cx);
+        })); }
         nodes.push(MenuNode::Sep);
         if target.is_none() {
             nodes.extend(self.folder_open_nodes(pane, self.shortcut_for_path(pane, self.tab(pane).current_dir.clone()), false));
@@ -4225,7 +4310,7 @@ impl Schnauz {
         };
         let dest = unique_child(&parent, "Archive.zip");
         cx.spawn(async move |this, cx| {
-            cx.background_spawn(async move {
+            let _=workers::run("schnauz-archive",move || {
                 let names: Vec<String> = paths
                     .iter()
                     .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
@@ -4257,8 +4342,15 @@ impl Schnauz {
     /// The "Move to Trash" confirmation modal.
     fn render_confirm_delete(&self, cx: &Context<Self>) -> impl IntoElement {
         let t = theme();
-        let (_, paths) = self.confirm_delete.as_ref().expect("only when open");
-        let msg = if paths.len() == 1 {
+        let permanent = self.permanent_delete.is_some();
+        let paths: Vec<_> = if let Some(confirmation) = &self.permanent_delete {
+            confirmation.targets.iter().map(|t| t.path.clone()).collect()
+        } else { self.confirm_delete.as_ref().expect("only when open").1.clone() };
+        let msg = if permanent && paths.len() == 1 {
+            format!("Delete “{}” permanently?", path_label(&paths[0]))
+        } else if permanent {
+            format!("Delete {} items permanently?", paths.len())
+        } else if paths.len() == 1 {
             format!("Move “{}” to the Trash?", path_label(&paths[0]))
         } else {
             format!("Move {} items to the Trash?", paths.len())
@@ -4277,6 +4369,7 @@ impl Schnauz {
             .occlude()
             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
                 this.confirm_delete = None;
+                this.permanent_delete = None;
                 cx.notify();
             }))
             .child(
@@ -4297,7 +4390,9 @@ impl Schnauz {
                         div()
                             .text_size(px(UI_SMALL_FONT_SIZE))
                             .text_color(rgb(t.text_muted))
-                            .child("They can be recovered from the Trash."),
+                            .child(if permanent {
+                                "Items on this network drive will be deleted permanently. This cannot be undone."
+                            } else { "They can be recovered from the Trash." }),
                     )
                     .child(
                         div()
@@ -4317,6 +4412,7 @@ impl Schnauz {
                                     .child("Cancel")
                                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                         this.confirm_delete = None;
+                                        this.permanent_delete = None;
                                         cx.notify();
                                     })),
                             )
@@ -4330,7 +4426,7 @@ impl Schnauz {
                                     .text_color(rgb(0xffffff))
                                     .bg(rgb(0xd9544f))
                                     .hover(|s| s.bg(rgb(0xc6433e)))
-                                    .child("Move to Trash")
+                                    .child(if permanent { "Delete Permanently" } else { "Move to Trash" })
                                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                         this.perform_delete(cx);
                                     })),
@@ -4393,6 +4489,7 @@ impl Schnauz {
         let Some(form) = self.server_dialog.clone() else {
             return;
         };
+        if form.saving{return;}
         let host = form.host.trim().to_string();
         if host.is_empty() {
             return;
@@ -4413,11 +4510,34 @@ impl Schnauz {
             use_password: true,
             auto_reopen: form.auto_reopen,
         };
-        // Only overwrite the Keychain when a password was entered (editing an
-        // existing server without retyping keeps the stored one).
         if !form.password.is_empty() {
-            keychain_set_password(&server, &form.password);
+            let password=form.password.clone();
+            let pending=server.clone();
+            let project=self.projects.active;
+            let captured=form.clone();
+            self.server_dialog.as_mut().unwrap().saving=true;
+            cx.notify();
+            cx.spawn(async move|this,cx| {
+                let result=workers::run("schnauz-sftp-credential",move||sftp_credential(&pending,Some(&password))).await.and_then(|r|r);
+                let _=this.update(cx,|this,cx| {
+                    let current=this.server_dialog.as_ref().is_some_and(|f|f.id==captured.id && f.name==captured.name && f.host==captured.host && f.user==captured.user && f.port==captured.port && f.password==captured.password && f.auto_reopen==captured.auto_reopen);
+                    if let Some(form)=this.server_dialog.as_mut().filter(|f|f.id==captured.id){form.saving=false;}
+                    if !current || this.projects.active!=project{cx.notify();return;}
+                    match result {
+                        Ok(_)=>this.finish_server_save(server,cx),
+                        Err(error)=>{this.remote_error=Some(error);cx.notify();}
+                    }
+                });
+            }).detach();
+            return;
         }
+        self.finish_server_save(server,cx);
+    }
+
+    fn finish_server_save(&mut self, server: SftpServer, cx: &mut Context<Self>) {
+        let Some(form) = self.server_dialog.as_ref() else {
+            return;
+        };
         let mut list = sftp_servers();
         // When editing, drop the original entry (its target may have changed).
         if let Some(old) = &form.editing {
@@ -5093,8 +5213,13 @@ impl Schnauz {
                 let tab_id=self.panes[pane].tabs[tab].id;
                 items.push(mi("Move to Project…",move|this,window,cx|this.open_tab_project_move(tab_id,window,cx)));
                 let shortcut=projects::Shortcut {path:self.panes[pane].tabs[tab].current_dir.clone(),kind:projects::Section::Folders,server:self.panes[pane].tabs[tab].remote.clone(),network:self.panes[pane].tabs[tab].network.clone(),alias:String::new(),add_on:String::new()};
+                let current_project = self.current_project_reference_node(vec![shortcut.clone()]);
                 let mut favourites=self.project_visibility_menu(shortcut);
-                if let MenuNode::Sub {label,..}=&mut favourites { *label="Add to Favourites…".into(); }
+                if let MenuNode::Sub {label,items}=&mut favourites {
+                    *label="Add to Favourites…".into();
+                    items.insert(0, MenuNode::Sep);
+                    items.insert(0, current_project);
+                }
                 items.push(favourites);
                 items.push(MenuNode::Sep);
                 items.push(
@@ -5223,21 +5348,27 @@ impl Schnauz {
     }
 
     fn close_palette(&mut self, cx: &mut Context<Self>) {
-        if self.file_search.inline && self.file_search.busy { self.file_search.stopped = true; }
-        self.file_search.cancel();
-        if self.file_search.inline {
-            let pane = self.file_search.pane;
-            if pane < self.panes.len() && self.pane(pane).active == self.file_search.tab {
-                let tab = self.tab_mut(pane);
-                tab.selection.clear(); tab.anchor = None;
-            }
-            self.file_search.scope = file_search::Scope::CurrentFolder;
-            self.file_search.mode = file_search::Mode::File;
-            self.query.clear(); self.query_cursor = 0; self.query_anchor = None;
+        if !self.palette_open {
+            return;
         }
+        self.remember_file_search(cx);
+        if self.file_search.busy {
+            self.file_search.stopped = true;
+        }
+        self.file_search.cancel();
+        let pane = self.file_search.pane;
+        if pane < self.panes.len() && self.pane(pane).active == self.file_search.tab {
+            let tab = self.tab_mut(pane);
+            tab.selection.clear();
+            tab.anchor = None;
+        }
+        self.file_search.scope = file_search::Scope::CurrentFolder;
+        self.file_search.mode = file_search::Mode::File;
+        self.query.clear();
+        self.query_cursor = 0;
+        self.query_anchor = None;
         self.search_gen = self.search_gen.wrapping_add(1);
         self.palette_open = false;
-        self.palette_actions = None;
         cx.notify();
     }
 
@@ -5250,118 +5381,33 @@ impl Schnauz {
         if n == 0 {
             return;
         }
-        let next = if self.file_search.inline && self.tab(self.file_search.pane).selection.is_empty() {
+        let next = if self.tab(self.file_search.pane).selection.is_empty() {
             if delta >= 0 { 0 } else { n as i64 - 1 }
         } else { (self.selected as i64 + delta).clamp(0, n as i64 - 1) };
         self.selected = next as usize;
         // Keep the highlighted row in view as you arrow through a long list.
-        if self.file_search.inline {
-            self.file_search.scroll.scroll_to_item(self.selected, ScrollStrategy::Center);
-            self.select_search_result(self.selected, cx);
-        } else { self.palette_scroll.scroll_to_item(self.selected); }
+        self.file_search.scroll.scroll_to_item(self.selected,ScrollStrategy::Center);
+        self.select_search_result(self.selected,cx);
         cx.notify();
     }
 
-    /// Read-only scroll indicator for the palette results list.
-    fn palette_scrollbar_thumb(&self) -> Option<AnyElement> {
-        static_scrollbar_thumb(&self.palette_scroll)
-    }
-
+    /// Enter reveals a search hit through the existing folder-navigation path.
     fn activate_selection(&mut self, cx: &mut Context<Self>) {
         let Some(item) = self.palette_items.get(self.selected) else {
             return;
         };
-        let action = item.action.clone();
-        self.record_palette_history();
-        match action {
-            Action::Open(path, is_dir) => {
-                let search = self.file_search.inline;
-                self.close_palette(cx);
-                if search {
-                    if is_browsable_folder(&path, is_dir) { self.navigate_to(path, cx); }
-                    else if let Some(parent) = path.parent() {
-                        let pane = self.active_pane;
-                        if self.tab(pane).entry_filter == EntryFilter::Folders { self.tab_mut(pane).set_entry_filter(EntryFilter::All); }
-                        self.navigate_to(parent.to_path_buf(), cx);
-                        self.reveal_in_pane(self.active_pane, path, cx);
-                    }
-                    return;
-                }
-                if is_dir {
-                    self.navigate_to(path, cx);
-                } else {
-                    // Enter opens the file itself (Spotlight-style); ⌘K offers
-                    // "Show in enclosing folder" for the old navigate behavior.
-                    self.open_local_file(path.clone(), cx);
-                }
-            }
-
-        }
-    }
-
-    /// The ⌘K actions available for the palette's selected item, with labels.
-    fn palette_action_list(&self) -> Vec<(PaletteAction, &'static str)> {
-        match self.palette_items.get(self.selected).map(|i| &i.action) {
-            Some(Action::Open(_, true)) => vec![
-                (PaletteAction::Open, "Open folder"),
-                (PaletteAction::OpenNewTab, "Open in new tab"),
-                (PaletteAction::RevealFinder, "Reveal in Finder"),
-                (PaletteAction::CopyPath, "Copy path"),
-            ],
-            Some(Action::Open(_, false)) => vec![
-                (PaletteAction::Open, "Open file"),
-                (PaletteAction::RevealSchnauz, "Show in enclosing folder"),
-                (PaletteAction::OpenNewTab, "Open folder in new tab"),
-                (PaletteAction::RevealFinder, "Reveal in Finder"),
-                (PaletteAction::CopyPath, "Copy path"),
-            ],
-            _ => Vec::new(),
-        }
-    }
-
-    /// Run one of the ⌘K actions on the palette's selected item.
-    fn run_palette_action(&mut self, act: PaletteAction, cx: &mut Context<Self>) {
-        let Some(item) = self.palette_items.get(self.selected) else {
-            return;
-        };
         let Action::Open(path, is_dir) = item.action.clone();
-        self.record_palette_history();
-        let parent = || path.parent().map(Path::to_path_buf).unwrap_or_else(|| path.clone());
-        match act {
-            PaletteAction::Open => {
-                self.close_palette(cx);
-                if is_dir {
-                    self.navigate_to(path, cx);
-                } else {
-                    self.open_local_file(path.clone(), cx);
-                }
+        self.remember_file_search(cx);
+        self.close_palette(cx);
+        if is_browsable_folder(&path, is_dir) {
+            self.navigate_to(path, cx);
+        } else if let Some(parent) = path.parent() {
+            let pane = self.active_pane;
+            if self.tab(pane).entry_filter == EntryFilter::Folders {
+                self.tab_mut(pane).set_entry_filter(EntryFilter::All);
             }
-            PaletteAction::RevealSchnauz => {
-                self.close_palette(cx);
-                self.navigate_to(parent(), cx);
-                let pane = self.active_pane;
-                self.reveal_in_pane(pane, path, cx);
-            }
-            PaletteAction::OpenNewTab => {
-                self.close_palette(cx);
-                let pane = self.active_pane;
-                self.new_tab_in(pane, cx);
-                let dir = if is_dir { path.clone() } else { parent() };
-                self.navigate_in(pane, dir, cx);
-                if !is_dir {
-                    self.reveal_in_pane(pane, path, cx);
-                }
-            }
-            PaletteAction::RevealFinder => {
-                let _ = Command::new("open").arg("-R").arg(&path).spawn();
-                self.close_palette(cx);
-            }
-            PaletteAction::CopyPath => {
-                cx.write_to_clipboard(ClipboardItem::new_string(
-                    path.to_string_lossy().into_owned(),
-                ));
-                self.close_palette(cx);
-            }
+            self.navigate_to(parent.to_path_buf(), cx);
+            self.reveal_in_pane(self.active_pane, path, cx);
         }
     }
 
@@ -5541,11 +5587,12 @@ impl Schnauz {
         }
 
         // The delete-confirmation dialog captures Enter (confirm) / Esc (cancel).
-        if self.confirm_delete.is_some() {
+        if self.confirm_delete.is_some() || self.permanent_delete.is_some() {
             match key {
                 "enter" => self.perform_delete(cx),
                 "escape" => {
                     self.confirm_delete = None;
+                    self.permanent_delete = None;
                     cx.notify();
                 }
                 _ => {}
@@ -5598,7 +5645,7 @@ impl Schnauz {
 
         // Text editing owns the clipboard while the search field has focus,
         // independent of file-operation shortcuts and installed Quick Actions.
-        if self.palette_open && (!self.file_search.inline || self.file_search.editing) && cmd {
+        if self.palette_open && self.file_search.editing && cmd {
             match key {
                 "c" | "x" => {
                     self.copy_query_selection(key == "x", cx);
@@ -5723,7 +5770,7 @@ impl Schnauz {
             self.refresh_palette(cx);
             return;
         }
-        if prefs().palette_history {
+        if prefs().search_history {
             if km.get(KeyAction::PaletteHistoryPrev) == Some(kc.as_str()) {
                 self.palette_history_prev(cx);
                 return;
@@ -5734,55 +5781,9 @@ impl Schnauz {
             }
         }
 
-        // ⌘K toggles the actions panel for the selected file/folder.
-        if cmd && key == "k" && !self.file_search.inline {
-            if self.palette_actions.is_some() {
-                self.palette_actions = None;
-            } else if !self.palette_action_list().is_empty() {
-                self.palette_actions = Some(0);
-            }
-            cx.notify();
-            return;
-        }
-        // While the actions panel is open, arrows/Enter drive it; anything
-        // else closes it and falls through to normal palette handling.
-        if let Some(sel) = self.palette_actions {
-            let acts = self.palette_action_list();
-            let handled = match key {
-                "escape" => {
-                    self.palette_actions = None;
-                    true
-                }
-                "up" => {
-                    self.palette_actions = Some(sel.saturating_sub(1));
-                    true
-                }
-                "down" => {
-                    self.palette_actions =
-                        Some((sel + 1).min(acts.len().saturating_sub(1)));
-                    true
-                }
-                "enter" => {
-                    self.palette_actions = None;
-                    if let Some(&(act, _)) = acts.get(sel) {
-                        self.run_palette_action(act, cx);
-                    }
-                    true
-                }
-                _ => {
-                    self.palette_actions = None;
-                    false
-                }
-            };
-            cx.notify();
-            if handled {
-                return;
-            }
-        }
-
         match key {
             "escape" => self.close_palette(cx),
-            "enter" => self.activate_selection(cx),
+            "enter" => { self.remember_file_search(cx); self.activate_selection(cx); },
             "down" => self.move_selection(1, cx),
             "up" => self.move_selection(-1, cx),
             // Left/Right move the text cursor. Option jumps by word; Shift
@@ -5889,7 +5890,7 @@ impl Schnauz {
         let b = self.query_byte(self.query_cursor);
         self.query.insert_str(b, s);
         self.query_cursor += s.chars().count();
-        self.palette_hist_pos = None;
+        self.file_search.history_pos = None;
     }
 
     /// Delete the char before the cursor (or the whole selection).
@@ -5914,282 +5915,8 @@ impl Schnauz {
         self.query_anchor = None;
     }
 
-    /// Up in history mode: step to the previous (older) query.
-    fn palette_history_prev(&mut self, cx: &mut Context<Self>) {
-        if self.palette_hist.is_empty() {
-            return;
-        }
-        let pos = match self.palette_hist_pos {
-            None => self.palette_hist.len() - 1,
-            Some(0) => 0,
-            Some(p) => p - 1,
-        };
-        self.palette_hist_pos = Some(pos);
-        self.query = self.palette_hist[pos].clone();
-        self.query_cursor = self.query.chars().count();
-        self.query_anchor = None;
-        self.refresh_palette(cx);
-    }
-
-    /// Down in history mode: step to the next (newer) query, past the newest
-    /// returns to an empty live query.
-    fn palette_history_next(&mut self, cx: &mut Context<Self>) {
-        match self.palette_hist_pos {
-            None => {}
-            Some(p) if p + 1 >= self.palette_hist.len() => {
-                self.palette_hist_pos = None;
-                self.query.clear();
-                self.query_cursor = 0;
-                self.query_anchor = None;
-                self.refresh_palette(cx);
-            }
-            Some(p) => {
-                let np = p + 1;
-                self.palette_hist_pos = Some(np);
-                self.query = self.palette_hist[np].clone();
-                self.query_cursor = self.query.chars().count();
-                self.query_anchor = None;
-                self.refresh_palette(cx);
-            }
-        }
-    }
-
-    /// Record a submitted query into the palette history (when enabled).
-    fn record_palette_history(&mut self) {
-        if !prefs().palette_history {
-            return;
-        }
-        let q = self.query.trim().to_string();
-        if q.is_empty() {
-            return;
-        }
-        self.palette_hist.retain(|h| h != &q);
-        self.palette_hist.push(q);
-        let overflow = self.palette_hist.len().saturating_sub(50);
-        if overflow > 0 {
-            self.palette_hist.drain(0..overflow);
-        }
-        write_string_list("palette_history.txt", &self.palette_hist);
-    }
-
-    fn render_palette(&self, cx: &Context<Self>) -> impl IntoElement {
-        let t = theme();
-        // Fit the list to its content, capped — so there's no empty gray space
-        // below a short result set, and it scrolls once it's long.
-        let visible = self.palette_items.len().min(PALETTE_MAX_ROWS);
-        let list_h = visible as f32 * PALETTE_ROW_H;
-
-        let rows: Vec<AnyElement> = self
-            .palette_items
-            .iter()
-            .enumerate()
-            .map(|(i, item)| {
-                let selected = i == self.selected;
-                let icon = icon_element(Path::new(&item.subtitle), item.is_dir);
-                let base = div()
-                    .id(("pal", i))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_3()
-                    .h(px(PALETTE_ROW_H))
-                    .cursor_pointer();
-                let base = if selected {
-                    base.bg(rgb(t.selected))
-                } else {
-                    base.hover(|s| s.bg(rgb(t.hover)))
-                };
-                base.child(div().flex_none().w(px(18.0)).flex().justify_center().child(icon))
-                    .child(
-                        div()
-                            .flex()
-                            .items_baseline()
-                            .gap_2()
-                            .min_w_0()
-                            .flex_1()
-                            .child(div().flex_none().text_color(rgb(t.text)).child(item.title.clone()))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(UI_SMALL_FONT_SIZE))
-                                    .text_color(rgb(t.text_muted))
-                                    .child(item.subtitle.clone()),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.selected = i;
-                        this.activate_selection(cx);
-                    }))
-                    .into_any_element()
-            })
-            .collect();
-
-        // Input line: query with a caret, or a dim placeholder. A selection
-        // (whole via Cmd+A, or a word range via Option+Shift+Arrow) is drawn as
-        // a highlighted span between the unselected head and tail.
-        let input = if self.query.is_empty() {
-            div()
-                .text_color(rgb(t.text_dim))
-                .child("Type a path, or a file/folder name…")
-        } else if let Some((lo, hi)) = self.query_sel() {
-            let (bl, bh) = (self.query_byte(lo), self.query_byte(hi));
-            div()
-                .flex()
-                .text_color(rgb(t.text))
-                .child(div().child(self.query[..bl].to_string()))
-                .child(
-                    div()
-                        .bg(Theme::alpha(t.accent, 0x66))
-                        .rounded_sm()
-                        .child(self.query[bl..bh].to_string()),
-                )
-                .child(div().child(self.query[bh..].to_string()))
-        } else {
-            // Insert a caret bar at the cursor position.
-            let cursor = self.query_cursor.min(self.query.chars().count());
-            let b = self.query_byte(cursor);
-            let (before, after) = self.query.split_at(b);
-            div()
-                .text_color(rgb(t.text))
-                .child(format!("{before}\u{2502}{after}"))
-        };
-
-        // What Enter would do to the current selection (footer hint).
-        let enter_label = match self.palette_items.get(self.selected).map(|i| &i.action) {
-            Some(Action::Open(_, true)) => "Open folder",
-            Some(Action::Open(_, false)) => "Open file",
-            None => "Open",
-        };
-        let has_actions = !self.palette_action_list().is_empty();
-
-        let panel = div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            // Opacity is user-configurable (Settings → Appearance); default is
-            // nearly opaque so the palette doesn't read as a confusing overlay.
-            .bg(Theme::alpha(t.surface, palette_alpha()))
-            .rounded_lg()
-            .border_1()
-            .border_color(rgb(t.border_strong))
-            .shadow_lg()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(rgb(t.border_strong))
-                    .child(div().flex_none().text_color(rgb(t.accent)).child("›"))
-                    .child(input),
-            )
-            // Scrollable, height-capped results with a scroll indicator.
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .id("palette-results")
-                            .h(px(list_h))
-                            .overflow_y_scroll()
-                            .track_scroll(&self.palette_scroll)
-                            .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
-                                cx.notify()
-                            }))
-                            .flex()
-                            .flex_col()
-                            .children(rows),
-                    )
-                    .children(self.palette_scrollbar_thumb()),
-            )
-            // Footer: what you can do with the selection.
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .px_3()
-                    .py_1()
-                    .border_t_1()
-                    .border_color(rgb(t.border_strong))
-                    .text_size(px(UI_SMALL_FONT_SIZE))
-                    .text_color(rgb(t.text_dim))
-                    .child(palette_hint("↩", enter_label))
-                    .when(has_actions, |f| f.child(palette_hint("⌘K", "Actions")))
-                    .child(palette_hint("↑↓", "Navigate"))
-                    .child(palette_hint("esc", "Close")),
-            );
-
-        // Wrapper: positions the palette and hosts the ⌘K dropdown OUTSIDE the
-        // panel's overflow_hidden, so the menu is never clipped.
-        let mut wrap = div().relative().mt(px(90.0)).w(px(680.0)).child(panel);
-
-        // The ⌘K actions panel: drops down from the palette's bottom-right
-        // corner (there's always window space below — the palette hugs the top).
-        if let Some(sel) = self.palette_actions {
-            let acts = self.palette_action_list();
-            if !acts.is_empty() {
-                let sel = sel.min(acts.len() - 1);
-                wrap = wrap.child(
-                    div()
-                        .absolute()
-                        .top(relative(1.0))
-                        .right(px(10.0))
-                        .mt(px(6.0))
-                        .w(px(240.0))
-                        .flex()
-                        .flex_col()
-                        .py_1()
-                        .bg(Theme::alpha(t.surface, 0xf7))
-                        .rounded_md()
-                        .border_1()
-                        .border_color(rgb(t.border_strong))
-                        .shadow_lg()
-                        .children(acts.into_iter().enumerate().map(|(i, (act, label))| {
-                            let selected = i == sel;
-                            div()
-                                .id(("pal-act", i))
-                                .px_3()
-                                .py_1()
-                                .cursor_pointer()
-                                .text_color(rgb(t.text))
-                                .when(selected, |s| s.bg(rgb(t.selected)))
-                                .when(!selected, |s| s.hover(|s| s.bg(rgb(t.hover))))
-                                .child(label)
-                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.palette_actions = None;
-                                    this.run_palette_action(act, cx);
-                                }))
-                                .into_any_element()
-                        })),
-                );
-            }
-        }
-
-        // Backdrop covering the window, with the panel near the top.
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .flex()
-            .justify_center()
-            // Align to top so the panel hugs its content height instead of
-            // stretching to fill the whole window.
-            .items_start()
-            .bg(rgba(0x00000033))
-            // Block scroll/click from reaching the file list behind the palette.
-            .occlude()
-            .child(wrap)
-    }
+    fn palette_history_prev(&mut self,cx:&mut Context<Self>) {self.recall_search_history(true,cx);}
+    fn palette_history_next(&mut self,cx:&mut Context<Self>) {self.recall_search_history(false,cx);}
 
     /// A floating, draggable scrollbar thumb sized/positioned from the list's
     /// scroll state. Returns `None` when the content fits (or isn't measured yet).
@@ -6293,9 +6020,6 @@ impl Schnauz {
         }
         // Local dirs are validated with a stat; remote dirs come from a listing
         // (we can't stat them locally), so trust the caller.
-        if self.tab(pane).remote.is_none() && self.tab(pane).network.is_none() && !dir.is_dir() {
-            return;
-        }
         self.active_pane = pane;
         let tab = self.tab_mut(pane);
         tab.history.truncate(tab.hist_pos + 1);
@@ -6463,9 +6187,7 @@ impl Schnauz {
         cx.spawn(async move |this, cx| {
             let d = dir.clone();
             let t = term.clone();
-            let hits = cx
-                .background_spawn(async move { mdfind_content(&d, &t) })
-                .await;
+            let hits=workers::run("schnauz-content-filter",move||mdfind_content(&d,&t)).await.unwrap_or_default();
             let _ = this.update(cx, |this, cx| {
                 if pane >= this.panes.len() || this.tab(pane).content_gen != gen {
                     return;
@@ -6675,7 +6397,7 @@ impl Schnauz {
 
     /// Open a new tab in `pane`, starting in that pane's current directory.
     fn new_tab_in(&mut self, pane: usize, cx: &mut Context<Self>) {
-        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
+        if self.palette_open { self.close_palette(cx); }
         let tab = self.tab(pane);
         let origin = tab.remote.as_ref().and_then(|_| tab.terminal.as_ref())
             .and_then(|s| s.ssh.as_ref()).map(|s| s.origin().to_path_buf());
@@ -6696,7 +6418,7 @@ impl Schnauz {
     fn connect_sftp(&mut self, server: SftpServer, cx: &mut Context<Self>) {
         // Open a placeholder remote tab in the active pane immediately.
         let pane = self.active_pane;
-        let mut tab = Tab::new(home_dir()); // temporary local dir; replaced below
+        let mut tab = Tab::at_location(PathBuf::from("/"),Some(server.clone()));
         tab.remote = Some(server.clone());
         tab.current_dir = PathBuf::from("/");
         tab.history = vec![PathBuf::from("/")];
@@ -6717,13 +6439,11 @@ impl Schnauz {
         let use_system = prefs().ssh_use_system;
         cx.spawn(async move |this, cx| {
             let s = server.clone();
-            let home = cx
-                .background_spawn(async move {
+            let home = workers::run("schnauz-sftp-connect",move || {
                     let result = sftp_home_progress(&s, use_system, Some(&progress));
                     progress.finish();
                     result
-                })
-                .await;
+                }).await.and_then(|r|r);
             let _ = this.update(cx, |this, cx| {
                 let Some((pane, tab_ix)) = this.panes.iter().enumerate().find_map(|(pi, p)|
                     p.tabs.iter().position(|t| t.id == tab_id && t.load_gen == gen).map(|ti| (pi, ti))) else { return; };
@@ -6759,7 +6479,7 @@ impl Schnauz {
     /// Select a tab in a pane.
     fn select_tab(&mut self, pane: usize, tab: usize, cx: &mut Context<Self>) {
         self.dismiss_space_map |= self.space_map.is_some();
-        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
+        if self.palette_open { self.close_palette(cx); }
         self.active_pane = pane;
         let p = self.pane_mut(pane);
         if tab < p.tabs.len() {
@@ -6778,7 +6498,7 @@ impl Schnauz {
         if pane >= self.panes.len() || tab >= self.panes[pane].tabs.len() {
             return;
         }
-        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
+        if self.palette_open { self.close_palette(cx); }
         let dir = self.panes[pane].tabs[tab].current_dir.clone();
         let remote = self.panes[pane].tabs[tab].remote.clone();
         let source=&self.panes[pane].tabs[tab];
@@ -6803,7 +6523,7 @@ impl Schnauz {
         if pane >= self.panes.len() || keep >= self.panes[pane].tabs.len() {
             return;
         }
-        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
+        if self.palette_open { self.close_palette(cx); }
         let kept = self.panes[pane].tabs.remove(keep);
         let p = self.pane_mut(pane);
         p.tabs.clear();
@@ -6814,7 +6534,7 @@ impl Schnauz {
     }
 
     fn close_tab(&mut self, pane: usize, tab: usize, cx: &mut Context<Self>) {
-        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
+        if self.palette_open { self.close_palette(cx); }
         if pane >= self.panes.len() || tab >= self.panes[pane].tabs.len() {
             return;
         }
@@ -6855,7 +6575,7 @@ impl Schnauz {
             || self.panes[from.pane].tabs[from.tab].id != from.tab_id {
             return;
         }
-        if self.palette_open && self.file_search.inline { self.close_palette(cx); }
+        if self.palette_open { self.close_palette(cx); }
         // Two panes max: a split-zone drop while the canvas is already split
         // moves the tab to the end of the right pane instead of creating an
         // invisible third pane.
@@ -6954,7 +6674,7 @@ impl Schnauz {
                     .map(|e| e.size)
                     .unwrap_or(0)
             };
-            self.ensure_remote_preview(path, size, cx);
+            self.ensure_remote_preview(pane, path, size, cx);
             cx.notify();
             return;
         }
@@ -6963,6 +6683,21 @@ impl Schnauz {
             self.ensure_pdf_page(path.clone(), 0, cx);
         }
         self.ensure_info(path, cx);
+    }
+
+    /// Right-click replaces an unrelated selection, while retaining a selected group.
+    fn select_context_entry(&mut self, pane: usize, path: PathBuf, cx: &mut Context<Self>) {
+        self.pending_click_rename = None;
+        self.drag_candidate = None;
+        self.marquee = None;
+        self.rename = None;
+        self.active_pane = pane;
+        if !self.tab(pane).selection.contains(&path) {
+            if self.space_map.is_some() { self.close_space_map(cx); }
+            self.select_entry(pane, path, cx);
+        } else if self.tab(pane).anchor.as_ref() != Some(&path) {
+            self.focus_entry(pane, path, cx);
+        }
     }
 
     /// Single-click: select just this item.
@@ -7482,9 +7217,10 @@ impl Schnauz {
         if show_preview && tab.remote.is_none() && video_preview::is_media(&sel) {
             return self.render_video_preview(cx);
         }
-        let text = TEXT_PREVIEW_CACHE.with(|c| c.borrow().get(&sel).cloned().flatten());
-        let visual = lookup_preview(&sel).flatten().is_some()
-            || lookup_pdf_page(&sel, self.preview_page).flatten().is_some();
+        let preview_key=previews::source_key(&sel,tab.remote.as_ref());
+        let text = TEXT_PREVIEW_CACHE.with(|c| c.borrow().get(&preview_key).cloned().flatten());
+        let visual = lookup_preview(&preview_key).flatten().is_some()
+            || lookup_pdf_page(&preview_key, self.preview_page).flatten().is_some();
         if text.is_none() && !visual { return None; }
         let t = theme();
         if show_preview {
@@ -7518,16 +7254,16 @@ impl Schnauz {
             // pager is on, falling back to the QuickLook thumbnail (page 1)
             // while it builds.
             let paging = p.preview_pages && is_pdf(&sel);
-            let page_count = if paging { lookup_pdf_count(&sel) } else { None };
+            let page_count = if paging { lookup_pdf_count(&preview_key) } else { None };
             let page = self
                 .preview_page
                 .min(page_count.unwrap_or(1).saturating_sub(1));
             let page_img = if paging {
-                lookup_pdf_page(&sel, page).flatten()
+                lookup_pdf_page(&preview_key, page).flatten()
             } else {
                 None
             };
-            let handle = page_img.or_else(|| lookup_preview(&sel).flatten());
+            let handle = page_img.or_else(|| lookup_preview(&preview_key).flatten());
             let body: AnyElement = match handle {
                 Some(handle) => {
                     let picture = video_preview::is_picture(&sel);
@@ -7640,7 +7376,7 @@ impl Schnauz {
                                     .child(pager_btn("pdf-next", "›", page + 1 < count).on_click(
                                         cx.listener(move |this, _: &ClickEvent, _, cx| {
                                             let count =
-                                                lookup_pdf_count(&next_sel).unwrap_or(1);
+                                                lookup_pdf_count(&previews::source_key(&next_sel,this.active_tab().remote.as_ref())).unwrap_or(1);
                                             if this.preview_page + 1 < count {
                                                 this.preview_page += 1;
                                                 let pg = this.preview_page;
@@ -7660,7 +7396,7 @@ impl Schnauz {
             }
         }
 
-        if p.info {
+        if p.info && tab.remote.is_none() {
             col = col.child(native_preview::information(&sel, None, preview_panel::preview_width(self, self.panes.len() - 1) - if video_preview::is_picture(&sel) { 1. } else { 13. }));
         }
 
@@ -7989,248 +7725,24 @@ impl Schnauz {
         row.into_any_element()
     }
 
-    /// Ensure a folder's subfolders are loaded into the waterfall cache. Reads
-    /// the directory off the main thread; when it lands, the tree re-renders.
-    fn ensure_waterfall_children(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
-        if self.waterfall_children.contains_key(&dir) || self.waterfall_pending.contains(&dir) {
-            return;
-        }
-        self.waterfall_pending.insert(dir.clone());
-        cx.spawn(async move |this, cx| {
-            let d = dir.clone();
-            let (subs, mtime) = cx.background_spawn(async move { read_subdirs(&d) }).await;
-            let _ = this.update(cx, |this, cx| {
-                if let Some(m) = mtime {
-                    this.waterfall_mtime.insert(dir.clone(), m);
-                }
-                this.waterfall_children.insert(dir.clone(), subs);
-                this.waterfall_pending.remove(&dir);
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// Make sure every folder the tree will render has its children loading —
-    /// the root, each expanded folder's children, and one level beyond the
-    /// visible frontier so we know which rows get a disclosure triangle.
-    /// Called each render, before the tree is built (which only has `&self`).
-    fn ensure_waterfall_loaded(&mut self, cx: &mut Context<Self>) {
-        if !prefs().waterfall || prefs().sidebar_collapsed {
-            return;
-        }
-        // The waterfall is local-only; remote tabs have no cheap subdir listing.
-        if self.active_tab().remote.is_some() {
-            return;
-        }
-        let root = self.active_tab().current_dir.clone();
-        self.waterfall_prefetch(root, cx);
-    }
-
-    /// Load `dir`'s children, and — so every visible row knows whether to show a
-    /// triangle — each child's children too. Recurse only into expanded folders.
-    fn waterfall_prefetch(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
-        self.ensure_waterfall_children(dir.clone(), cx);
-        let Some(children) = self.waterfall_children.get(&dir).cloned() else {
-            return; // still loading; we'll prefetch its children next frame
-        };
-        for child in children {
-            if self.waterfall_expanded.contains(&child) {
-                self.waterfall_prefetch(child, cx);
-            } else {
-                // One level ahead: enough to know if it has subfolders.
-                self.ensure_waterfall_children(child, cx);
-            }
-        }
-    }
-
-    /// Expand or collapse a folder in the waterfall tree.
-    fn toggle_waterfall(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
-        if self.waterfall_expanded.contains(&dir) {
-            self.waterfall_expanded.remove(&dir);
-        } else {
-            self.waterfall_expanded.insert(dir.clone());
-            self.ensure_waterfall_children(dir, cx);
-        }
-        cx.notify();
-    }
-
-    /// Watcher hook: re-stat every cached waterfall folder and invalidate any
-    /// whose mtime changed, so the tree live-refreshes when files appear or
-    /// disappear. Runs off the main thread; returns true if anything changed.
-    fn refresh_waterfall(&mut self, cx: &mut Context<Self>) {
-        if !prefs().waterfall || self.waterfall_mtime.is_empty() {
-            return;
-        }
-        let paths: Vec<PathBuf> = self.waterfall_mtime.keys().cloned().collect();
-        cx.spawn(async move |this, cx| {
-            let sampled = paths.clone();
-            let stats = cx
-                .background_spawn(async move {
-                    sampled
-                        .iter()
-                        .map(|d| fs::metadata(d).ok().and_then(|m| m.modified().ok()))
-                        .collect::<Vec<Option<SystemTime>>>()
-                })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                let mut dirty = false;
-                for (dir, cur) in paths.into_iter().zip(stats) {
-                    match (this.waterfall_mtime.get(&dir).copied(), cur) {
-                        // Folder changed on disk: drop the cache so the next
-                        // render reloads it via `ensure_waterfall_children`.
-                        (Some(prev), Some(now)) if prev != now => {
-                            this.waterfall_children.remove(&dir);
-                            this.waterfall_mtime.remove(&dir);
-                            dirty = true;
-                        }
-                        // Folder vanished: forget it entirely.
-                        (Some(_), None) => {
-                            this.waterfall_children.remove(&dir);
-                            this.waterfall_mtime.remove(&dir);
-                            this.waterfall_expanded.remove(&dir);
-                            dirty = true;
-                        }
-                        _ => {}
-                    }
-                }
-                if dirty {
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    /// Append the waterfall folder tree (rooted at the active dir) to `items`.
-    fn render_waterfall(
-        &self,
-        items: &mut Vec<AnyElement>,
-        key: &mut usize,
-        current: &Path,
-        cx: &Context<Self>,
-    ) {
-        let root = self.active_tab().current_dir.clone();
-        items.push(self.section_header_el("WATERFALL", None, cx));
-        if self.collapsed_sections.contains("WATERFALL") {
-            return;
-        }
-        let mut rows: Vec<AnyElement> = Vec::new();
-        self.waterfall_rows(&root, 0, key, current, &mut rows, cx);
-        if rows.is_empty() {
-            items.push(empty_hint("No subfolders").into_any_element());
-        } else {
-            items.append(&mut rows);
-        }
-    }
-
-    /// Depth-first: render each subfolder of `dir`, recursing into expanded ones
-    /// so children appear indented directly beneath their parent.
-    fn waterfall_rows(
-        &self,
-        dir: &Path,
-        depth: usize,
-        key: &mut usize,
-        current: &Path,
-        out: &mut Vec<AnyElement>,
-        cx: &Context<Self>,
-    ) {
-        let Some(children) = self.waterfall_children.get(dir) else {
-            return;
-        };
-        let t = theme();
-        for child in children {
-            *key += 1;
-            let expanded = self.waterfall_expanded.contains(child);
-            let active = child.as_path() == current;
-            let label = path_label(child);
-            let indent = 8.0 + depth as f32 * 12.0;
-            // Only folders with subfolders get a triangle. `None` means the
-            // child's listing hasn't loaded yet (prefetch fills it in shortly),
-            // so we show a spacer to avoid a triangle that flips to nothing.
-            let has_subdirs = self
-                .waterfall_children
-                .get(child)
-                .map(|v| !v.is_empty())
-                .unwrap_or(false);
-
-            let toggle_target = child.clone();
-            let nav_target = child.clone();
-            let mut row = div()
-                .id(("wf", *key))
-                .flex()
-                .items_center()
-                .gap_1()
-                .mx_2()
-                .py_1()
-                .pr_2()
-                .rounded_md()
-                .cursor_pointer()
-                .text_color(rgb(if active { t.text } else { t.text_muted }));
-            row = if active {
-                row.bg(rgb(t.surface))
-            } else {
-                row.hover(|s| s.bg(rgb(t.hover))).active(|s| s.bg(rgb(t.selected)))
-            };
-            // Disclosure triangle (or a blank spacer of the same width so names
-            // stay aligned whether or not a folder can expand).
-            let tri = if has_subdirs {
-                let arrow = if expanded { "▾" } else { "▸" };
-                div()
-                    .id(("wf-tri", *key))
-                    .w(px(12.0))
-                    .flex()
-                    .justify_center()
-                    .text_color(rgb(t.text_dim))
-                    .hover(|s| s.text_color(rgb(t.text)))
-                    .child(arrow)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.toggle_waterfall(toggle_target.clone(), cx);
-                        cx.stop_propagation();
-                    }))
-                    .into_any_element()
-            } else {
-                div().w(px(12.0)).into_any_element()
-            };
-            let row = row
-                .pl(px(indent))
-                .child(tri)
-                .child(icon_element(child, true))
-                .child(div().min_w_0().overflow_hidden().child(label))
-                // Clicking the row (name/icon) opens the folder in the pane.
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.unsync_ssh_browser(this.active_pane, cx);
-                    this.navigate_to(nav_target.clone(), cx);
-                }));
-            out.push(row.into_any_element());
-
-            if expanded && has_subdirs {
-                self.waterfall_rows(child, depth + 1, key, current, out, cx);
-            }
-        }
-    }
-
     fn render_sidebar(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
-        let collapsed = prefs().sidebar_collapsed;
         let mut items: Vec<AnyElement> = Vec::new();
 
-        // --- Collapse / expand toggle (always present) ---
-        let chevron = if collapsed { "»" } else { "«" };
+        // This renderer is used only while the sidebar is expanded.
         items.push(
             div()
                 .id("sidebar-toggle")
                 .flex()
                 .items_center()
-                .when(collapsed, |d| d.justify_center())
-                .when(!collapsed, |d| d.justify_end())
+                .justify_end()
                 .px_2()
                 .pt_2()
                 .pb_1()
                 .cursor_pointer()
                 .text_color(rgb(theme().text_dim))
                 .hover(|s| s.text_color(rgb(theme().text)))
-                .child(chevron)
-                .tooltip(tip(if collapsed { "Expand sidebar" } else { "Collapse sidebar" }))
+                .child("«")
+                .tooltip(tip("Collapse sidebar"))
                 .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
                     let mut np = prefs();
                     np.sidebar_collapsed = !np.sidebar_collapsed;
@@ -8254,11 +7766,6 @@ impl Schnauz {
             .bg(rgb(theme().sidebar))
             .border_r_1()
             .border_color(rgb(theme().border));
-        // Section content is constructed only for the expanded sidebar.
-        if collapsed {
-            return sidebar.children(items);
-        }
-
         let current = self.active_tab().current_dir.clone();
         let current = current.as_path();
         let mut key = 0usize;
@@ -8331,11 +7838,6 @@ impl Schnauz {
             }
         }
 
-        // --- Waterfall: an inline, expandable folder tree of the active dir ---
-        if prefs().waterfall && self.active_tab().remote.is_none() {
-            self.render_waterfall(&mut items, &mut key, current, cx);
-        }
-
         let groups_on = prefs().groups_enabled;
         let sections = div().id("sidebar-sections").flex_1().min_h_0().flex().flex_col()
             .overflow_y_scroll()
@@ -8385,7 +7887,7 @@ impl Schnauz {
             .items_center()
             .gap_1()
             .px_3()
-            .py_2()
+            .py_1()
             .min_w_0()
             .overflow_hidden()
             .border_b_1()
@@ -8705,6 +8207,7 @@ impl Schnauz {
         let t = theme();
         let p = self.pane(pane);
         let indicator_color = rgb(if t.is_light() { 0x000000 } else { 0xffffff });
+        let inactive_shade = if t.is_light() { 0x000000 } else { 0xffffff };
         let mut chips: Vec<AnyElement> = Vec::new();
         for (i, tab) in p.tabs.iter().enumerate() {
             let active = i == p.active && pane == self.active_pane;
@@ -8738,13 +8241,13 @@ impl Schnauz {
                     .border_l_1()
                     .border_r_1()
                     .border_color(rgb(if active { t.border_strong } else { t.border }))
-                    // Cover the strip's divider only beneath the active tab;
-                    // inactive tabs use the strip's line, never their own edge.
+                    // Extend over the divider painted behind the tabs. A parent
+                    // border paints over children and leaves an unwanted seam.
                     .when(active, |s| s.mb(px(-1.)).h(px(TAB_H - 3.)))
                     .cursor_pointer()
                     .text_color(if active { rgb(t.text) } else { rgb(t.text_muted) })
-                    .bg(if active { rgb(t.bg) } else { rgb(t.sidebar) })
-                    .when(!active, |s| s.hover(|s| s.bg(rgb(t.hover))))
+                    .bg(if active { rgb(t.bg) } else { Theme::alpha(inactive_shade, 0x18) })
+                    .when(!active, |s| s.hover(|s| s.bg(Theme::alpha(inactive_shade, 0x0c))))
                     .active(|s| s.bg(rgb(t.selected)))
                     // Drag this tab (live floating preview).
                     .on_drag(drag, move |_, _, _, cx| {
@@ -8817,6 +8320,7 @@ impl Schnauz {
         }
 
         div()
+            .relative()
             .flex_none()
             .flex()
             .items_end()
@@ -8824,14 +8328,15 @@ impl Schnauz {
             .px_1()
             .h(px(TAB_H))
             .bg(rgb(t.sidebar))
-            .border_b_1()
-            .border_color(rgb(t.border))
+            .pb(px(1.))
             // Dropping on empty strip space appends to this pane.
             .drag_over::<TabDrag>(|s, _, _, _| s.bg(rgb(theme().hover)))
             .on_drop(cx.listener(move |this, from: &TabDrag, _, cx| {
                 let len = this.pane(pane).tabs.len();
                 this.move_tab(from, pane, len, cx);
             }))
+            // Paint the baseline first so the active tab's background covers it.
+            .child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(rgb(t.border)))
             .children(chips)
             .child(
                 div()
@@ -8867,6 +8372,8 @@ impl Schnauz {
         let body: AnyElement = if searching { self.render_file_results(cx) }
         else if let Some(error) = &self.tab(pane).listing_error {
             directory_listing::error_panel(error, pane, cx)
+        } else if self.tab(pane).listing_dirty || (self.tab(pane).local_loading && self.tab(pane).entries.is_empty()) {
+            directory_listing::loading_panel()
         } else { match view {
             ViewMode::List => self.render_list_body(pane, cx),
             ViewMode::Icons => self.render_icons_body(pane, cx),
@@ -8973,7 +8480,7 @@ impl Schnauz {
                 cx.listener(move |this, _: &MouseDownEvent, window, cx| {
                     window.focus(&this.focus);
                     if this.active_pane != pane {
-                        if this.palette_open && this.file_search.inline { this.close_palette(cx); }
+                        if this.palette_open { this.close_palette(cx); }
                         this.active_pane = pane;
                         cx.notify();
                     }
@@ -9481,7 +8988,8 @@ impl Schnauz {
 
 impl Render for Schnauz {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.apply_project_file_filters() && self.palette_open && self.file_search.inline { self.refresh_file_search(cx); }
+        self.ensure_local_listings(cx);
+        if self.apply_project_file_filters() && self.palette_open { self.refresh_file_search(cx); }
         self.publish_project_activity(cx);
         native_file_drag::install(window);
         if std::mem::take(&mut self.dismiss_space_map) { self.close_space_map(cx); }
@@ -9500,14 +9008,15 @@ impl Render for Schnauz {
         });});
         let t = theme();
         self.cancel_unused_previews();
-        // Kick off any pending waterfall folder reads before rendering the tree.
-        self.ensure_waterfall_loaded(cx);
         // Main row: sidebar | content (including preview) | optional size map.
+        if prefs().sidebar_collapsed {
+            *self.sidebar_bounds.borrow_mut() = None;
+        }
         let main_row = div()
             .flex()
             .flex_1()
             .min_h_0()
-            .child(self.render_sidebar(window, cx))
+            .when(!prefs().sidebar_collapsed, |d| d.child(self.render_sidebar(window, cx)))
             .child(self.render_content(window, cx));
 
         let mut root = div()
@@ -9605,6 +9114,9 @@ impl Render for Schnauz {
                 this.track_file_drag(ev, cx);
                 this.track_sidebar_drop(ev.event.position, cx);
             }))
+            .capture_any_mouse_up(cx.listener(|this, event: &gpui::MouseUpEvent, window, cx| {
+                this.finish_sidebar_file_drop(event, window, cx);
+            }))
             .on_drag_move::<TabDrag>(cx.listener(|this, ev: &gpui::DragMoveEvent<TabDrag>, _, cx| {
                 this.track_sidebar_drop(ev.event.position, cx);
             }))
@@ -9666,11 +9178,8 @@ impl Render for Schnauz {
 
         root = root.child(main_row).child(self.render_schnauz_status(cx));
 
-        if self.palette_open && !self.file_search.inline {
-            root = root.child(self.render_palette(cx));
-        }
         self.schedule_native_menu(window, cx);
-        if self.confirm_delete.is_some() {
+        if self.confirm_delete.is_some() || self.permanent_delete.is_some() {
             root = root.child(self.render_confirm_delete(cx));
         }
         if self.info_panel.is_some() {
@@ -10202,14 +9711,18 @@ fn fingerprint_diff(a: &CloudFingerprint, b: &CloudFingerprint) -> usize {
 
 /// Items in `dir` mid-download/upload, per the `cloudctl status` helper.
 fn cloud_busy_count(tool: &Path, dir: &Path) -> usize {
-    Command::new(tool)
-        .arg("status")
-        .arg(dir)
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|s| s.trim().strip_prefix("busy ").and_then(|n| n.parse().ok()))
-        .unwrap_or(0)
+    let mut command = Command::new(tool);
+    command.arg("status").arg(dir);
+    workers::command(
+        command,
+        Vec::new(),
+        Duration::from_secs(10),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .ok()
+    .and_then(|o| String::from_utf8(o.stdout).ok())
+    .and_then(|s| s.trim().strip_prefix("busy ").and_then(|n| n.parse().ok()))
+    .unwrap_or(0)
 }
 
 /// Friendly name of the cloud store holding `path` ("Dropbox", "OneDrive",
@@ -10412,6 +9925,9 @@ fn unique_child(dir: &Path, base: &str) -> PathBuf {
 
 /// The open Get Info card.
 struct InfoPanel {
+    volume: Option<volumes::Volume>,
+    cancel: Arc<AtomicBool>,
+    error: Option<String>,
     path: PathBuf,
     is_dir: bool,
     info: FileInfo,
@@ -10422,6 +9938,8 @@ struct InfoPanel {
     /// (bytes, items); `None` while a folder is still being summed.
     total: Option<(u64, u64)>,
 }
+
+impl Drop for InfoPanel {fn drop(&mut self){self.cancel.store(true,Ordering::Release);}}
 
 #[derive(Clone, Copy, PartialEq)]
 enum BatchMode {
@@ -10536,21 +10054,35 @@ fn mode_string(mode: u32, is_dir: bool) -> String {
 }
 
 /// Total bytes and item count under a folder (symlinks not followed).
-fn tree_size_count(p: &Path) -> (u64, u64) {
+fn tree_size_count(path: &Path, cancel: &AtomicBool) -> Result<(u64, u64), String> {
     let (mut bytes, mut items) = (0u64, 0u64);
-    let mut stack = vec![p.to_path_buf()];
+    let mut stack = vec![path.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = fs::read_dir(&dir) else { continue };
-        for e in rd.flatten() {
-            items += 1;
-            match e.file_type() {
-                Ok(ft) if ft.is_dir() => stack.push(e.path()),
-                Ok(ft) if ft.is_file() => bytes += e.metadata().map(|m| m.len()).unwrap_or(0),
-                _ => {}
+        if cancel.load(Ordering::Acquire) {
+            return Err("Cancelled".into());
+        }
+        for item in fs::read_dir(&dir).map_err(|e| format!("Scan incomplete: {e}"))? {
+            if cancel.load(Ordering::Acquire) {
+                return Err("Cancelled".into());
+            }
+            let entry = item.map_err(|e| format!("Scan incomplete: {e}"))?;
+            items = items.saturating_add(1);
+            let kind = entry
+                .file_type()
+                .map_err(|e| format!("Scan incomplete: {e}"))?;
+            if kind.is_dir() {
+                stack.push(entry.path());
+            } else if kind.is_file() {
+                bytes = bytes.saturating_add(
+                    entry
+                        .metadata()
+                        .map_err(|e| format!("Scan incomplete: {e}"))?
+                        .len(),
+                );
             }
         }
     }
-    (bytes, items)
+    Ok((bytes, items))
 }
 
 /// 1234567 → "1,234,567".
@@ -10643,118 +10175,21 @@ fn items_label(n: usize) -> String {
     if n == 1 { "1 item".to_string() } else { format!("{n} items") }
 }
 
-/// Copy or move each (src, dest) pair. Moves try a rename first (instant on
-/// the same volume) and fall back to copy + delete across volumes. Copies use
-/// `fs::copy`, which clones on APFS (instant, no extra space) and otherwise
-/// copies data + xattrs. Never overwrites: a pair whose destination exists is
-/// skipped. Stops after the current file when cancelled (the half-done item is
-/// removed). Returns the pairs that completed, and the last error if any.
-fn run_transfer(
-    pairs: &[(PathBuf, PathBuf)],
-    kind: TransferKind,
-    prog: &JobProgress,
-) -> (Vec<(PathBuf, PathBuf)>, Option<String>) {
-    const EXDEV: i32 = 18;
-    let mut done = Vec::new();
-    let mut err = None;
-    let mut to_copy = Vec::new();
-    for (src, dest) in pairs {
-        if fs::symlink_metadata(dest).is_ok() {
-            err = Some(format!("“{}” already exists there", path_label(dest)));
-            continue;
-        }
-        if kind == TransferKind::Move {
-            match fs::rename(src, dest) {
-                Ok(()) => {
-                    done.push((src.clone(), dest.clone()));
-                    continue;
-                }
-                Err(e) if e.raw_os_error() == Some(EXDEV) => {}
-                Err(e) => {
-                    err = Some(format!("Couldn't move “{}”: {e}", path_label(src)));
-                    continue;
-                }
-            }
-        }
-        to_copy.push((src.clone(), dest.clone()));
-    }
-    prog.total.store(to_copy.iter().map(|(s, _)| tree_size(s)).sum(), Ordering::Relaxed);
-    for (src, dest) in to_copy {
-        match copy_tree(&src, &dest, prog) {
-            Ok(()) => {
-                if kind == TransferKind::Move {
-                    let removed = if fs::symlink_metadata(&src).is_ok_and(|m| m.is_dir()) {
-                        fs::remove_dir_all(&src)
-                    } else {
-                        fs::remove_file(&src)
-                    };
-                    if let Err(e) = removed {
-                        err = Some(format!("Copied “{}” but couldn't remove the original: {e}", path_label(&src)));
-                    }
-                }
-                done.push((src, dest));
-            }
-            Err(e) => {
-                let _ = if fs::symlink_metadata(&dest).is_ok_and(|m| m.is_dir()) {
-                    fs::remove_dir_all(&dest)
-                } else {
-                    fs::remove_file(&dest)
-                };
-                if prog.cancel.load(Ordering::Relaxed) {
-                    break;
-                }
-                err = Some(format!("Couldn't copy “{}”: {e}", path_label(&src)));
-            }
-        }
-    }
-    (done, err)
-}
-
-/// Total bytes of regular files under `p` (symlinks not followed).
-fn tree_size(p: &Path) -> u64 {
-    match fs::symlink_metadata(p) {
-        Ok(m) if m.is_dir() => fs::read_dir(p)
-            .map(|rd| rd.flatten().map(|e| tree_size(&e.path())).sum())
-            .unwrap_or(0),
-        Ok(m) if m.is_file() => m.len(),
-        _ => 0,
-    }
-}
-
-/// Recursively copy `src` to `dest` (which must not exist), keeping symlinks
-/// as symlinks, permissions, and file modification dates.
-fn copy_tree(src: &Path, dest: &Path, prog: &JobProgress) -> std::io::Result<()> {
-    if prog.cancel.load(Ordering::Relaxed) {
-        return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
-    }
-    let md = fs::symlink_metadata(src)?;
-    if md.file_type().is_symlink() {
-        std::os::unix::fs::symlink(fs::read_link(src)?, dest)?;
-    } else if md.is_dir() {
-        fs::create_dir(dest)?;
-        for e in fs::read_dir(src)? {
-            let e = e?;
-            copy_tree(&e.path(), &dest.join(e.file_name()), prog)?;
-        }
-        fs::set_permissions(dest, md.permissions())?;
-    } else {
-        fs::copy(src, dest)?;
-        if let (Ok(f), Ok(t)) = (fs::File::options().write(true).open(dest), md.modified()) {
-            let _ = f.set_modified(t);
-        }
-        prog.done.fetch_add(md.len(), Ordering::Relaxed);
-    }
-    Ok(())
+/// Exclusive destination publication and owned partial-file cleanup.
+fn run_transfer(pairs: &[(PathBuf, PathBuf)], kind: TransferKind, prog: &JobProgress)
+    -> (Vec<(PathBuf, PathBuf)>, Option<String>) {
+    file_transfer::run(pairs, kind, prog)
 }
 
 /// Move `path` to the Trash; returns where it landed there (for undo).
-fn trash_path(path: &Path) -> Option<PathBuf> {
+fn trash_path(path: &Path) -> Result<PathBuf, String> {
     let ns_path = NSString::from_str(&path.to_string_lossy());
     let url = NSURL::fileURLWithPath(&ns_path);
     let fm = NSFileManager::defaultManager();
     let mut out = None;
-    fm.trashItemAtURL_resultingItemURL_error(&url, Some(&mut out)).ok()?;
-    Some(out.and_then(|u| u.path()).map(|p| PathBuf::from(p.to_string())).unwrap_or_default())
+    fm.trashItemAtURL_resultingItemURL_error(&url, Some(&mut out))
+        .map_err(|error| format!("{} ({} {})", error.localizedDescription(), error.domain(), error.code()))?;
+    Ok(out.and_then(|u| u.path()).map(|p| PathBuf::from(p.to_string())).unwrap_or_default())
 }
 
 fn sidebar_badge(label: String, color: u32) -> gpui::Div {
@@ -10802,22 +10237,7 @@ fn nav_item(
 }
 
 /// A "key chip + label" pair for the palette's footer hints ("↩ Open file").
-fn palette_hint(key: &'static str, label: &'static str) -> impl IntoElement {
-    let t = theme();
-    div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .child(
-            div()
-                .px_1()
-                .rounded_sm()
-                .bg(Theme::alpha(t.text_dim, 0x22))
-                .text_color(rgb(t.text_muted))
-                .child(key),
-        )
-        .child(label)
-}
+
 
 fn empty_hint(text: &str) -> impl IntoElement {
     div()
@@ -10885,7 +10305,10 @@ fn file_row(
     div().id(("row", key)).flex().items_center().px_3().h(px(ROW_H)).cursor_pointer()
         .when(selected, |s| s.bg(rgb(t.selected)))
         .when(ctx_active && !selected, |s| s.bg(rgb(t.hover)))
-        .hover(|s| s.bg(rgb(t.hover))).active(|s| s.bg(rgb(t.selected)))
+        // GPUI's active style latches on every mouse button, but AppKit menu
+        // tracking can consume the right-button release. Keep row colour tied
+        // to selection/menu state instead of that potentially stale press.
+        .when(!selected, |s| s.hover(|s| s.bg(rgb(t.hover))))
         .on_hover(on_hover_row).children(cells).child(div().flex_1())
         .on_click(on_click)
         .on_mouse_down(MouseButton::Right, on_right)
@@ -10928,9 +10351,8 @@ fn icon_cell(
         .cursor_pointer()
         .when(selected, |s| s.bg(rgb(t.selected)))
         .when(ctx_active && !selected, |s| s.bg(rgb(t.hover)))
-        .hover(|s| s.bg(rgb(t.hover)))
-        // Instant press feedback (the click action lands on mouse-up).
-        .active(|s| s.bg(rgb(t.selected)))
+        // As in List, native context menus must not latch GPUI's active colour.
+        .when(!selected, |s| s.hover(|s| s.bg(rgb(t.hover))))
         // Track the hovered item so Enter renames the cell under the mouse.
         .on_hover(cx.listener(move |this, on: &bool, _, _| {
             if *on {
@@ -11271,37 +10693,6 @@ fn fps_overlay() -> AnyElement {
         .into_any_element()
 }
 
-/// List a folder's visible subdirectories (sorted case-insensitively) plus its
-/// current mtime. Used by the waterfall sidebar tree; runs off the main thread
-/// (may block on I/O). The mtime lets the watcher detect outside changes.
-fn read_subdirs(dir: &Path) -> (Vec<PathBuf>, Option<SystemTime>) {
-    let mut out = Vec::new();
-    if let Ok(rd) = fs::read_dir(dir) {
-        for e in rd.flatten() {
-            let p = e.path();
-            let is_dir = match e.file_type() {
-                Ok(ft) if ft.is_dir() => true,
-                Ok(ft) if ft.is_symlink() => p.is_dir(),
-                _ => false,
-            };
-            let hidden = p
-                .file_name()
-                .map(|n| n.to_string_lossy().starts_with('.'))
-                .unwrap_or(false);
-            if is_dir && !hidden {
-                out.push(p);
-            }
-        }
-    }
-    out.sort_by_cached_key(|p| {
-        p.file_name()
-            .map(|n| n.to_string_lossy().to_lowercase())
-            .unwrap_or_default()
-    });
-    let mtime = fs::metadata(dir).ok().and_then(|m| m.modified().ok());
-    (out, mtime)
-}
-
 /// `stat` results for sidebar locations, tags and group members,
 /// cached so `render` never touches the filesystem per frame — a single dead
 /// network shortcut would otherwise freeze every repaint. Stale entries are
@@ -11439,6 +10830,8 @@ enum CredField {
 /// State of the Connect-to-Server dialog.
 #[derive(Clone)]
 struct ServerForm {
+    id: String,
+    saving: bool,
     mode: ServerMode,
     /// Quick tab: the address being typed.
     addr: String,
@@ -11459,6 +10852,8 @@ struct ServerForm {
 impl Default for ServerForm {
     fn default() -> Self {
         ServerForm {
+            id: objc2_foundation::NSUUID::UUID().UUIDString().to_string(),
+            saving: false,
             mode: ServerMode::Quick,
             addr: String::new(),
             name: String::new(),
@@ -11539,39 +10934,54 @@ fn keychain_account(s: &SftpServer) -> String {
     format!("sftp:{}", s.display())
 }
 
-/// Store a server's password in the login Keychain (updating any existing one).
-fn keychain_set_password(s: &SftpServer, pw: &str) {
-    let _ = Command::new("security")
-        .args(["add-generic-password", "-U", "-s", "local.schnauz.sftp", "-a"])
-        .arg(keychain_account(s))
-        .arg("-w")
-        .arg(pw)
-        .output();
+fn sftp_credential(server:&SftpServer,password:Option<&str>)->Result<Option<String>,String> {
+    let result=sftp_credential_native(server,password);
+    if password.is_none() && !matches!(result,Ok(Some(_))) {
+        // Existing items were created by the former `security` client and can
+        // carry its access policy. Keep its read-only path until the native
+        // client can access the item; never rewrite or delete old credentials.
+        if let Some(password)=legacy::read_sftp_password(&keychain_account(server)){return Ok(Some(password));}
+    }
+    result
 }
 
-/// Read the current credential, falling back to an existing pre-rename item.
-fn keychain_get_password(s: &SftpServer) -> Option<String> {
-    keychain_read_password(s, "local.schnauz.sftp")
-        .or_else(|| keychain_read_password(s, legacy::SFTP_KEYCHAIN_SERVICE))
-}
-
-fn keychain_read_password(s: &SftpServer, service: &str) -> Option<String> {
-    let out = Command::new("security")
-        .args(["find-generic-password", "-w", "-s", service, "-a"])
-        .arg(keychain_account(s))
-        .output()
-        .ok()?;
-    if !out.status.success() { return None; }
-    let pw = String::from_utf8_lossy(&out.stdout);
-    let pw = pw.trim_end_matches(['\n', '\r']);
-    (!pw.is_empty()).then(|| pw.to_string())
+fn sftp_credential_native(server: &SftpServer, password: Option<&str>) -> Result<Option<String>, String> {
+    #[derive(serde::Deserialize)]
+    struct Response {
+        success: bool,
+        password: Option<String>,
+        message: Option<String>,
+    }
+    let helper = std::env::current_exe()
+        .map_err(|_| "SFTP helper unavailable")?
+        .parent()
+        .ok_or("SFTP helper unavailable")?
+        .join("sftpctl");
+    let request = serde_json::json!({"operation":if password.is_some(){"set"}else{"get"},"account":keychain_account(server),"password":password,"legacy_service":legacy::SFTP_KEYCHAIN_SERVICE});
+    let input =
+        serde_json::to_vec(&request).map_err(|_| "Could not prepare the credential request")?;
+    let output = workers::command(
+        Command::new(helper),
+        input,
+        Duration::from_secs(if password.is_some() { 300 } else { 15 }),
+        Arc::new(AtomicBool::new(false)),
+    )?;
+    let response: Response = serde_json::from_slice(&output.stdout)
+        .map_err(|_| "SFTP credential helper stopped unexpectedly")?;
+    if response.success {
+        Ok(response.password)
+    } else {
+        Err(response
+            .message
+            .unwrap_or_else(|| "SFTP credential access failed".into()))
+    }
 }
 
 /// The `expect` script that establishes a password SSH connection: it drives
 /// `sftp`, types the password at the prompt (password AND keyboard-interactive
 /// servers both use this prompt), and leaves a persistent ControlMaster socket
 /// that later operations reuse without re-authenticating. Created once.
-/// Args: <control-socket> <user@host> <port>. Env: SCHNAUZ_SFTP_PW.
+/// Args: <control-socket> <user@host> <port>. Password: UTF-8 hex line on stdin.
 fn ensure_connect_expect() -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     let path = config_dir()?.join("sftp-connect.exp");
@@ -11580,7 +10990,8 @@ set timeout 25
 set sock [lindex $argv 0]
 set target [lindex $argv 1]
 set port [lindex $argv 2]
-set pw $env(SCHNAUZ_SFTP_PW)
+gets stdin pw
+set pw [encoding convertfrom utf-8 [binary decode hex $pw]]
 spawn sftp -o ControlMaster=yes -o ControlPath=$sock -o ControlPersist=180 \
   -o ConnectTimeout=12 -o StrictHostKeyChecking=accept-new \
   -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -P $port $target
@@ -11606,16 +11017,23 @@ expect {
 }
 
 /// Is the multiplexed master connection for a password server alive?
-fn password_master_alive(s: &SftpServer) -> bool {
-    Command::new("ssh")
-        .arg("-o")
-        .arg(format!("ControlPath={}", ssh_control_path(s).to_string_lossy()))
-        .arg("-O")
-        .arg("check")
-        .arg(s.target())
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+fn password_master_alive(server: &SftpServer) -> bool {
+    let mut command = Command::new("/usr/bin/ssh");
+    command
+        .args([
+            "-o",
+            &format!("ControlPath={}", ssh_control_path(server).display()),
+            "-O",
+            "check",
+        ])
+        .arg(server.target());
+    workers::command(
+        command,
+        Vec::new(),
+        Duration::from_secs(5),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .is_ok_and(|o| o.status.success())
 }
 
 /// Ensure a password server has a live authenticated master connection,
@@ -11628,18 +11046,14 @@ fn ensure_master(server: &SftpServer) -> Result<(), String> {
     if password_master_alive(server) {
         return Ok(());
     }
-    let pw = keychain_get_password(server)
+    let pw = sftp_credential(server,None)?
         .ok_or_else(|| "No saved password — edit the server to set it.".to_string())?;
     let script = ensure_connect_expect().ok_or_else(|| "helper unavailable".to_string())?;
     let port = if server.port == 0 { 22 } else { server.port };
-    let out = Command::new("expect")
-        .arg(script)
-        .arg(ssh_control_path(server))
-        .arg(server.target())
-        .arg(port.to_string())
-        .env("SCHNAUZ_SFTP_PW", pw)
-        .output()
-        .map_err(|e| format!("couldn't launch expect: {e}"))?;
+    let mut command=Command::new("/usr/bin/expect");
+    command.arg(script).arg(ssh_control_path(server)).arg(server.target()).arg(port.to_string());
+    let encoded=pw.as_bytes().iter().map(|byte|format!("{byte:02x}")).collect::<String>();
+    let out=workers::command(command,format!("{encoded}\n").into_bytes(),Duration::from_secs(30),Arc::new(AtomicBool::new(false)))?;
     match out.status.code() {
         Some(0) => Ok(()),
         Some(11) => Err("Authentication failed — check the username and password.".into()),
@@ -11789,7 +11203,7 @@ fn ssh_exec(server: &SftpServer, remote_cmd: &str, use_system: bool) -> Result<S
     }
     cmd.arg(server.connection_target()).arg(remote_cmd);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let out = cmd.output().map_err(|e| format!("couldn't launch ssh: {e}"))?;
+    let out = workers::command(cmd,Vec::new(),Duration::from_secs(120),Arc::new(AtomicBool::new(false)))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
@@ -11809,48 +11223,72 @@ fn sftp_batch(server: &SftpServer, script: &str, use_system: bool) -> Result<Str
     sftp_batch_progress(server, script, use_system, None)
 }
 
-fn sftp_batch_progress(server: &SftpServer, script: &str, use_system: bool, progress: Option<&ssh_connection::Progress>) -> Result<String, String> {
-    use std::io::Write;
-    if let Some(progress) = progress { progress.set("Checking SSH settings…"); }
-    // Resolve saved terminal favourites off the UI thread, before opening SFTP.
+fn sftp_batch_progress(
+    server: &SftpServer,
+    script: &str,
+    use_system: bool,
+    progress: Option<&ssh_connection::Progress>,
+) -> Result<String, String> {
+    sftp_batch_cancellable(
+        server,
+        script,
+        use_system,
+        progress,
+        Arc::new(AtomicBool::new(false)),
+        None,
+    )
+}
+
+fn sftp_batch_cancellable(
+    server: &SftpServer,
+    script: &str,
+    use_system: bool,
+    progress: Option<&ssh_connection::Progress>,
+    cancel: Arc<AtomicBool>,
+    file_limit: Option<(PathBuf, u64)>,
+) -> Result<String, String> {
+    if cancel.load(Ordering::Acquire) {
+        return Err("Operation cancelled.".into());
+    }
+    if let Some(p) = progress {
+        p.set("Checking SSH settings…");
+    }
     let resolved = ssh_connection::for_reconnect(server, use_system);
     let server = &resolved;
-    if let Some(progress) = progress { progress.set("Connecting…"); }
+    if let Some(p) = progress {
+        p.set("Connecting…");
+    }
     ensure_master(server)?;
-    if script != "pwd" {
-        if let Some(progress) = progress { progress.set("Connecting / loading folder…"); }
+    if cancel.load(Ordering::Acquire) {
+        return Err("Operation cancelled.".into());
     }
-    let mut cmd = Command::new("sftp");
-    cmd.arg("-b").arg("-"); // read commands from stdin
-    for opt in ssh_options(server, use_system) {
-        cmd.arg(opt);
+    if let Some(p) = progress {
+        p.set("Connecting / loading folder…");
     }
+    let mut cmd = Command::new("/usr/bin/sftp");
+    cmd.args(["-b", "-"]);
+    cmd.args(ssh_options(server, use_system));
     if server.port != 0 {
-        cmd.arg("-P").arg(server.port.to_string());
+        cmd.args(["-P", &server.port.to_string()]);
     }
     cmd.arg(server.connection_target());
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("couldn't launch sftp: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(script.as_bytes());
-        let _ = stdin.write_all(b"\nquit\n");
-    }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let out = workers::command_guarded(
+        cmd,
+        format!("{script}\nquit\n").into_bytes(),
+        Duration::from_secs(45),
+        cancel,
+        file_limit,
+    )?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
-        let err = String::from_utf8_lossy(&out.stderr);
-        // Surface the most useful line (auth/host/connection failure).
-        let msg = ssh_connection::error_message(&err);
-        Err(msg)
+        Err(ssh_connection::error_message(&String::from_utf8_lossy(
+            &out.stderr,
+        )))
     }
 }
 
 /// The server's default remote directory (the login home), via `sftp pwd`.
-fn sftp_home(server: &SftpServer, use_system: bool) -> Result<String, String> {
-    sftp_home_progress(server, use_system, None)
-}
-
 fn sftp_home_progress(server: &SftpServer, use_system: bool, progress: Option<&ssh_connection::Progress>) -> Result<String, String> {
     let out = sftp_batch_progress(server, "pwd", use_system, progress)?;
     // sftp prints: "Remote working directory: /home/user"
@@ -11881,27 +11319,20 @@ fn sftp_path_arg(path: &str) -> Result<String, String> {
 }
 
 /// List a remote directory, returning entries parsed from sftp's `ls -l`.
-fn sftp_list(server: &SftpServer, path: &str, use_system: bool) -> Result<Vec<Entry>, String> {
-    sftp_list_progress(server, path, use_system, None)
-}
-
-fn sftp_list_progress(server: &SftpServer, path: &str, use_system: bool, progress: Option<&ssh_connection::Progress>) -> Result<Vec<Entry>, String> {
-    let script = remote_listing::list_command(path)?;
-    let out = sftp_batch_progress(server, &script, use_system, progress)?;
-    if let Some(progress) = progress { progress.set("Loading folder…"); }
-    Ok(parse_sftp_ls(&out))
-}
-
 /// Create a remote directory.
 fn sftp_mkdir(server: &SftpServer, path: &str, use_system: bool) -> Result<(), String> {
-    sftp_batch(server, &format!("mkdir \"{}\"", path.replace('"', "")), use_system).map(|_| ())
+    sftp_batch(
+        server,
+        &format!("mkdir {}", sftp_path_arg(path)?),
+        use_system,
+    )
+    .map(|_| ())
 }
 
-/// Rename/move a remote path (same server).
 fn sftp_rename(server: &SftpServer, from: &str, to: &str, use_system: bool) -> Result<(), String> {
     sftp_batch(
         server,
-        &format!("rename \"{}\" \"{}\"", from.replace('"', ""), to.replace('"', "")),
+        &format!("rename {} {}", sftp_path_arg(from)?, sftp_path_arg(to)?),
         use_system,
     )
     .map(|_| ())
@@ -12729,10 +12160,12 @@ fn load_last_dir() -> PathBuf {
 
 fn save_last_dir(dir: &Path) {
     if let Some(path) = config_file("last_dir.txt") {
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let _ = fs::write(&path, dir.to_string_lossy().as_bytes());
+        persistence::queue(path.clone(), dir.to_string_lossy().as_bytes().to_vec());
+        let _ = std::thread::Builder::new()
+            .name("schnauz-last-folder".into())
+            .spawn(move || {
+                let _ = persistence::flush(&path);
+            });
     }
 }
 
@@ -12867,60 +12300,6 @@ fn load_theme() -> Theme {
     Theme::default()
 }
 
-/// Persist the menu style.
-fn save_menu_style(m: &MenuStyle) {
-    if let Some(file) = config_file("menu.txt") {
-        if let Some(parent) = file.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let body = format!(
-            "bg={:06x}\ntext={:06x}\nopacity={}\nfont_px={}\ncustom={}\n",
-            m.bg, m.text, m.opacity, m.font_px, m.custom
-        );
-        let _ = fs::write(&file, body);
-    }
-}
-
-/// Load the saved menu style, falling back to defaults for missing fields.
-fn load_menu_style() -> MenuStyle {
-    let mut m = MenuStyle::default();
-    if let Some(file) = config_file("menu.txt") {
-        if let Ok(s) = fs::read_to_string(&file) {
-            for line in s.lines() {
-                let Some((k, v)) = line.split_once('=') else {
-                    continue;
-                };
-                let (k, v) = (k.trim(), v.trim());
-                match k {
-                    "bg" => {
-                        if let Ok(c) = u32::from_str_radix(v, 16) {
-                            m.bg = c;
-                        }
-                    }
-                    "text" => {
-                        if let Ok(c) = u32::from_str_radix(v, 16) {
-                            m.text = c;
-                        }
-                    }
-                    "opacity" => {
-                        if let Ok(n) = v.parse::<u8>() {
-                            m.opacity = n.min(100);
-                        }
-                    }
-                    "font_px" => {
-                        if let Ok(n) = v.parse::<f32>() {
-                            m.font_px = n.clamp(9.0, 24.0);
-                        }
-                    }
-                    "custom" => m.custom = v == "true",
-                    _ => {}
-                }
-            }
-        }
-    }
-    m
-}
-
 /// Persist feature preferences as key/value lines.
 fn save_prefs(p: &Prefs) {
     if let Some(file) = config_file("prefs.txt") {
@@ -12928,8 +12307,8 @@ fn save_prefs(p: &Prefs) {
             let _ = fs::create_dir_all(parent);
         }
         let mut body = format!(
-            "preview={}\npreview_pages={}\ninfo={}\nshow_parent={}\nsidebar_collapsed={}\npalette_history={}\ngroups_enabled={}\nshow_filter_button={}\nshow_fps={}\nscript_actions={}\nssh_use_system={}\nssh_configured={}\nwaterfall={}\npalette_opacity={}\n",
-            p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.palette_history, p.groups_enabled, p.show_filter_button, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured, p.waterfall, p.palette_opacity
+            "preview={}\npreview_pages={}\ninfo={}\nshow_parent={}\nsidebar_collapsed={}\nsearch_history={}\ngroups_enabled={}\nshow_filter_button={}\nshow_fps={}\nscript_actions={}\nssh_use_system={}\nssh_configured={}\n",
+            p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.search_history, p.groups_enabled, p.show_filter_button, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured
         );
         body.push_str(&format!("preview_width={}\ntools_width={}\n",p.preview_width,p.tools_width));
         body.push_str(&format!("drive_warning={}\ndrive_critical={}\ndrive_free_percent={}\n", p.drive_warning, p.drive_critical, p.drive_free_percent));
@@ -13007,19 +12386,13 @@ fn load_prefs() -> Prefs {
                     "drive_warning" => if let Ok(value) = v.trim().parse::<u8>() { p.drive_warning = value.clamp(1,98); },
                     "drive_critical" => if let Ok(value) = v.trim().parse::<u8>() { p.drive_critical = value.clamp(2,99); },
 
-                    "palette_history" => p.palette_history = on,
+                    "palette_history" | "search_history" => p.search_history = on,
                     "groups_enabled" => p.groups_enabled = on,
                     "show_filter_button" => p.show_filter_button = on,
                     "show_fps" => p.show_fps = on,
                     "script_actions" => p.script_actions = on,
                     "ssh_use_system" => p.ssh_use_system = on,
                     "ssh_configured" => p.ssh_configured = on,
-                    "waterfall" => p.waterfall = on,
-                    "palette_opacity" => {
-                        if let Ok(n) = v.trim().parse::<u8>() {
-                            p.palette_opacity = n.clamp(20, 100);
-                        }
-                    }
                     _ => {}
                 }
             }
@@ -13043,6 +12416,8 @@ fn main() {
     }
     #[cfg(feature = "ui-checks")]
     if args.get(1).is_some_and(|s| s == "--check-layout") || std::env::var_os("SCHNAUZ_UI_CHECK_VISIBLE").is_some() { ui_checks::run(); return; }
+    #[cfg(feature="ui-checks")]
+    {
     if args.get(1).is_some_and(|s| s == "--text-preview-test") {
         match text_view::smoke_test() {
             Ok(message) => println!("{message}"),
@@ -13092,151 +12467,6 @@ fn main() {
         }
         return;
     }
-    if args.len() >= 3 && args[1] == "--sftp-list" {
-        // --sftp-list <[user@]host[:port]> [path] [password]
-        let raw = args[2].clone();
-        let (user, hostport) = raw.split_once('@').map_or(("", raw.as_str()), |(u, h)| (u, h));
-        let (host, port) = hostport
-            .rsplit_once(':')
-            .filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty())
-            .map(|(h, p)| (h.to_string(), p.parse().unwrap_or(0)))
-            .unwrap_or((hostport.to_string(), 0));
-        let password = args.get(4).cloned();
-        let srv = SftpServer {
-            control_path: None,
-            ssh_alias: String::new(),
-            name: host.clone(),
-            host,
-            user: user.to_string(),
-            port,
-            key: String::new(),
-            use_password: password.is_some(),
-            auto_reopen: false,
-        };
-        if let Some(pw) = &password {
-            keychain_set_password(&srv, pw);
-            eprintln!("(password mode: stored in Keychain, using expect+ControlMaster)");
-        }
-        let path = args.get(3).cloned().unwrap_or_else(|| ".".into());
-        match sftp_home(&srv, true) {
-            Ok(h) => eprintln!("home: {h}"),
-            Err(e) => eprintln!("home error: {e}"),
-        }
-        match sftp_list(&srv, &path, true) {
-            Ok(es) => {
-                eprintln!("{} entries:", es.len());
-                for e in es.iter().take(20) {
-                    eprintln!("  {:<30} dir={} size={}", e.name, e.is_dir, e.size);
-                }
-            }
-            Err(e) => eprintln!("list error: {e}"),
-        }
-        return;
-    }
-
-    if args.len() >= 4 && args[1] == "--sftp-preview-test" {
-        // --sftp-preview-test <[user@]host[:port]> <remote_path> [password]
-        // Exercises the remote-preview pipeline headlessly: fetch → QuickLook.
-        let raw = args[2].clone();
-        let (user, hostport) = raw.split_once('@').map_or(("", raw.as_str()), |(u, h)| (u, h));
-        let (host, port) = hostport
-            .rsplit_once(':')
-            .filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty())
-            .map(|(h, p)| (h.to_string(), p.parse().unwrap_or(0)))
-            .unwrap_or((hostport.to_string(), 0));
-        let password = args.get(4).cloned();
-        let srv = SftpServer {
-            control_path: None,
-            ssh_alias: String::new(),
-            name: host.clone(),
-            host,
-            user: user.to_string(),
-            port,
-            key: String::new(),
-            use_password: password.is_some(),
-            auto_reopen: false,
-        };
-        if let Some(pw) = &password {
-            keychain_set_password(&srv, pw);
-        }
-        let remote = PathBuf::from(&args[3]);
-        let local = remote_preview_temp(&remote);
-        if let Some(parent) = local.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let r = remote.to_string_lossy().replace('"', "");
-        let l = local.to_string_lossy().replace('"', "");
-        eprintln!("fetching {r} -> {l}");
-        match sftp_batch(&srv, &format!("get \"{r}\" \"{l}\""), true) {
-            Ok(_) => {
-                let bytes = fs::metadata(&local).map(|m| m.len()).unwrap_or(0);
-                eprintln!("downloaded {bytes} bytes");
-                match build_preview(&local) {
-                    Some(img) => {
-                        let sz = img.size(0);
-                        eprintln!("build_preview OK: {}x{}", sz.width.0, sz.height.0);
-                    }
-                    None => eprintln!("build_preview FAILED"),
-                }
-                if is_pdf(&remote) {
-                    match render_pdf_page(&local, 0) {
-                        Some((img, count)) => {
-                            let sz = img.size(0);
-                            eprintln!("render_pdf_page OK: {}x{}, {count} page(s)", sz.width.0, sz.height.0);
-                        }
-                        None => eprintln!("render_pdf_page FAILED"),
-                    }
-                }
-            }
-            Err(e) => eprintln!("download error: {e}"),
-        }
-        return;
-    }
-
-    if args.len() >= 3 && args[1] == "--cloud-test" {
-        use std::os::macos::fs::MetadataExt;
-        let p = PathBuf::from(&args[2]);
-        match fs::metadata(&p) {
-            Ok(m) => {
-                let flags = m.st_flags();
-                eprintln!("st_flags = 0x{flags:08X}");
-                eprintln!("SF_DATALESS set = {}", flags & SF_DATALESS != 0);
-                eprintln!("is_dataless() = {}", is_dataless(&p));
-                eprintln!("cloud_kind = {:?}", cloud_kind(&p).map(|k| match k {
-                    CloudKind::ICloud => "iCloud",
-                    CloudKind::Provider => "Provider",
-                }));
-            }
-            Err(e) => eprintln!("stat error: {e}"),
-        }
-        return;
-    }
-
-    if args.len() >= 2 && args[1] == "--script-test" {
-        let dir = ensure_scripts_dir();
-        eprintln!("scripts dir: {:?}", dir);
-        let acts = discover_script_actions();
-        eprintln!("discovered {} action(s):", acts.len());
-        for a in &acts {
-            eprintln!(
-                "  {:<20} types={:?}  applies(png={}, folder={})",
-                a.name,
-                a.types,
-                script_action_applies(a, "photo.png", false),
-                script_action_applies(a, "MyFolder", true),
-            );
-        }
-        // Execute "Copy Path" (if present) on a sample path to confirm it runs.
-        if let Some(cp) = acts.iter().find(|a| a.name == "Copy Path") {
-            let out = Command::new(&cp.path)
-                .arg("/tmp/schnauz-script-test.txt")
-                .output();
-            eprintln!("ran Copy Path -> exit {:?}", out.map(|o| o.status.code()));
-        }
-        return;
-    }
-
-    // Parse a filter query and print the operators + a few match checks.
     if args.len() >= 3 && args[1] == "--filter-test" {
         let fq = FilterQuery::parse(&args[2]);
         eprintln!("text={:?}", fq.text);
@@ -13332,6 +12562,12 @@ fn main() {
         return;
     }
 
+    }
+
+    if args.iter().skip(1).any(|arg|arg.starts_with("--")) {
+        eprintln!("Unknown option. Use --version.");std::process::exit(2);
+    }
+
     diagnostics::install();
     let app = Application::new();
     // Re-open the window when the Dock icon is clicked after the last window was
@@ -13361,13 +12597,6 @@ fn main() {
         let saved_keymap = load_keymap();
         set_active_keymap(saved_keymap.clone());
         cx.set_global(KeymapGlobal(saved_keymap));
-
-        // Load the menu style; unless the user chose menu colors, derive them
-        // from the active theme so menus match (incl. light themes).
-        let mut saved_menu = load_menu_style();
-        saved_menu.follow_theme(&saved_theme);
-        set_active_menu(saved_menu);
-        cx.set_global(MenuStyleGlobal(saved_menu));
 
         // Load saved SFTP servers.
         let saved_servers = load_sftp_servers();
@@ -13501,7 +12730,7 @@ mod tests {
         fs::create_dir_all(dir.join("Alpha.app/Contents")).unwrap();
         fs::create_dir_all(dir.join("Beta.APP/Contents")).unwrap();
         fs::write(dir.join("notes.txt"), "notes").unwrap();
-        let mut tab = Tab::new(dir.clone());
+        let mut tab = Tab::fixture(dir.clone());
         let names = |tab: &Tab| tab.visible_entries().map(|e| e.name.clone()).collect::<Vec<_>>();
         assert_eq!(names(&tab), ["Utilities", "Alpha.app", "Beta.APP", "notes.txt"]);
         for entries in [read_entries_fast(&dir).unwrap(), read_entries(&dir).unwrap()] {
@@ -13542,7 +12771,7 @@ mod tests {
         fs::write(dir.join("report.txt"), "report").unwrap();
         fs::write(dir.join("photo.jpg"), "photo").unwrap();
         std::os::unix::fs::symlink("Reports", dir.join("Report link")).unwrap();
-        let mut tab = Tab::new(dir.clone());
+        let mut tab = Tab::fixture(dir.clone());
         let names = |tab: &Tab| tab.visible_entries().map(|e| e.name.clone()).collect::<Vec<_>>();
         assert_eq!(tab.visible_count(), 5);
 
@@ -13581,7 +12810,7 @@ mod tests {
         assert_eq!(tab.visible_count(), 6);
         assert!(!tab.is_filtered());
         // Another tab has its own default and results.
-        let other = Tab::new(dir.clone());
+        let other = Tab::fixture(dir.clone());
         tab.set_entry_filter(EntryFilter::Files);
         assert_eq!(other.entry_filter, EntryFilter::All);
         assert_eq!(other.visible_count(), 6);
@@ -13595,7 +12824,7 @@ mod tests {
         for name in ["visible.txt", ".secret.txt", "Finder hidden.txt"] { fs::write(dir.join(name), "text").unwrap(); }
         let flagged = std::ffi::CString::new(dir.join("Finder hidden.txt").as_os_str().as_encoded_bytes()).unwrap();
         assert_eq!(unsafe { libc::chflags(flagged.as_ptr(), libc::UF_HIDDEN) }, 0);
-        let mut tab = Tab::new(dir.clone());
+        let mut tab = Tab::fixture(dir.clone());
         tab.install_listing(read_entries(&dir));
         tab.recompute_results();
         let names = |t: &Tab| t.visible_entries().map(|e| e.name.clone()).collect::<Vec<_>>();
@@ -13624,7 +12853,7 @@ mod tests {
         let dir = scratch("selection-visibility");
         fs::write(dir.join("keep.txt"), "visible").unwrap();
         fs::write(dir.join(".hidden.txt"), "hidden").unwrap();
-        let mut tab = Tab::new(dir.clone());
+        let mut tab = Tab::fixture(dir.clone());
         tab.show_hidden = true;
         tab.recompute_results();
         tab.selection.extend([dir.join("keep.txt"), dir.join(".hidden.txt")]);

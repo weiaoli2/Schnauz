@@ -76,6 +76,48 @@ struct FolderLabelResponse {
 }
 
 impl Schnauz {
+    pub(super) fn sidebar_drop_target(&self, position: gpui::Point<gpui::Pixels>) -> Option<bool> {
+        if prefs().sidebar_collapsed || !self.sidebar_bounds.borrow().is_some_and(|b| b.contains(&position)) {
+            return None;
+        }
+        Some(self.common_bounds.borrow().is_some_and(|b| b.contains(&position)))
+    }
+
+    /// Bind the destination now so a later project switch cannot redirect it.
+    pub(super) fn current_project_reference_node(&self, items: Vec<Shortcut>) -> MenuNode {
+        let project = self.projects.active;
+        mi("Current Project", move |this, _, cx| {
+            this.close_context_menu(cx);
+            this.close_sidebar_menu(cx);
+            this.add_favourites(project, false, items.clone(), cx);
+        })
+    }
+
+    /// Capture paths, types and destination IDs when the menu opens.
+    pub(super) fn add_reference_nodes(&self, pane: usize, paths: &[PathBuf]) -> Vec<MenuNode> {
+        let shortcuts: Vec<_> = paths.iter().map(|p| self.shortcut_for_path(pane, p.clone()))
+            .filter(|s| !s.is_home()).collect();
+        if shortcuts.is_empty() { return Vec::new(); }
+        let common = shortcuts.clone();
+        let mut projects = vec![self.current_project_reference_node(shortcuts.clone()), MenuNode::Sep];
+        projects.extend(std::iter::once((None, "Personal".to_string()))
+            .chain(self.projects.items.iter().map(|p| (Some(p.id), p.name.clone())))
+            .map(|(project, name)| {
+                let items = shortcuts.clone();
+                mi(name, move |this, _, cx| {
+                    this.close_context_menu(cx);
+                    this.add_favourites(project, false, items.clone(), cx);
+                })
+            }));
+        vec![
+            MenuNode::Sub { label: "Add to Project".into(), items: projects },
+            mi("Add to Common", move |this, _, cx| {
+                this.close_context_menu(cx);
+                this.add_favourites(None, true, common.clone(), cx);
+            }),
+        ]
+    }
+
     pub(super) fn sortable_row(
         &self,
         row: AnyElement,
@@ -1024,7 +1066,7 @@ impl Schnauz {
 
     pub(super) fn sidebar_width(&self, window: &Window) -> f32 {
         if prefs().sidebar_collapsed {
-            return SIDEBAR_COLLAPSED_W;
+            return 0.;
         }
         let mut width = self.volume_sidebar_width(window).max(170.);
         if !self.collapsed_sections.contains("PROJECTS") {

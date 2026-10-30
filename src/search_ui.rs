@@ -3,7 +3,9 @@ use super::*;
 use crate::file_search::{self, Mode, Scope};
 
 pub(super) struct State {
-    pub inline: bool,
+    project: Option<u64>,
+    history_recorded: bool,
+    pub(super) history_pos: Option<usize>,
     pub scope: Scope,
     pub mode: Mode,
     pub busy: bool,
@@ -21,7 +23,9 @@ pub(super) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            inline: true,
+            project: None,
+            history_recorded: false,
+            history_pos: None,
             scope: Scope::default(),
             mode: Mode::default(),
             busy: false,
@@ -51,6 +55,100 @@ impl Drop for State {
 }
 
 impl Schnauz {
+    pub(super) fn remember_file_search(&mut self, cx: &mut Context<Self>) {
+        if !prefs().search_history || !self.palette_open || self.file_search.history_recorded || self.query.trim().is_empty() { return; }
+        let search = projects::RecentSearch {
+            query: self.query.clone(),
+            content: self.file_search.mode == Mode::Content,
+            drive: self.file_search.scope == Scope::Drive,
+        };
+        let mut candidate = self.projects.clone();
+        let Some(sidebar) = candidate.sidebar_for_mut(self.file_search.project) else { return; };
+        if sidebar.remember_search(search) {
+            if let Err(error) = self.persist_library(candidate, cx) {
+                self.set_notice(error, cx);
+                return;
+            }
+        }
+        self.file_search.history_recorded = true;
+    }
+
+    /// Keyboard recall and the recent-search menu use the same project list.
+    pub(super) fn recall_search_history(&mut self, older: bool, cx: &mut Context<Self>) {
+        let history = &self.projects.sidebar().recent_searches;
+        if history.is_empty() {
+            return;
+        }
+        let next = if older {
+            Some(
+                self.file_search
+                    .history_pos
+                    .map_or(0, |i| (i + 1).min(history.len() - 1)),
+            )
+        } else {
+            self.file_search.history_pos.and_then(|i| i.checked_sub(1))
+        };
+        let search = next.map(|i| history[i].clone());
+        self.query = search.as_ref().map(|s| s.query.clone()).unwrap_or_default();
+        if let Some(search) = search {
+            self.file_search.mode = if search.content {
+                Mode::Content
+            } else {
+                Mode::File
+            };
+            self.file_search.scope = if search.drive {
+                Scope::Drive
+            } else {
+                Scope::CurrentFolder
+            };
+        }
+        self.query_cursor = self.query.chars().count();
+        self.query_anchor = None;
+        self.refresh_file_search(cx);
+        self.file_search.history_pos = next;
+        self.file_search.history_recorded = true;
+        cx.notify();
+    }
+
+    fn recent_search_nodes(&self) -> Vec<MenuNode> {
+        let project = self.projects.active;
+        let mut nodes: Vec<_> = self.projects.sidebar().recent_searches.iter().map(|search| {
+            let label = format!("{} · {} · {}", search.query.chars().take(70).collect::<String>(),
+                if search.content { "Content" } else { "File" },
+                if search.drive { "Drive" } else { "Current Folder" });
+            let search = search.clone();
+            mi(label, move |this, window, cx| {
+                this.close_context_menu(cx);
+                if this.projects.active != project { return; }
+                this.remember_file_search(cx);
+                this.focus_file_search(true, window, cx);
+                this.query = search.query.clone();
+                this.query_cursor = this.query.chars().count();
+                this.query_anchor = None;
+                this.file_search.mode = if search.content { Mode::Content } else { Mode::File };
+                this.file_search.scope = if search.drive { Scope::Drive } else { Scope::CurrentFolder };
+                this.refresh_file_search(cx);
+            })
+        }).collect();
+        if nodes.is_empty() {
+            nodes.push(MenuNode::Disabled("No recent searches in this project".into()));
+        } else {
+            nodes.push(MenuNode::Sep);
+            nodes.push(mi("Clear Search History", move |this, _, cx| {
+                this.close_context_menu(cx);
+                let mut candidate = this.projects.clone();
+                let Some(sidebar) = candidate.sidebar_for_mut(project) else { return; };
+                sidebar.recent_searches.clear();
+                match this.persist_library(candidate, cx) {
+                    Ok(()) if this.file_search.project == project => this.file_search.history_recorded = true,
+                    Err(error) => this.set_notice(error, cx),
+                    _ => {},
+                }
+            }));
+        }
+        nodes
+    }
+
     pub(super) fn search_edit_nodes(&self) -> Vec<MenuNode> {
         let selected = self.query_sel().is_some();
         vec![
@@ -96,11 +194,11 @@ impl Schnauz {
 
     pub(super) fn search_in_pane(&self, pane: usize) -> bool {
         self.palette_open
-            && self.file_search.inline
             && self.file_search.pane == pane
             && self.pane(pane).active == self.file_search.tab
     }
     pub(super) fn stop_file_search(&mut self, cx: &mut Context<Self>) {
+        self.remember_file_search(cx);
         self.file_search.cancel();
         self.file_search.stopped = true;
         self.search_gen = self.search_gen.wrapping_add(1);
@@ -113,14 +211,13 @@ impl Schnauz {
         cx: &mut Context<Self>,
     ) {
         let existing = !reset && self.search_in_pane(self.active_pane);
-        if reset || !self.file_search.inline {
+        if reset {
             self.file_search.cancel();
             self.file_search = State::default();
             self.query.clear();
             self.query_cursor = 0;
             self.query_anchor = None;
         }
-        self.file_search.inline = true;
         self.file_search.editing = true;
         self.file_search.pane = self.active_pane;
         self.file_search.tab = self.pane(self.active_pane).active;
@@ -131,7 +228,7 @@ impl Schnauz {
         tab.find_query = None;
         tab.editing_path = None;
         tab.recompute_results();
-        self.palette_hist_pos = None;
+        self.file_search.history_pos = None;
         window.focus(&self.focus);
         if !existing {
             self.refresh_file_search(cx);
@@ -189,9 +286,11 @@ impl Schnauz {
         }
     }
     pub(super) fn refresh_file_search(&mut self, cx: &mut Context<Self>) {
+        self.file_search.project = self.projects.active;
+        self.file_search.history_recorded = false;
+        self.file_search.history_pos = None;
         self.file_search.restore_selection = None;
         self.file_search.cancel();
-        self.file_search.inline = true;
         self.file_search.pane = self.active_pane;
         self.file_search.tab = self.pane(self.active_pane).active;
         self.file_search
@@ -205,8 +304,6 @@ impl Schnauz {
         let generation = self.search_gen;
         self.palette_items.clear();
         self.selected = 0;
-        self.palette_actions = None;
-        self.palette_scroll.set_offset(point(px(0.0), px(0.0)));
         self.file_search.progress = Default::default();
         self.file_search.error = None;
         self.file_search.stopped = false;
@@ -237,6 +334,15 @@ impl Schnauz {
         let cancel = Arc::new(AtomicBool::new(false));
         self.file_search.cancel = cancel.clone();
         self.file_search.busy = true;
+        let history_project = self.file_search.project;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(1200)).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.search_gen == generation && this.file_search.project == history_project {
+                    this.remember_file_search(cx);
+                }
+            });
+        }).detach();
         let request = file_search::Request {
             root,
             mode: self.file_search.mode,
@@ -291,7 +397,7 @@ impl Schnauz {
                             this.palette_items
                                 .extend(update.hits.into_iter().map(|hit| PaletteItem {
                                     title: path_label(&hit.path),
-                                    subtitle: hit.path.to_string_lossy().into_owned(),
+
                                     action: Action::Open(hit.path, hit.is_dir),
                                     is_dir: hit.is_dir,
                                 }));
@@ -320,14 +426,14 @@ impl Schnauz {
 
     pub(super) fn render_file_search(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
-        let active = self.palette_open && self.file_search.inline && self.file_search.editing;
+        let active = self.palette_open && self.file_search.editing;
         let mut input = div()
             .flex()
             .min_w_0()
             .flex_1()
             .overflow_hidden()
             .whitespace_nowrap();
-        if self.query.is_empty() || !self.file_search.inline {
+        if self.query.is_empty() {
             input =
                 input
                     .text_color(rgb(t.text_dim))
@@ -355,12 +461,14 @@ impl Schnauz {
             input = input.child(self.query.clone());
         }
         let mut scopes = div()
+            .relative()
+            .children(ui_checks::probe("top-search-scope"))
             .flex()
             .flex_none()
             .h(px(TOOLBAR_CONTROL_H))
             .items_center()
             .gap_0p5()
-            .p_0p5()
+            .px_0p5()
             .rounded_md()
             .bg(rgb(t.surface));
         for (id, label, scope) in [
@@ -378,12 +486,14 @@ impl Schnauz {
             );
         }
         let mut modes = div()
+            .relative()
+            .children(ui_checks::probe("top-search-mode"))
             .flex()
             .flex_none()
             .h(px(TOOLBAR_CONTROL_H))
             .items_center()
             .gap_0p5()
-            .p_0p5()
+            .px_0p5()
             .rounded_md()
             .bg(rgb(t.surface));
         for (id, label, mode) in [
@@ -414,7 +524,7 @@ impl Schnauz {
                     .children(ui_checks::probe("top-search-field"))
                     .flex_1()
                     .min_w_0()
-                    .h(px(30.0))
+                    .h(px(TOOLBAR_CONTROL_H))
                     .flex()
                     .items_center()
                     .gap_1()
@@ -427,6 +537,23 @@ impl Schnauz {
                     .text_size(px(UI_SMALL_FONT_SIZE))
                     .child(ui_icon(Icon::Search, 16., rgb(t.text_muted)))
                     .child(input)
+                    .child(
+                        div().id("search-history").flex_none().size(px(20.))
+                            .flex().items_center().justify_center().rounded_sm().cursor_pointer()
+                            .hover(|d| d.bg(rgb(t.hover)))
+                            .tooltip(tip("Recent searches for this project"))
+                            .child(ui_icon(Icon::History, 14., rgb(t.text_muted)))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                                this.remember_file_search(cx);
+                                this.context_menu = Some(ContextMenu {
+                                    x: f32::from(event.position().x), y: f32::from(event.position().y),
+                                    target: None, nodes: this.recent_search_nodes(),
+                                });
+                                cx.stop_propagation();
+                                cx.notify();
+                            })),
+                    )
                     .child(
                         div()
                             .flex_none()
@@ -517,12 +644,15 @@ impl Schnauz {
         direct_actions: bool,
         cx: &mut Context<Self>,
     ) {
-        self.select_search_result(row, cx);
         let Some(item) = self.palette_items.get(row) else {
             return;
         };
         let Action::Open(path, is_dir) = item.action.clone();
         let pane = self.file_search.pane;
+        self.selected = row;
+        self.file_search.editing = false;
+        self.file_search.restore_selection = None;
+        self.select_context_entry(pane, path.clone(), cx);
         if direct_actions {
             self.open_quick_actions(pane, x, y, path, is_dir, cx);
             return;
@@ -551,6 +681,7 @@ impl Schnauz {
                 }
             }),
         ];
+        nodes.extend(self.add_reference_nodes(pane, &self.action_targets(pane)));
         if is_dir {
             let folder = path.clone();
             nodes.push(mi("Inspect…", move |this, window, cx| {
@@ -697,7 +828,9 @@ impl Schnauz {
                         let cloud = if this.tab(pane).remote.is_none() { this.cloud_state(path, *is_dir, cx) } else { CloudSync::Local };
                         Some(div().id(("file-search-hit",i)).w(px(width)).h(px(ROW_H)).flex().items_center().px_3().gap_3()
                             .text_size(px(UI_FONT_SIZE)).cursor_pointer()
-                            .when(selected,|s|s.bg(rgb(t.selected))).hover(|s|s.bg(rgb(t.hover)))
+                            .when(selected,|s|s.bg(rgb(t.selected)))
+                            .when(!selected && this.is_ctx_target(path),|s|s.bg(rgb(t.hover)))
+                            .when(!selected,|s|s.hover(|s|s.bg(rgb(t.hover))))
                             .child(div().flex_none().w(px(cell_width)).min_w_0().flex().items_center().gap_2()
                                 .child(div().flex_none().child(icon_element(path,*is_dir)))
                                 .child(div().id(("search-entry-name",i)).flex_1().min_w_0().flex()
@@ -762,8 +895,14 @@ fn search_segment(
     let t = theme();
     div()
         .id(id)
+        .relative()
+        .children(ui_checks::probe(id))
+        .h(px(TOOLBAR_CONTROL_H))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
         .px_2()
-        .py_1()
         .rounded_md()
         .cursor_pointer()
         .text_size(px(10.0))

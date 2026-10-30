@@ -3,7 +3,7 @@
 use super::*;
 impl Schnauz {
     pub(super) fn render_search_mascot(&self, cx: &Context<Self>) -> AnyElement {
-        let running = self.file_search.busy && self.palette_open && self.file_search.inline;
+        let running = self.file_search.busy && self.palette_open;
         let dog = div()
             .id("schnauz-mascot")
             .relative()
@@ -21,7 +21,7 @@ impl Schnauz {
                 "About Schnauz · Coffee for Cookie"
             }))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if this.file_search.busy && this.palette_open && this.file_search.inline {
+                if this.file_search.busy && this.palette_open {
                     this.stop_file_search(cx);
                 } else {
                     about::open_about(cx);

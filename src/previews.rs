@@ -1,6 +1,41 @@
 //! Preview work, cancellation and bounded caches; ordinary browsing stays cheap.
 use super::*;
 
+/// Cache-only keys contain NUL, so no real local filename can collide with a
+/// remote source. The complete nonsecret server identity is encoded, not hashed.
+pub(super) fn source_key(path:&Path,server:Option<&SftpServer>)->PathBuf {
+    use std::os::unix::{ffi::{OsStrExt,OsStringExt}};
+    let Some(server)=server else{return path.into();};
+    let identity=serde_json::to_vec(&(&server.host,&server.user,server.port,&server.ssh_alias)).unwrap();
+    let mut bytes=vec![0];bytes.extend(identity);bytes.push(0);bytes.extend(path.as_os_str().as_bytes());
+    PathBuf::from(OsString::from_vec(bytes))
+}
+
+struct Downloaded {
+    directory: PathBuf,
+    file: PathBuf,
+    bytes: usize,
+    fetched: Instant,
+}
+impl Drop for Downloaded {fn drop(&mut self){let directory=self.directory.clone();let _=std::thread::Builder::new().name("schnauz-preview-cleanup".into()).spawn(move||{let _=fs::remove_dir_all(directory);});}}
+impl Downloaded {
+    fn reserve(remote:&Path)->Result<Self,String> {
+        use std::os::unix::fs::DirBuilderExt;
+        for _ in 0..16 {
+            let directory=std::env::temp_dir().join(format!("schnauz-preview-{}",objc2_foundation::NSUUID::UUID().UUIDString()));
+            match fs::DirBuilder::new().mode(0o700).create(&directory) {
+                Ok(())=>return Ok(Self{file:directory.join(remote.file_name().ok_or("Missing remote filename")?),directory,bytes:0,fetched:Instant::now()}),
+                Err(e) if e.kind()==std::io::ErrorKind::AlreadyExists=>continue,
+                Err(e)=>return Err(e.to_string()),
+            }
+        }
+        Err("Couldn't reserve a private preview folder.".into())
+    }
+}
+thread_local! {
+    static REMOTE_SOURCES:RefCell<Cache<PathBuf,Arc<Downloaded>>>=RefCell::new(Cache::new(12,160*1024*1024,|d|d.bytes,|_|false));
+}
+
 impl Schnauz {
     /// Watch only selected local previews; never scan a folder for preview changes.
     pub(super) fn watched_preview_paths(&self) -> HashSet<PathBuf> {
@@ -16,6 +51,7 @@ impl Schnauz {
         TEXT_PREVIEW_CACHE.with(|c| { c.borrow_mut().remove(path); });
         PREVIEW_CACHE.with(|c| { c.borrow_mut().remove(path); });
         INFO_CACHE.with(|c| { c.borrow_mut().remove(path); });
+        self.pdf_pending.borrow_mut().retain(|(p,_),cancel|{if p==path{cancel.store(true,Ordering::Release);false}else{true}});
         PDF_PAGE_CACHE.with(|c| c.borrow_mut().retain(|(p, _), _| p != path));
         PDF_COUNT_CACHE.with(|c| { c.borrow_mut().remove(path); });
     }
@@ -34,21 +70,46 @@ impl Schnauz {
     }
 
     pub(super) fn cancel_unused_previews(&self) {
-        let wanted: HashSet<PathBuf> = self
+        let selected: HashSet<PathBuf> = self
             .panes
             .iter()
             .map(Pane::active_tab)
-            .filter(|t| prefs().preview && t.selection.len() == 1)
-            .filter_map(|t| t.anchor.clone())
+            .filter(|t| t.selection.len() == 1)
+            .filter_map(|t| {
+                t.anchor
+                    .as_ref()
+                    .map(|path| source_key(path, t.remote.as_ref()))
+            })
             .collect();
         self.preview_pending.borrow_mut().retain(|path, cancel| {
-            if wanted.contains(path) {
+            if prefs().preview && selected.contains(path) {
                 true
             } else {
                 cancel.store(true, Ordering::Release);
                 false
             }
         });
+        self.info_pending.borrow_mut().retain(|path, cancel| {
+            if prefs().info && selected.contains(path) {
+                true
+            } else {
+                cancel.store(true, Ordering::Release);
+                false
+            }
+        });
+        self.pdf_pending
+            .borrow_mut()
+            .retain(|(path, page), cancel| {
+                if prefs().preview
+                    && selected.contains(path)
+                    && page.abs_diff(self.preview_page) <= 1
+                {
+                    true
+                } else {
+                    cancel.store(true, Ordering::Release);
+                    false
+                }
+            });
     }
     pub(super) fn ensure_info(&self, path: PathBuf, cx: &mut Context<Self>) {
         if !prefs().info
@@ -61,7 +122,8 @@ impl Schnauz {
         self.info_pending.borrow_mut().insert(path.clone(), cancel.clone());
         cx.spawn(async move |this, cx| {
             let p = path.clone();
-            let info = cx.background_spawn(async move { gather_info(&p) }).await;
+            let info = workers::run("schnauz-file-info",move||gather_info(&p)).await;
+            let Ok(info)=info else{return;};
             let _ = this.update(cx, |this, cx| {
                 if cancel.load(Ordering::Acquire) || !this.info_pending.borrow().get(&path)
                     .is_some_and(|current| Arc::ptr_eq(current, &cancel)) { return; }
@@ -95,8 +157,7 @@ impl Schnauz {
             }
             let worker_cancel = cancel.clone();
             let p = path.clone();
-            let (text, image) = cx
-                .background_spawn(async move {
+            let result = workers::run("schnauz-file-preview",move || {
                     let text = text_preview::read(&p).map(Arc::new);
                     let image = if text.is_none() && !worker_cancel.load(Ordering::Acquire) {
                         build_preview_cancellable(&p, &worker_cancel)
@@ -104,8 +165,8 @@ impl Schnauz {
                         None
                     };
                     (text, image)
-                })
-                .await;
+                }).await;
+            let (text,image)=result.unwrap_or((None,None));
             let _ = this.update(cx, |this, cx| {
                 if cancel.load(Ordering::Acquire) {
                     return;
@@ -127,46 +188,92 @@ impl Schnauz {
         .detach();
     }
     pub(super) fn ensure_pdf_page(&self, path: PathBuf, page: usize, cx: &mut Context<Self>) {
-        if !is_pdf(&path)
-            || lookup_pdf_page(&path, page).is_some()
-            || !self.pdf_pending.borrow_mut().insert((path.clone(), page))
-        {
+        let server = self.active_tab().remote.clone();
+        let key = source_key(&path, server.as_ref());
+        if !is_pdf(&path) || lookup_pdf_page(&key, page).is_some() {
             return;
         }
-        let src = if self.active_tab().remote.is_some() {
-            remote_preview_temp(&path)
+        let document = if server.is_some() {
+            REMOTE_SOURCES.with(|c| c.borrow().get(&key).cloned())
         } else {
-            path.clone()
+            None
         };
+        if server.is_some() && document.is_none() {
+            self.ensure_remote_preview(self.active_pane, path, 0, cx);
+            return;
+        }
+        if self.pdf_pending.borrow().contains_key(&(key.clone(), page)) {
+            return;
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.pdf_pending
+            .borrow_mut()
+            .insert((key.clone(), page), cancel.clone());
+        let source = document
+            .as_ref()
+            .map(|d| d.file.clone())
+            .unwrap_or_else(|| path.clone());
         cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(120))
                 .await;
+            if cancel.load(Ordering::Acquire) {
+                return;
+            }
             let wanted = this
                 .update(cx, |this, _| {
-                    this.active_tab().anchor.as_ref() == Some(&path) && this.preview_page == page
+                    this.active_tab()
+                        .anchor
+                        .as_ref()
+                        .is_some_and(|p| source_key(p, this.active_tab().remote.as_ref()) == key)
                 })
                 .unwrap_or(false);
             if !wanted {
                 let _ = this.update(cx, |this, _| {
-                    this.pdf_pending.borrow_mut().remove(&(path, page));
+                    if this
+                        .pdf_pending
+                        .borrow()
+                        .get(&(key.clone(), page))
+                        .is_some_and(|current| Arc::ptr_eq(current, &cancel))
+                    {
+                        this.pdf_pending.borrow_mut().remove(&(key, page));
+                    }
                 });
                 return;
             }
-            let out = cx
-                .background_spawn(async move { render_pdf_page(&src, page) })
-                .await;
+            let stop = cancel.clone();
+            let out = workers::run("schnauz-pdf-preview", move || {
+                let _keep = document;
+                render_pdf_page_cancellable(&source, page, &stop)
+            })
+            .await
+            .ok()
+            .flatten();
             let _ = this.update(cx, |this, cx| {
-                this.pdf_pending.borrow_mut().remove(&(path.clone(), page));
-                if this.active_tab().anchor.as_ref() != Some(&path) || this.preview_page != page {
+                if cancel.load(Ordering::Acquire)
+                    || !this
+                        .pdf_pending
+                        .borrow()
+                        .get(&(key.clone(), page))
+                        .is_some_and(|current| Arc::ptr_eq(current, &cancel))
+                {
+                    return;
+                }
+                this.pdf_pending.borrow_mut().remove(&(key.clone(), page));
+                if !this
+                    .active_tab()
+                    .anchor
+                    .as_ref()
+                    .is_some_and(|p| source_key(p, this.active_tab().remote.as_ref()) == key)
+                {
                     return;
                 }
                 match out {
                     Some((image, count)) => {
-                        insert_pdf_page(path.clone(), page, Some(image));
-                        PDF_COUNT_CACHE.with(|c| c.borrow_mut().insert(path, count));
+                        insert_pdf_page(key.clone(), page, Some(image));
+                        PDF_COUNT_CACHE.with(|c| c.borrow_mut().insert(key, count));
                     }
-                    None => insert_pdf_page(path, page, None),
+                    None => insert_pdf_page(key, page, None),
                 }
                 cx.notify();
             });
@@ -174,75 +281,113 @@ impl Schnauz {
         .detach();
     }
 
-    /// Preview a remote (SFTP) file: download it once to a temp cache, build the
-    /// preview from that local copy, and store the result under the *remote*
-    /// path so the inspector's cache lookups find it. Limited to images and
-    /// PDFs under a size cap so we never pull a huge binary just to preview it.
     pub(super) fn ensure_remote_preview(
         &self,
+        pane: usize,
         remote_path: PathBuf,
         size: u64,
         cx: &mut Context<Self>,
     ) {
-        if !prefs().preview || lookup_preview(&remote_path).is_some() {
-            return;
-        }
-        let Some(server) = self.active_tab().remote.clone() else {
+        const LIMIT: u64 = 40 * 1024 * 1024;
+        let Some(server) = self.tab(pane).remote.clone() else {
             return;
         };
-        // Only fetch types worth previewing.
-        if !is_image(&remote_path) && !is_pdf(&remote_path) {
+        let key = source_key(&remote_path, Some(&server));
+        if !prefs().preview
+            || (!is_image(&remote_path) && !is_pdf(&remote_path))
+            || self.preview_pending.borrow().contains_key(&key)
+        {
             return;
         }
-        // Cap the download; mark oversized files unavailable so we don't retry.
-        const MAX_PREVIEW_BYTES: u64 = 40 * 1024 * 1024;
-        if size > MAX_PREVIEW_BYTES {
-            PREVIEW_CACHE.with(|c| c.borrow_mut().insert(remote_path, None));
-            cx.notify();
+        let fresh = REMOTE_SOURCES.with(|c| {
+            c.borrow().get(&key).is_some_and(|d| {
+                d.fetched.elapsed() < Duration::from_secs(15)
+                    && (size == 0 || d.bytes as u64 == size)
+            })
+        });
+        if fresh && lookup_preview(&key).is_some() {
             return;
         }
+        if size > LIMIT {
+            PREVIEW_CACHE.with(|c| c.borrow_mut().insert(key, None));
+            return;
+        }
+        self.invalidate_preview(&key);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.preview_pending
+            .borrow_mut()
+            .insert(key.clone(), cancel.clone());
         let use_system = prefs().ssh_use_system;
-        let want_pdf = is_pdf(&remote_path);
         cx.spawn(async move |this, cx| {
-            let s = server.clone();
-            let rp = remote_path.clone();
-            let built = cx
-                .background_spawn(async move {
-                    let local = remote_preview_temp(&rp);
-                    if let Some(parent) = local.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                    // Fetch a fresh copy (the remote file may have changed).
-                    let r = rp.to_string_lossy().replace('"', "");
-                    let l = local.to_string_lossy().replace('"', "");
-                    let script = format!("get \"{r}\" \"{l}\"");
-                    match sftp_batch(&s, &script, use_system) {
-                        Ok(_) => {
-                            let img = build_preview(&local);
-                            let pdf = if want_pdf {
-                                render_pdf_page(&local, 0)
-                            } else {
-                                None
-                            };
-                            Some((img, pdf))
-                        }
-                        Err(_) => None,
-                    }
-                })
+            cx.background_executor()
+                .timer(Duration::from_millis(120))
                 .await;
-            let _ = this.update(cx, |_this, cx| {
+            if cancel.load(Ordering::Acquire) {
+                return;
+            }
+            let (rp, stop) = (remote_path.clone(), cancel.clone());
+            let built = workers::run("schnauz-remote-preview", move || -> Result<_, String> {
+                let mut local = Downloaded::reserve(&rp)?;
+                let script = format!(
+                    "get {} {}",
+                    sftp_path_arg(&rp.to_string_lossy())?,
+                    sftp_path_arg(&local.file.to_string_lossy())?
+                );
+                sftp_batch_cancellable(
+                    &server,
+                    &script,
+                    use_system,
+                    None,
+                    stop.clone(),
+                    Some((local.file.clone(), LIMIT)),
+                )?;
+                if stop.load(Ordering::Acquire) {
+                    return Err("Preview cancelled".into());
+                }
+                local.bytes = fs::metadata(&local.file).map_err(|e| e.to_string())?.len() as usize;
+                if local.bytes as u64 > LIMIT {
+                    return Err("Preview exceeds 40 MB.".into());
+                }
+                let image = build_preview_cancellable(&local.file, &stop);
+                let pdf = if is_pdf(&rp) && !stop.load(Ordering::Acquire) {
+                    render_pdf_page_cancellable(&local.file, 0, &stop)
+                } else {
+                    None
+                };
+                Ok((Arc::new(local), image, pdf))
+            })
+            .await
+            .and_then(|r| r);
+            let _ = this.update(cx, |this, cx| {
+                if cancel.load(Ordering::Acquire)
+                    || !this
+                        .preview_pending
+                        .borrow()
+                        .get(&key)
+                        .is_some_and(|pending| Arc::ptr_eq(pending, &cancel))
+                {
+                    return;
+                }
+                this.preview_pending.borrow_mut().remove(&key);
                 match built {
-                    Some((img, pdf)) => {
-                        PREVIEW_CACHE.with(|c| c.borrow_mut().insert(remote_path.clone(), img));
-                        if let Some((pimg, count)) = pdf {
-                            insert_pdf_page(remote_path.clone(), 0, Some(pimg));
-                            PDF_COUNT_CACHE
-                                .with(|c| c.borrow_mut().insert(remote_path.clone(), count));
+                    Ok((document, image, pdf)) => {
+                        REMOTE_SOURCES.with(|c| c.borrow_mut().insert(key.clone(), document));
+                        PREVIEW_CACHE.with(|c| c.borrow_mut().insert(key.clone(), image));
+                        if let Some((image, count)) = pdf {
+                            insert_pdf_page(key.clone(), 0, Some(image));
+                            PDF_COUNT_CACHE.with(|c| c.borrow_mut().insert(key.clone(), count));
+                        }
+                        if this.preview_page != 0
+                            && this.active_tab().anchor.as_ref().is_some_and(|p| {
+                                source_key(p, this.active_tab().remote.as_ref()) == key
+                            })
+                        {
+                            this.ensure_pdf_page(remote_path, this.preview_page, cx);
                         }
                     }
-                    // Download/build failed → cache "unavailable" (shows the icon).
-                    None => {
-                        PREVIEW_CACHE.with(|c| c.borrow_mut().insert(remote_path.clone(), None));
+                    Err(error) => {
+                        PREVIEW_CACHE.with(|c| c.borrow_mut().insert(key, None));
+                        this.set_notice(format!("Couldn't preview the remote file: {error}"), cx);
                     }
                 }
                 cx.notify();
@@ -250,6 +395,7 @@ impl Schnauz {
         })
         .detach();
     }
+
 }
 
 thread_local! {
@@ -299,10 +445,26 @@ pub(super) fn insert_pdf_page(path: PathBuf, page: usize, img: Option<Arc<Render
 
 /// Rasterize one page of a PDF via AppKit's `NSPDFImageRep`, off the render
 /// thread. Returns the page image and the document's page count.
-pub(super) fn render_pdf_page(path: &Path, page: usize) -> Option<(Arc<RenderImage>, usize)> {
-    use objc2_foundation::{NSPoint, NSRect, NSSize};
-
-    let bytes = fs::read(path).ok()?;
+#[cfg(any(test,feature="ui-checks"))]
+pub(super) fn render_pdf_page(path:&Path,page:usize)->Option<(Arc<RenderImage>,usize)> {
+    render_pdf_page_cancellable(path,page,&AtomicBool::new(false))
+}
+fn render_pdf_page_cancellable(path:&Path,page:usize,cancel:&AtomicBool)->Option<(Arc<RenderImage>,usize)> {
+    use objc2_foundation::{NSPoint,NSRect,NSSize};
+    use std::io::Read;
+    // A page flip must not multiply full-document memory across worker threads.
+    static RENDER:Mutex<()>=Mutex::new(());
+    let _render=RENDER.lock().ok()?;
+    const PDF_LIMIT:u64=64*1024*1024;
+    if cancel.load(Ordering::Acquire)||fs::metadata(path).ok()?.len()>PDF_LIMIT{return None;}
+    let mut file=fs::File::open(path).ok()?;
+    let mut bytes=Vec::new();let mut buffer=[0u8;8192];
+    loop {
+        if cancel.load(Ordering::Acquire){return None;}
+        let n=file.read(&mut buffer).ok()?;if n==0{break;}
+        if bytes.len().saturating_add(n)>PDF_LIMIT as usize{return None;}
+        bytes.extend_from_slice(&buffer[..n]);
+    }
     let data = NSData::with_bytes(&bytes);
     let rep = NSPDFImageRep::imageRepWithData(&data)?;
     let count = rep.pageCount().max(1) as usize;
@@ -368,27 +530,8 @@ pub(super) fn lookup_info(path: &Path) -> Option<FileInfo> {
     INFO_CACHE.with(|c| c.borrow().get(path).cloned())
 }
 
-/// Deterministic local temp path for previewing a remote file. Keeps the
-/// original file name (so the extension drives QuickLook/PDF rendering) and
-/// hashes the full remote path so distinct files never collide.
-pub(super) fn remote_preview_temp(remote: &Path) -> PathBuf {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    remote.to_string_lossy().hash(&mut h);
-    let name = remote
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "file".into());
-    std::env::temp_dir()
-        .join("schnauz-remote-preview")
-        .join(format!("{:016x}-{name}", h.finish()))
-}
-
 /// Generate a preview image for any file via macOS QuickLook (`qlmanage -t`),
 /// then decode it into a GPUI `RenderImage`. Runs off the render thread.
-pub(super) fn build_preview(path: &Path) -> Option<Arc<RenderImage>> {
-    build_preview_cancellable(path, &AtomicBool::new(false))
-}
 struct PreviewDirectory(PathBuf);
 impl Drop for PreviewDirectory {
     fn drop(&mut self) {
@@ -455,7 +598,7 @@ fn wait_for_child(child: &mut std::process::Child, cancel: &AtomicBool, timeout:
 }
 
 /// Everything we display in the Information inspector for one file.
-#[derive(Clone)]
+#[derive(Clone,Default)]
 pub(super) struct FileInfo {
     pub(super) kind: String,
     pub(super) size: String,
@@ -555,7 +698,7 @@ pub(super) fn code_signature(path: &Path, is_dir: bool) -> Option<String> {
 
 impl Drop for Schnauz {
     fn drop(&mut self) {
-        for cancel in self.preview_pending.get_mut().values() {
+        for cancel in self.preview_pending.get_mut().values().chain(self.pdf_pending.get_mut().values()).chain(self.info_pending.get_mut().values()) {
             cancel.store(true, Ordering::Release);
         }
     }
@@ -563,6 +706,19 @@ impl Drop for Schnauz {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn remote_preview_keys_separate_servers_accounts_ports_and_local_paths() {
+        let path=Path::new("/tmp/report.pdf");
+        let base=SftpServer{host:"first.example".into(),user:"alice".into(),port:22,..Default::default()};
+        let key=source_key(path,Some(&base));
+        assert_eq!(source_key(path,None),path);
+        assert_ne!(key,source_key(path,None));
+        for server in [SftpServer{host:"second.example".into(),..base.clone()},SftpServer{user:"bob".into(),..base.clone()},SftpServer{port:2222,..base.clone()}] {
+            assert_ne!(key,source_key(path,Some(&server)));
+        }
+        assert_eq!(key,source_key(path,Some(&base)));
+    }
+
     #[test]
     fn cancelled_preview_child_is_reaped_promptly() {
         let cancel = Arc::new(AtomicBool::new(false));

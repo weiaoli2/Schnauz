@@ -168,7 +168,7 @@ impl Schnauz {
         }
         sidebar.file_filter = rule;
         self.persist_library(library, cx)?;
-        if self.apply_project_file_filters() && self.palette_open && self.file_search.inline {
+        if self.apply_project_file_filters() && self.palette_open {
             self.refresh_file_search(cx);
         }
         self.pending_click_rename = None;
@@ -209,14 +209,14 @@ impl Schnauz {
             .flex_none()
             .flex()
             .items_center()
-            .gap_2()
+            .gap(px(6.))
             .whitespace_nowrap()
             .child("Filter:")
             .child(
                 div()
                     .flex_none()
                     .flex()
-                    .p(px(2.))
+                    .p(px(1.))
                     .rounded_lg()
                     .bg(rgb(t.surface))
                     .children(
@@ -231,8 +231,8 @@ impl Schnauz {
                                 .id((probe, pane))
                                 .relative()
                                 .flex_none()
-                                .h(px(24.))
-                                .px_3()
+                                .h(px(20.))
+                                .px_2()
                                 .rounded_md()
                                 .flex()
                                 .items_center()
@@ -265,8 +265,8 @@ impl Schnauz {
                     .id(("project-filter-modify", pane))
                     .relative()
                     .flex_none()
-                    .h(px(24.))
-                    .px_2()
+                    .h(px(20.))
+                    .px(px(6.))
                     .rounded_md()
                     .flex()
                     .items_center()
@@ -470,7 +470,7 @@ mod tests {
         for name in ["scene.blend", "scene.blend1", "notes.bak", ".hidden.bak"] {
             fs::write(dir.join(name), "keep data").unwrap();
         }
-        let mut tab = Tab::new(dir.clone());
+        let mut tab = Tab::fixture(dir.clone());
         tab.selection = HashSet::from([dir.join("scene.blend"), dir.join("scene.blend1")]);
         tab.anchor = Some(dir.join("scene.blend1"));
         tab.apply_project_file_filter(&Rule::parse(".blend1,.bak", true).unwrap());

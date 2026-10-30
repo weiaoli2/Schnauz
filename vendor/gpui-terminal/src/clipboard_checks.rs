@@ -21,6 +21,42 @@ impl std::io::Write for Input {
 }
 
 pub fn run(cx: &mut App) {
+    // Deliberately unattached: protocol replies must work without render/layout,
+    // including while a tab is hidden or its displayed text is frozen.
+    for cols in [24, 48, 80] {
+        let captured = Input::default();
+        let detached = cx.new(|cx| {
+            TerminalView::new(
+                captured.clone(),
+                std::io::empty(),
+                TerminalConfig { cols, rows: 8, ..Default::default() },
+                cx,
+            )
+        });
+        detached.update(cx, |view, _| {
+            view.selection_snapshot = Some(view.state.selection_snapshot());
+            view.process_output(b"\x1b]2;hidden-title\x07\x1b[2;1H");
+            view.process_output(&vec![b'x'; cols * 2 + 3]);
+            // Fragment the cursor query exactly as network reads can split it.
+            view.process_output(b"\x1b[");
+            view.process_output(b"6n\x1b[18t");
+            assert_eq!(
+                &*captured.0.lock().unwrap(),
+                format!("\x1b[4;4R\x1b[8;8;{cols}t").as_bytes(),
+                "Live cursor and size probes must answer before any paint, independent of frozen text"
+            );
+            assert!(matches!(view.pending_ui_events.front(), Some(TerminalEvent::Title(t)) if t == "hidden-title"));
+            captured.0.lock().unwrap().clear();
+            view.resize(cols + 5, 10);
+            view.process_output(b"\x1b[10;1Hbottom\r\nnext\x1b[6n\x1b[18t");
+            assert_eq!(
+                &*captured.0.lock().unwrap(),
+                format!("\x1b[10;5R\x1b[8;10;{}t", cols + 5).as_bytes(),
+                "Bottom-row scrolling and resized geometry must be reported without a frame"
+            );
+        });
+    }
+
     let input = Input::default();
     let window = cx
         .open_window(

@@ -46,4 +46,14 @@ mkdir -p "$NETWORK_TEST_DIR"
 xcrun swiftc -parse-as-library -module-cache-path "$NETWORK_TEST_DIR/modules" native/network/Core.swift native/network/Form.swift native/network/Tests.swift -o "$NETWORK_TEST_DIR/run"
 "$NETWORK_TEST_DIR/run"
 
+SFTP_TEST_DIR="${CARGO_TARGET_DIR:-target}/sftp-tests"
+mkdir -p "$SFTP_TEST_DIR"
+xcrun swiftc -parse-as-library -module-cache-path "$SFTP_TEST_DIR/modules" native/sftp/Core.swift native/sftp/Tests.swift -o "$SFTP_TEST_DIR/run"
+"$SFTP_TEST_DIR/run"
+
+VOLUME_TEST_DIR="${CARGO_TARGET_DIR:-target}/volume-tests"
+mkdir -p "$VOLUME_TEST_DIR"
+xcrun swiftc -parse-as-library -module-cache-path "$VOLUME_TEST_DIR/modules" native/volumes/Core.swift native/volumes/Tests.swift -o "$VOLUME_TEST_DIR/run"
+"$VOLUME_TEST_DIR/run"
+
 ./test-ui.sh

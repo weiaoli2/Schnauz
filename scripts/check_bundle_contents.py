@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 
-EXECUTABLES = {"schnauz", "removebg", "cloudctl", "volumectl", "nextcloudctl", "todoistctl", "weblinkctl", "networkctl"}
+EXECUTABLES = {"schnauz", "removebg", "cloudctl", "volumectl", "nextcloudctl", "todoistctl", "weblinkctl", "networkctl", "sftpctl"}
 LICENSES = {"Shuffle-MIT.txt", "gpui-terminal-MIT.txt", "gpui-terminal-Apache-2.0.txt", "Alacritty-Apache-2.0.txt", "portable-pty-MIT.txt", "THIRD_PARTY_NOTICES.txt"}
 REQUIRED = {"Contents/Info.plist", "Contents/Resources/AppIcon.icns", "Contents/Resources/Credits.txt"}
 REQUIRED |= {f"Contents/MacOS/{name}" for name in EXECUTABLES}

@@ -50,6 +50,13 @@ pub(super) fn run(
     paint(window, cx);
     let title = recorded_bounds("schnauz-title");
     let search = recorded_bounds("top-search-field");
+    assert_eq!(search.size.height,px(TOOLBAR_CONTROL_H));
+    for id in ["top-search-scope","top-search-mode","search-drive","search-current","search-content","search-file",
+        "schnauz-split","schnauz-terminal","schnauz-preview"] {
+        let bounds=recorded_bounds(id);
+        assert_eq!(bounds.size.height,search.size.height,"Top control height differs: {id}");
+        assert!((f32::from(bounds.top()-search.top())).abs()<0.1,"Top control alignment differs: {id}");
+    }
     let chip = recorded_bounds("current-project-chip");
     assert!(
         (f32::from(title.origin.y - search.origin.y)).abs() <= 1.1,

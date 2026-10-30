@@ -158,7 +158,6 @@ pub(super) fn run() {
         cx.set_global(ThemeGlobal(theme()));
         cx.set_global(PrefsGlobal(prefs()));
         cx.set_global(nextcloud::State::default());
-        cx.set_global(MenuStyleGlobal(MenuStyle::default()));
         cx.set_global(KeymapGlobal(Keymap::defaults()));
         cx.set_global(SftpServersGlobal(Vec::new(), None));
         cx.set_global(FolderViewsGlobal(Rc::new(RefCell::new(folder_views::Library::open(None)))));
@@ -483,6 +482,23 @@ fn check_previews(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
         browser.open_context_menu(pane, 20., 20., Some((path, false)), false, cx);
         assert!(browser.context_menu.as_ref().unwrap().nodes.iter().any(|node| matches!(node, MenuNode::Sub { label, .. } if label == "Quick Actions")));
         browser.context_menu = None;
+        let old = browser.active_tab().anchor.clone().unwrap();
+        let other = browser.active_tab().current_dir.join("compact-preview.txt");
+        browser.open_context_menu(pane, 20., 20., Some((other.clone(), false)), false, cx);
+        assert_eq!(browser.action_targets(pane), vec![other.clone()], "Right-click replaces an unrelated selection before menu actions bind");
+        assert_eq!(browser.tab(pane).anchor.as_ref(), Some(&other));
+        browser.context_menu = None;
+        browser.tab_mut(pane).selection.insert(old.clone());
+        browser.open_context_menu(pane, 20., 20., Some((old.clone(), false)), false, cx);
+        assert_eq!(browser.tab(pane).selection.len(), 2, "Right-click inside a selected group preserves it");
+        assert_eq!(browser.tab(pane).anchor.as_ref(), Some(&old));
+        browser.context_menu = None;
+        let folder = browser.active_tab().current_dir.join("context-selected-folder");
+        fs::create_dir_all(&folder).unwrap();
+        browser.open_context_menu(pane, 20., 20., Some((folder.clone(), true)), false, cx);
+        assert_eq!(browser.action_targets(pane), vec![folder], "Right-clicking a different folder replaces the selected files");
+        browser.context_menu = None;
+        browser.select_entry(pane, old, cx);
     })).unwrap();
     window.update(cx, |fixture, window, cx| fixture.browser.update(cx, |browser, cx| {
         let root = browser.active_tab().current_dir.join("sidebar-view-root");

@@ -43,8 +43,8 @@ Cargo package authors are listed as supplied by each package.
 
 Unmodified MPL-2.0 sources (option-ext 0.2.0 and build tool cbindgen 0.28.0)
 are available at https://github.com/weiaoli2/Schnauz/tree/main/vendor/mpl-sources
-and in Schnauz-0.5.0-rc.1-MPL-sources.zip alongside the release downloads:
-https://github.com/weiaoli2/Schnauz/releases/tag/v0.5.0-rc.1
+and exact source archives accompany the published release downloads:
+https://github.com/weiaoli2/Schnauz/releases
 """]
     texts={};licenses=[];missing=[]
     packages=sorted(metadata['packages'],key=lambda p:(p['name'],p['version']))

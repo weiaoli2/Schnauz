@@ -36,6 +36,7 @@ impl Schnauz {
             || self.tab_project_move.is_some()
             || self.file_access_intro.is_some()
             || self.confirm_delete.is_some()
+            || self.permanent_delete.is_some()
             || self.info_panel.is_some()
             || self.batch_rename.is_some()
             || self.ssh_ask
@@ -43,7 +44,6 @@ impl Schnauz {
             || self.group_dialog.is_some()
             || self.new_text_file.is_some()
             || self.project_dialog.is_some()
-            || (self.palette_open && !self.file_search.inline)
     }
 }
 
@@ -90,7 +90,7 @@ impl Schnauz {
     pub(super) fn sync_preview_zoom(&mut self) {
         let tab = self.active_tab();
         let target = (prefs().preview && tab.selection.len() == 1)
-            .then(|| (tab.id, tab.selection.iter().next().unwrap().clone()));
+            .then(|| (tab.id, previews::source_key(tab.selection.iter().next().unwrap(),tab.remote.as_ref())));
         if self.preview_zoom.target != target {
             self.preview_zoom = Zoom {
                 target,

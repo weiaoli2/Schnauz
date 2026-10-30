@@ -391,6 +391,7 @@ pub struct TerminalView {
 
     /// Receiver for terminal events from the event proxy
     event_rx: mpsc::Receiver<TerminalEvent>,
+    pending_ui_events: std::collections::VecDeque<TerminalEvent>,
 
     /// Configuration used to create this terminal
     config: TerminalConfig,
@@ -516,7 +517,7 @@ impl TerminalView {
                     Ok(bytes) => {
                         // Process bytes and notify the view
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                            view.state.process_bytes(&bytes);
+                            view.process_output(&bytes);
                             // VTE buffers synchronized redraws. Its deadline is
                             // enforced even if the program sends no more output.
                             view.sync_task =
@@ -529,6 +530,7 @@ impl TerminalView {
                                             .await;
                                         let _ = this.update(cx, |view, cx| {
                                             if view.state.expire_sync(std::time::Instant::now()) {
+                                                view.process_protocol_events();
                                                 cx.notify();
                                             }
                                         });
@@ -561,6 +563,7 @@ impl TerminalView {
             focus_handle,
             stdin_writer,
             event_rx,
+            pending_ui_events: Default::default(),
             config,
             _reader_task: reader_task,
             resize_callback: None,
@@ -1084,20 +1087,17 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Process pending terminal events.
-    ///
-    /// This method drains all available events from the event receiver
-    /// and handles them appropriately. Note: bytes are processed in the
-    /// async reader task, not here.
-    fn process_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Process terminal events (from alacritty event proxy)
+    /// Parse output and answer protocol queries without waiting for a frame.
+    /// Remote TUIs use time-limited cursor/geometry probes to lay out input.
+    /// Hidden tabs and a busy renderer must not postpone those replies.
+    fn process_output(&mut self, bytes: &[u8]) {
+        self.state.process_bytes(bytes);
+        self.process_protocol_events();
+    }
+
+    fn process_protocol_events(&mut self) {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
-                TerminalEvent::Shell(event) => {
-                    if let Some(callback) = &self.shell_callback {
-                        callback(&event, window, cx);
-                    }
-                }
                 TerminalEvent::PtyWrite(text) => self.write_input(text.as_bytes()),
                 TerminalEvent::ColorRequest(index, format) => {
                     use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
@@ -1127,8 +1127,21 @@ impl TerminalView {
                     });
                     self.write_input(reply.as_bytes());
                 }
-                TerminalEvent::Wakeup => {
-                    // Terminal has new content - already handled by async task
+                TerminalEvent::Wakeup => {}
+                event => self.pending_ui_events.push_back(event),
+            }
+        }
+    }
+
+    /// UI callbacks still run with the owning window during rendering.
+    fn process_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.process_protocol_events();
+        while let Some(event) = self.pending_ui_events.pop_front() {
+            match event {
+                TerminalEvent::Shell(event) => {
+                    if let Some(callback) = &self.shell_callback {
+                        callback(&event, window, cx);
+                    }
                 }
                 TerminalEvent::Bell => {
                     if let Some(ref callback) = self.bell_callback {
@@ -1155,6 +1168,10 @@ impl TerminalView {
                         callback(window, cx);
                     }
                 }
+                TerminalEvent::PtyWrite(_)
+                | TerminalEvent::ColorRequest(..)
+                | TerminalEvent::SizeRequest(_)
+                | TerminalEvent::Wakeup => unreachable!("protocol events are drained on arrival"),
             }
         }
     }
@@ -1185,6 +1202,7 @@ impl TerminalView {
         // Update the grid before signalling the child: its redraw and size
         // queries must observe the same dimensions as the next painted frame.
         self.state.resize(cols, rows);
+        self.process_protocol_events();
         if let Some(snapshot) = self.selection_snapshot.as_mut() {
             snapshot.resize(cols, rows);
         }

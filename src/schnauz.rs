@@ -261,8 +261,8 @@ impl Schnauz {
                 div()
                     .id(("entry-filter", pane * 3 + index))
                     .flex_none()
-                    .h(px(24.0))
-                    .px_3()
+                    .h(px(20.0))
+                    .px_2()
                     .rounded_md()
                     .flex()
                     .items_center()
@@ -287,16 +287,15 @@ impl Schnauz {
                     .into_any_element(),
             );
         }
-        let count = if self.search_in_pane(pane) { self.palette_items.len() } else { tab.visible_count() };
         div()
             .id(("visibility-row",pane))
             .flex_none()
-            .h(px(36.0))
+            .h(px(30.0))
             .min_w_0().overflow_x_scroll().whitespace_nowrap()
-            .px_3()
+            .px_2()
             .flex()
             .items_center()
-            .gap_2()
+            .gap(px(6.))
             .border_b_1()
             .border_color(rgb(if filtered { t.accent } else { t.border }))
             .bg(rgb(if filtered { filter_tint(t) } else { t.sidebar }))
@@ -306,7 +305,7 @@ impl Schnauz {
             .child(
                 div()
                     .flex_none().flex()
-                    .p(px(2.0))
+                    .p(px(1.0))
                     .rounded_lg()
                     .bg(rgb(t.surface))
                     .children(buttons),
@@ -314,6 +313,7 @@ impl Schnauz {
             .child(self.render_project_file_filter(pane,cx))
             .when(tab.remote.is_some(), |d| d.child(
                 toolbar_icons::toolbar_button("reload-folder", pane, Icon::Reload, false, true, "Reload SSH folder · ⌘R")
+                    .w(px(24.)).h(px(22.))
                     .relative().children(ui_checks::probe("ssh-reload-control"))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.active_pane = pane;
@@ -322,7 +322,7 @@ impl Schnauz {
             ))
             .child(div().flex_1().min_w_0())
             .when(tab.remote.is_none(), |d| d.child(
-                div().id(("inspect-storage", pane)).h(px(26.)).px_2().flex().items_center().gap_2().rounded_md().cursor_pointer()
+                div().id(("inspect-storage", pane)).h(px(22.)).px(px(6.)).flex().items_center().gap(px(6.)).rounded_md().cursor_pointer()
                     .hover(|s| s.bg(rgb(t.hover))).tooltip(tip("Disk Usage…"))
                     .child(ui_icon(Icon::Storage, 16., rgb(t.text_muted)))
                     .when(self.pane_width(pane) > 700., |d| d.child("Disk Usage"))
@@ -330,13 +330,6 @@ impl Schnauz {
                         this.inspect_folder(pane, this.tab(pane).current_dir.clone(), window, cx);
                     }))
             ))
-            .child(div().truncate().child(if self.search_in_pane(pane) {
-                format!("{count} result{}",if count == 1 {""} else {"s"})
-            } else if tab.is_filtered() {
-                format!("{count} of {} items", tab.entries.len())
-            } else {
-                format!("{count} item{}",if count == 1 {""} else {"s"})
-            }))
             .into_any_element()
     }
 
@@ -477,6 +470,9 @@ impl Schnauz {
     }
 
     pub(super) fn apply_project_switch(&mut self, old: Option<u64>, available: &Layout, cx: &mut Context<Self>) {
+        self.confirm_delete = None;
+        self.permanent_delete = None;
+        self.delete_generation = self.delete_generation.wrapping_add(1);
         let id = self.projects.active;
         self.clear_file_drag(cx);
         self.close_palette(cx);
@@ -680,8 +676,6 @@ impl Schnauz {
 
     pub(super) fn render_schnauz_toolbar(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
-        let filtered = self.active_tab().entry_filter != EntryFilter::All || self.projects.sidebar().file_filter.active();
-        let tint = filter_tint(t);
         let first =
             div()
                 .flex()
@@ -812,17 +806,33 @@ impl Schnauz {
             .w_full()
             .h(px(BROWSER_HEADER_H))
             .pt_1()
-            .bg(rgb(if filtered { tint } else { t.sidebar }))
+            .bg(rgb(t.sidebar))
             .border_b_1()
-            .border_color(rgb(if filtered { t.accent } else { t.border }))
+            .border_color(rgb(t.border))
             .child(first)
             .child(div().relative().flex_none().h(px(1.)).mx_4().mt(px(1.))
                 .bg(Theme::alpha(t.border,0x80))
                 .children(ui_checks::probe("project-row-divider")))
             .child(
-                div().flex_none().flex().flex_col().w_full().py(px(8.))
-                    .bg(rgb(CHROME_HIGHLIGHT))
-                    .child(self.render_active_projects(cx)),
+                div().relative().flex_none().flex().flex_col().w_full().py(px(8.))
+                    .bg(rgb(t.selected))
+                    .when(prefs().sidebar_collapsed, |d| d.px(px(32.)))
+                    .child(self.render_active_projects(cx))
+                    .when(prefs().sidebar_collapsed, |d| d.child(
+                        div().id("sidebar-reopen").absolute().left(px(6.)).top(px(4.))
+                            .size(px(24.)).flex().items_center().justify_center()
+                            .rounded_md().bg(rgb(t.surface)).border_1().border_color(rgb(t.border))
+                            .cursor_pointer().hover(|d| d.bg(rgb(t.hover)))
+                            .tooltip(tip("Show sidebar"))
+                            .child(ui_icon(Icon::Sidebar, 16., rgb(t.text)))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                                let mut np = prefs();
+                                np.sidebar_collapsed = false;
+                                apply_prefs(np, cx);
+                                cx.notify();
+                            }))
+                    )),
             )
             .into_any_element()
     }
@@ -884,7 +894,7 @@ impl Schnauz {
                     .min_w_0()
                     .rounded_md()
                     .border_1()
-                    .border_color(rgb(if current { 0xffffff } else { theme().border }))
+                    .border_color(rgb(if current { CHROME_HIGHLIGHT } else { theme().border }))
                     .bg(rgb(if current { CHROME_HIGHLIGHT } else { theme().surface }))
                     .text_color(rgb(if current { 0xffffff } else { theme().text }))
                     .text_size(px(UI_SMALL_FONT_SIZE))
@@ -909,9 +919,61 @@ impl Schnauz {
                             this.restore_personal(cx);
                         }
                     }))
+                    .when_some(id, |chip, id| self.sortable_project_chip(chip, id, name, cx))
                     .into_any_element()
             }))
             .into_any_element()
+    }
+
+    fn sortable_project_chip(
+        &self,
+        chip: gpui::Stateful<gpui::Div>,
+        id: u64,
+        name: String,
+        cx: &Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        use project_sidebar::SidebarOrder;
+        let bounds = Rc::new(RefCell::new(None::<Bounds<gpui::Pixels>>));
+        let paint_bounds = bounds.clone();
+        let hover_bounds = bounds.clone();
+        let marker = Rc::new(std::cell::Cell::new(None::<bool>));
+        let paint_marker = marker.clone();
+        chip
+            .child(gpui::canvas(
+                move |b, _, _| {
+                    *paint_bounds.borrow_mut() = Some(b);
+                    b
+                },
+                move |_, b, window, _| {
+                    if let Some(after) = paint_marker.take() {
+                        let x = if after { b.right() - px(2.) } else { b.left() };
+                        window.paint_quad(gpui::fill(
+                            Bounds::new(point(x, b.top()), size(px(2.), b.size.height)),
+                            rgb(theme().text),
+                        ));
+                    }
+                },
+            ).absolute().size_full())
+            .on_drag(SidebarOrder::Project(id), move |_, _, _, cx| {
+                cx.new(|_| TabDragPreview { label: name.clone() })
+            })
+            .drag_over::<SidebarOrder>(move |style, source, window, _| {
+                if let SidebarOrder::Project(from) = source {
+                    if *from != id {
+                        marker.set(hover_bounds.borrow().map(|b| window.mouse_position().x >= b.center().x));
+                    }
+                }
+                style
+            })
+            .on_drop(cx.listener(move |this, source: &SidebarOrder, window, cx| {
+                cx.stop_propagation();
+                let SidebarOrder::Project(from) = source else { return; };
+                if *from == id || !this.project_is_open(Some(*from), cx) || !this.project_is_open(Some(id), cx) {
+                    return;
+                }
+                let Some(b) = *bounds.borrow() else { return; };
+                this.reorder_sidebar(source, &SidebarOrder::Project(id), window.mouse_position().x >= b.center().x, cx);
+            }))
     }
 
     pub(super) fn push_project_sidebar(
@@ -1143,7 +1205,13 @@ impl Schnauz {
         let count_label = if searching {
             format!("{count} result{}",if count == 1 {""} else {"s"})
         } else if tab.is_filtered() {
-            format!("{count} of {} items", tab.entries.len())
+            // Hidden items take precedence over other filters so exclusions add up.
+            let hidden = if tab.show_hidden { 0 } else { tab.hidden_count };
+            let filtered = tab.entries.len().saturating_sub(count + hidden);
+            let mut label = format!("{count} of {} items", tab.entries.len());
+            if hidden > 0 { label.push_str(&format!(" · {hidden} hidden")); }
+            if filtered > 0 { label.push_str(&format!(" · {filtered} filtered")); }
+            label
         } else {
             format!("{count} item{}",if count == 1 {""} else {"s"})
         };
@@ -1160,7 +1228,7 @@ impl Schnauz {
             .or_else(|| self.file_search.stopped.then_some(("Search stopped · Results may be incomplete", false)));
         let left = div().flex_1().min_w_0().flex().items_center().gap_3().overflow_hidden()
             .child(div().flex_none().size(px(6.)).rounded_full().bg(rgb(t.accent)))
-            .child(div().flex_none().child(label))
+            .child(div().id("footer-item-count").min_w_0().truncate().tooltip(tip(label.clone())).child(label))
             ;
         let transfer = self.render_transfer_status(cx);
         let middle = div().flex_1().min_w_0().flex().items_center().justify_center()
@@ -1248,11 +1316,13 @@ pub(super) fn schnauz_button(
     let t = theme();
     let compact = id == "schnauz-split";
     let toolbar_toggle=matches!(id,"schnauz-terminal"|"schnauz-preview"|"schnauz-todoist"|"todoist-dock-here");
+    let toolbar_control=toolbar_toggle || compact;
     let accent=if toolbar_toggle {CHROME_HIGHLIGHT}else{t.accent};
     div()
         .id(id)
         .flex_none()
-        .h(px(if toolbar_toggle {TOOLBAR_CONTROL_H}else{30.}))
+        .h(px(if toolbar_control {TOOLBAR_CONTROL_H}else{30.}))
+        .when(toolbar_control,|d|d.relative().children(ui_checks::probe(id)))
         .px_2()
         .when(compact, |d| d.w(px(32.)).px_0())
         .rounded_lg()

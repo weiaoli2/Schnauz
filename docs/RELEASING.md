@@ -4,7 +4,30 @@ Official repository: https://github.com/weiaoli2/Schnauz (public).
 Current release: **v0.8.9**, public Apple Silicon + Intel early preview.
 Previous published release: **v0.8.1**.
 
+## Authorized release — 0.9.21 (2026-10-30)
+
+Oliver confirmed Schnauz is working well and requested a new public GitHub
+release. This supersedes the earlier candidate holds. Publish the current
+0.9.21 source, including the requested faster Devices refresh and Info/Eject controls, both signed architecture DMGs, exact MPL sources and checksums.
+Keep all previous tags/releases, including unpublished 0.9.2 preparation.
+Exclude website/, video/ and test.csv from the source commit/archive.
+
+Retain compile/sign/package-only validation while the live Schnauz session is
+in use: do not execute application, native helper or test binaries. Static
+architecture/signature, bundle allowlist, DMG, source archive and checksum
+verification are permitted. Do not claim a fresh runtime/UI or Intel hardware
+test, confirmed Nextcloud provider actions, resolved issues #1/#2, or a confirmed
+fix for the reported Codex-over-SSH redraw problem. Publish as an early prerelease
+with Apple Development signing and no Apple notarization. Preserve the running
+bundle, windows, PTYs, SSH sessions and settings. Build the normal local app only
+through safe deferred installation; applying it remains Oliver's deliberate step.
+
 ## Authorized release — 0.9.2
+
+Before publication Oliver requested a different, progressive Disk Usage scanner
+and wants to test its approach. The 0.9.2 architecture builds remain unpublished;
+local 0.9.3 is the new test stand. Do not publish the superseded candidate while
+that feedback is pending. Continue release preparation after the scanner is accepted.
 
 On 2026-10-25 Oliver requested publishing the current 0.9.2 test build to GitHub.
 This supersedes the paused 0.9.0 preparation. Publish new public source and both

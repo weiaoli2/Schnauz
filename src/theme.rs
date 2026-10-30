@@ -1,4 +1,4 @@
-use super::{menu_style, save_menu_style, save_theme, set_active_menu, MenuStyleGlobal};
+use super::save_theme;
 use gpui::{rgba, App, Rgba};
 use std::cell::RefCell;
 
@@ -19,6 +19,40 @@ pub(super) struct Theme {
 }
 
 impl Theme {
+    /// Keep surfaces and dividers coherent when changing the window background.
+    /// A move between light/dark also restores readable foregrounds.
+    pub(super) fn with_background(self, bg: u32) -> Self {
+        let light = Self { bg, ..self }.is_light();
+        let mut derived = if light {
+            light_theme(bg, self.text, self.accent)
+        } else {
+            dark_theme(bg, self.text, self.accent)
+        };
+        if light == self.is_light() {
+            derived.text_muted = self.text_muted;
+            derived.text_dim = self.text_dim;
+        } else {
+            let stock = PRESETS[if light { 0 } else { 1 }].1;
+            derived.text = stock.text;
+            derived.text_muted = stock.text_muted;
+            derived.text_dim = stock.text_dim;
+            derived.accent = stock.accent;
+        }
+        derived
+    }
+
+    pub(super) fn with_text(self, text: u32) -> Self {
+        // Keep the black-label light-mode convention. Dark secondary labels
+        // recede toward the background without leaving old palette colours.
+        let secondary = |percent| blend(text, self.bg, percent);
+        Self {
+            text,
+            text_muted: if self.is_light() { text } else { secondary(75) },
+            text_dim: if self.is_light() { text } else { secondary(60) },
+            ..self
+        }
+    }
+
     pub(super) fn is_light(self) -> bool {
         let r = (self.bg >> 16) & 0xff;
         let g = (self.bg >> 8) & 0xff;
@@ -30,6 +64,14 @@ impl Theme {
     pub(super) fn alpha(color: u32, a: u32) -> Rgba {
         rgba((color << 8) | (a & 0xff))
     }
+}
+
+fn blend(foreground: u32, background: u32, percent: u32) -> u32 {
+    let channel = |shift: u32| -> u32 {
+        (((foreground >> shift) & 255) * percent
+            + ((background >> shift) & 255) * (100 - percent)) / 100
+    };
+    (channel(16) << 16) | (channel(8) << 8) | channel(0)
 }
 
 impl Default for Theme {
@@ -251,44 +293,6 @@ pub(super) const PRESETS: &[(&str, Theme)] = &[
     ("Lavender", light_theme(0xf6f2fe, 0x4c3a66, 0x8b5cf6)),
 ];
 
-/// Curated per-property options shown in Settings alongside the presets.
-/// Convert HSL (h in 0..360, s/l in 0..1) to a 0xRRGGBB color.
-pub(super) fn hsl_to_rgb(h: f32, s: f32, l: f32) -> u32 {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let hp = h / 60.0;
-    let x = c * (1.0 - (hp % 2.0 - 1.0).abs());
-    let (r1, g1, b1) = match hp as i32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let m = l - c / 2.0;
-    let to = |v: f32| (((v + m).clamp(0.0, 1.0)) * 255.0).round() as u32;
-    (to(r1) << 16) | (to(g1) << 8) | to(b1)
-}
-
-/// A broad, ordered swatch palette: a grayscale ramp plus a hue × lightness grid
-/// — enough variety to set any reasonable background/text/accent color.
-pub(super) fn palette_colors() -> Vec<u32> {
-    let mut out = Vec::new();
-    // Grayscale ramp (black → white).
-    for i in 0..13 {
-        let v = (i as f32 / 12.0 * 255.0).round() as u32;
-        out.push((v << 16) | (v << 8) | v);
-    }
-    // Hues across the wheel, each from dark to light.
-    let lights = [0.18f32, 0.30, 0.42, 0.55, 0.68, 0.82];
-    for hue in (0..360).step_by(30) {
-        for &l in &lights {
-            out.push(hsl_to_rgb(hue as f32, 0.65, l));
-        }
-    }
-    out
-}
-
 /// Wrapper so the theme lives in the GPUI global store and notifies observers.
 #[derive(Clone, Copy)]
 pub(super) struct ThemeGlobal(pub(super) Theme);
@@ -315,14 +319,6 @@ pub(super) fn apply_theme(t: Theme, cx: &mut App) {
     set_active_theme(t);
     save_theme(&t);
     cx.set_global(ThemeGlobal(t));
-    // Keep menus following the theme unless the user chose menu colors.
-    let mut m = menu_style();
-    if !m.custom {
-        m.follow_theme(&t);
-        set_active_menu(m);
-        save_menu_style(&m);
-        cx.set_global(MenuStyleGlobal(m));
-    }
     cx.refresh_windows();
 }
 

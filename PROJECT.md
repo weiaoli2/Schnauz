@@ -1,6 +1,6 @@
 # Schnauz
 
-Last updated: 2026-10-24
+Last updated: 2026-10-30
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -1718,3 +1718,610 @@ Quick Action fixtures; the outside-sandbox rerun passed. Existing native/UI resu
 remain historical, and the final text-layout assertion has not been rerun. Issues
 #1/#2 remain open; no claim of verified live Nextcloud pinning or resolved 0.9.0
 SIGSEGV crashes is authorized. Website/video production and test.csv stay local.
+
+## Local 0.9.3 — progressive Disk Usage, test before publication
+
+Before publishing, Oliver challenged the arbitrary 500,000-entry scan stop and
+proposed a fast top-level overview, larger-branch priority and click-to-deepen.
+He wants to try this approach and refine it from feedback. Both 0.9.2 DMGs were
+built but no tag/source push/GitHub release was published; keep that candidate
+unpublished while he tests the new scanner. Its reviewed source commits are local.
+
+Disk Usage now publishes an early tree and progressive updates at roughly 50,000
+entries or timed intervals. Every first-level branch gets a short initial pass,
+then a heap favours larger known branches, with periodic fair exploration so a
+deep unknown branch is not starved. A clicked folder takes priority. Directory
+sizes are counted metadata, never invented recursive values; the map labels
+provisional totals and pending folders until completion. Work runs on a dedicated
+thread with cancellable short slices and a bounded snapshot channel, leaving
+GPUI's shared file-work pool available for browsing and previews.
+
+There is no entry-count stop. An independent 50,000-node detail budget groups
+extra files while continuing to count all readable bytes/files. Larger files
+discovered later replace smaller file detail, and grouped tiles remain explicit
+with truthful area/totals. Clicking a grouped area cancels/rebases the scan on its
+containing folder for finer detail. Unreadable folders and excluded volumes are
+reported explicitly. Symlinks are not followed; boot/Data-volume handling remains.
+Oliver also removed the duplicate count beside Disk Usage in the Show/filter row;
+the existing bottom status bar remains the sole item-count display.
+
+Seven focused Rust tests passed using disposable folders, including early-map
+delivery, click-priority over sibling order, complete totals after grouping,
+retaining late large files, symlink safety, cancellation and treemap geometry.
+No personal drive scan, UI test, app/helper launch or live-session restart ran.
+Build/stage 0.9.3 for Oliver's manual feedback before resuming publication.
+
+The same test stand aligns only top-row controls to Terminal/Preview/Todoist's
+26 pt height: Search, scope/mode segment buttons and Split. Search no longer uses
+30 pt and segments no longer derive their height from text plus vertical padding.
+The Schnauz name, version and little dog remain unchanged, as Oliver requested.
+Existing hidden layout checks now assert all these control bounds, but no native
+UI checks were launched in his live session. Dialog button heights stay separate.
+
+Final 0.9.3 build completed with the scanner, removed duplicate count and aligned
+controls together. Optimized compilation, bundle allowlist, helper architectures
+and deep/strict Apple Development signature verification passed. The safe
+installer preserved the live app and staged the update for `./update.sh` after
+Oliver deliberately quits. No UI/native tests or app/helper launches ran.
+Final build log: `.build-cache/0.9.3-complete-test-build.log`; scanner regressions:
+`.build-cache/0.9.3-disk-usage-tests.log`. Await Oliver's manual test before GitHub
+publication; the local 0.9.3 work remains uncommitted, and all 0.9.2 release
+artifacts/source commits remain unpublished.
+
+## Local 0.9.4 — right-click row colours
+
+Oliver reported lingering row colour after right-clicking files and unstable
+folder colours. GPUI 0.2.2's generic active style latches on any mouse button;
+native AppKit menu tracking can consume the release that clears it. List rows
+and Icons cells now derive their background only from actual selection, the
+current context-menu target and pointer hover, without the generic active style.
+Hover no longer overrides a selected item's colour. Search results use the same
+selection/hover priority and temporary context-target colour. Right-click still
+targets its menu without changing the real selection or file operations.
+
+Verification remains compile/sign/stage only under the existing live-session
+restriction; no native/UI test or app/helper launch. Manual visual confirmation
+of repeated file/folder right-clicks and menu dismissal remains pending.
+Build log: `.build-cache/0.9.4-context-highlight-build.log`.
+
+Optimized 0.9.4 compilation, bundle allowlist, architecture and deep/strict
+certificate signature checks passed. The first packaging attempt was stopped by
+the sandbox blocking `/bin/ps`; the approved packaging rerun completed its safe
+process check and staged the update for `./update.sh` after a deliberate quit.
+The running app bundle and all live sessions were preserved. No publication.
+
+## Local 0.9.5 — clearer file tabs and softer project bar
+
+Oliver's annotated screenshot requested an uninterrupted active tab, grayer
+inactive tabs and half-strength blue behind the project chips. The tab baseline
+is now a separate layer painted before the tabs, so the active background can
+cover it; the parent border previously remained visible over that background.
+Inactive tabs have a neutral shade (darker in light mode, lighter in dark mode),
+with a lighter hover shade. The project-row background uses 50% Schnauz blue;
+the selected project chip retains its solid blue and white outline.
+
+Verification remains compile/sign/stage only under the live-session restriction.
+No app/helper launch or native/UI test; visual confirmation awaits Oliver's
+manual test. Build log: `.build-cache/0.9.5-tab-layout-build.log`.
+
+Optimized compilation, bundle allowlist, architecture and deep/strict certificate
+signature verification passed. Packaging initially stopped because the sandbox
+blocked `/bin/ps`; the approved rerun completed the safe process check and staged
+0.9.5 without replacing the running bundle. Apply with `./update.sh` after a
+deliberate quit. Packaging log: `.build-cache/0.9.5-tab-layout-package.log`.
+No publication or live-session restart.
+
+## Local 0.9.6 — stable search-row background
+
+The top Search row now always uses its normal theme background and border,
+independent of All/Folders/Files and project file-ending filters. The file filter
+row retains its active tint; the project row retains its constant soft blue.
+Verification uses compile/sign/stage only, preserving all live app/terminal
+sessions without native/UI tests or app/helper launches.
+Build log: `.build-cache/0.9.6-search-row-build.log`.
+
+Optimized compilation, bundle allowlist, architecture and deep/strict certificate
+signature verification passed. Packaging required an approved rerun because the
+sandbox blocked the safe installer's `/bin/ps` check. The signed 0.9.6 update is
+staged; apply with `./update.sh` after a deliberate quit. The running app bundle
+and all sessions were preserved. No publication.
+Packaging log: `.build-cache/0.9.6-search-row-package.log`.
+
+## Local 0.9.7 — footer exclusion counts
+
+The footer explains omitted folder items, for example “38 of 52 items · 4 hidden
+· 10 filtered”. Hidden counts cover dot names and macOS hidden flags while the
+eye toggle is off. Other exclusions (type, file endings and in-folder text/content
+filters) count as filtered; hidden items take precedence so nothing is counted
+twice. Zero categories are omitted. Recursive search retains its result count,
+since it has no complete folder-listing total. Selection counts remain visible.
+
+Hidden totals are cached when listing/filter results are recomputed, with no
+filesystem reads or listing scans during footer rendering. The single-line label
+truncates in narrow windows and exposes its full text in a tooltip.
+Verification remains compile/sign/stage only; live app/terminal sessions are
+preserved, with no native/UI tests or app/helper launches.
+Build log: `.build-cache/0.9.7-footer-counts-build.log`.
+
+Optimized compilation, bundle allowlist, helper architectures and deep/strict
+certificate signature verification passed. Packaging required an approved rerun
+for the safe installer's sandbox-blocked `/bin/ps` check. Signed 0.9.7, including
+the 0.9.6 Search-row fix, is staged for `./update.sh` after a deliberate quit.
+The running bundle and live sessions remain intact. No publication.
+Packaging log: `.build-cache/0.9.7-footer-counts-package.log`.
+
+## Local 0.9.8 — hidden sidebar and compact path row
+
+Hiding the sidebar now removes its former 52 pt strip entirely. A small 24 pt
+sidebar-icon overlay at the left of the blue project row reopens it, below native
+window controls and clear of the file tabs/path actions. Symmetric project-row
+insets keep project chips centered and scrollable without covering the first
+chip. The existing sidebar toggle shortcut and expanded collapse control remain.
+Hidden sidebars report zero width for pane measurements and discard stale
+sidebar drop geometry; no hidden section content is constructed.
+
+The folder/path-and-actions row has 4 pt vertical padding instead of 8 pt, reducing
+its height by 8 pt while preserving icons, text, action hit areas and path editing.
+0.9.8 also includes the 0.9.6 header and 0.9.7 footer changes. Verification remains
+compile/sign/stage only, preserving all live app/terminal sessions without
+native/UI tests or app/helper launches.
+Build log: `.build-cache/0.9.8-compact-sidebar-path-build.log`.
+
+Oliver also requested a tighter Show/Filter row in the same change. Its height
+is 30 pt (previously 36); All/Folders/Files and On/Off segments are 20 pt high
+(previously 24), with 8 pt horizontal padding (previously 12) and 1 pt group
+padding (previously 2). The row/group gaps and Modify, Disk Usage and SSH Reload
+controls are compacted consistently. Text/icon sizes and action routing remain.
+
+The final combined optimized 0.9.8 build, bundle allowlist, helper architecture
+and deep/strict certificate signature checks passed. The first packaging attempt
+hit the sandbox's `/bin/ps` restriction; the approved final build safely staged
+the combined changes without replacing the running bundle. Apply with
+`./update.sh` after a deliberate quit. No publication or live-session restart.
+
+## Local 0.9.9 — reorder top project chips
+
+Named projects in the top bar now drag before or after another project chip,
+with a vertical insertion marker that does not change chip geometry. Personal
+remains pinned first, matching the sidebar. Reordering uses the existing typed
+project gesture and atomic projects.json save, so the top bar and sidebar share
+one order across all windows and future launches, including Keep Setup & Quit
+restoration. No separate volatile startup ordering can override it.
+
+Drops validate current live project IDs and use metadata persistence only,
+without switching projects or replacing live tabs/PTYs. Existing project-order
+serialization regressions cover the reused persistence path. Under the current
+live-session restriction, verification is compile/sign/stage only, with no
+native/UI test or app/helper launch; actual drag feedback awaits manual QA.
+Build log: `.build-cache/0.9.9-project-chip-order-build.log`.
+
+Optimized compilation, bundle allowlist, helper architectures and deep/strict
+certificate signature verification passed. After the sandbox blocked the safe
+installer's `/bin/ps` check, an approved packaging rerun staged signed 0.9.9
+without replacing the running bundle. Apply with `./update.sh` after a deliberate
+quit. No publication or live-session restart.
+Packaging log: `.build-cache/0.9.9-project-chip-order-package.log`.
+
+## Local 0.9.10 — blue active-project outline
+
+The active top project chip now uses CHROME_HIGHLIGHT blue for its outline,
+matching its blue background instead of the former white border. Its white label
+and existing darker blue hover remain. This supersedes the earlier white-outline
+direction. Verification remains compile/sign/stage only; no native/UI tests,
+app/helper launches or live-session changes.
+Build log: `.build-cache/0.9.10-project-outline-build.log`.
+
+Optimized compilation, bundle allowlist, helper architectures and deep/strict
+certificate signature verification passed. The approved packaging rerun resolved
+the sandbox-blocked `/bin/ps` process check and staged signed 0.9.10. Apply with
+`./update.sh` after a deliberate quit; the live app bundle and sessions were
+preserved. No publication.
+Packaging log: `.build-cache/0.9.10-project-outline-package.log`.
+
+## Local 0.9.11 — sidebar reference drops and project search history
+
+Oliver reported that dragging files/folders onto Common or Favourites had stopped
+working. A root capture-phase release handler now routes native file drops by
+the sidebar/Common bounds before nested row handlers can consume them. It uses
+only the current native drag's captured paths and retires that drag so a drop
+cannot also perform a file transfer. Existing background metadata validation
+classifies local files/folders; remote drags use their known typed references
+and now finish in the capture path too. Hidden/outside sidebar drops are excluded.
+
+File/folder context menus (including search results and SSH items) now offer
+Add to Project (choose a named project or Personal) and Add to Common. They capture
+typed paths and project IDs when opened, add references without switching project
+or transferring files, and reuse existing deduplication and atomic persistence.
+
+The search bar has a recent-search icon/menu with up to ten most-recent searches
+per project, including Personal. History is stored in each project's central
+sidebar metadata, defaults empty for existing profiles, deduplicates query plus
+File/Content and scope, and reloads with those search options. Settled queries
+save after 1.2 seconds without edits; closing/submitting/stopping a search saves
+immediately. Captured project identity prevents leakage across project switches.
+Clearing history affects only that project and suppresses re-adding the current
+query until a new search starts. No legacy shared palette history is imported.
+
+Verification remains compile/sign/stage only under the live-session restriction;
+no native/UI tests or app/helper launches. Live drag behavior awaits Oliver's
+manual confirmation. Build log: `.build-cache/0.9.11-sidebar-reference-build.log`.
+
+The final combined optimized build, bundle allowlist, helper architectures and
+deep/strict Apple Development signature checks passed. The initial drop-only
+packaging attempt hit the sandbox's `/bin/ps` restriction; the approved combined
+build safely staged signed 0.9.11, preserving the running bundle and all sessions.
+Apply with `./update.sh` after a deliberate quit. No publication.
+
+## Local 0.9.12 — direct SMB deletion and visible file-operation errors
+
+Oliver reported a dismissed Trash dialog leaving an SMB file untouched with no
+error. The old helper discarded NSFileManager's NSError and the caller silently
+filtered out failures. Trash now returns the native error; failed and partial
+operations report it in the fixed footer, including completed/failed counts.
+
+Oliver explicitly chose direct permanent deletion on SMB/network drives: skip
+Trash entirely and label the confirmation “Delete Permanently”, with text saying
+that it cannot be undone. This supersedes an initially considered Trash/fallback
+flow. The action checks the selected item's containing filesystem off-thread,
+so Finder-mounted shares work too; it does not require a saved Schnauz connection.
+Local drives retain actual macOS Trash and undo for returned Trash destinations.
+Context-menu deletion goes through the same confirmation and routing.
+
+Network targets capture file identity before confirmation and reject changed
+items. Symlinks delete only the link; folder deletion preserves symlink targets.
+Preparation and mutation use dedicated workers with progress/cancellation between
+items, without blocking the UI/shared file-work pool. Project switching cancels
+pending prompts/preparation. Successful operations refresh only relevant local
+panes/searches, without refreshing unrelated SSH sessions. Native previews hide
+while either delete confirmation is open.
+
+Disposable-fixture Rust regressions cover permanent file/folder/link deletion,
+replacement rejection and partial-error messages. Current verification remains
+compile/sign/stage only: do not run native/UI tests, app/helpers or live SMB
+operations. Actual server deletion and confirmation layout await manual QA.
+Build log: `.build-cache/0.9.12-smb-trash-build.log`.
+
+Optimized compilation, `cargo test --locked --no-run --bin schnauz`, bundle
+allowlist, helper architectures and deep/strict Apple Development signatures
+passed. Tests were compiled, not executed. The sandbox initially blocked the
+safe installer's `/bin/ps` check; the approved packaging rerun staged signed
+0.9.12 while preserving the running bundle and every live session. Apply with
+`./update.sh` after a deliberate quit. No publication.
+Logs: `.build-cache/0.9.12-delete-test-compile.log`,
+`.build-cache/0.9.12-smb-trash-package.log`.
+
+## Local 0.9.13 — right-click selects its target
+
+Oliver reported menus visually targeting a newly right-clicked item while actions
+still used the earlier left-click selection. File/folder right-click now selects
+an item outside the current selection before building any menu. Right-clicking
+inside a selected group retains that group while setting the clicked item as
+focus/anchor. Background right-click leaves selection alone.
+
+The shared selection path covers List, Icons, SSH, direct Quick Actions and search
+results. It cancels pending rename/drag gestures and updates preview focus through
+the existing selection code. Search-result Add to Project/Common also follows
+the selected group. Hidden fixture assertions cover selecting a different file,
+preserving a group, changing its anchor and selecting a different folder.
+
+Verification remains compile/sign/stage only under the live-session restriction:
+no native/UI tests or app/helper launches. Live menu behavior awaits manual QA.
+Build log: `.build-cache/0.9.13-context-selection-build.log`.
+
+Optimized compilation, `cargo test --locked --no-run --bin schnauz --features
+ui-checks`, bundle allowlist, helper architectures and deep/strict Apple
+Development signatures passed. The regression checks were compiled, not run.
+The sandbox's `/bin/ps` restriction required an approved packaging rerun, which
+safely staged signed 0.9.13 without replacing the running bundle or sessions.
+Apply with `./update.sh` after a deliberate quit. No publication.
+Logs: `.build-cache/0.9.13-context-selection-test-compile.log`,
+`.build-cache/0.9.13-context-selection-package.log`.
+
+
+## Local 0.9.14 — terminal protocol replies without painting
+
+Oliver reports that typed lines still overwrite one another in Codex over SSH.
+The earlier local grid/PTY sizing changes remain. A further concrete protocol
+problem was found: cursor/device, colour and text-area-size replies were drained
+only while rendering. Hidden tabs therefore withheld replies, and visible tabs
+waited for a frame. Output processing now sends protocol replies immediately,
+also after synchronized-redraw expiry or resize flushes. Window/UI callbacks
+remain deferred to rendering, and text-selection snapshots do not affect replies
+from the live grid. No shell input, SSH commands or reconnects are introduced.
+
+Added unattached-terminal fixture assertions for fragmented cursor probes, long
+wrapped input, size replies, resize and bottom-row scrolling at three widths,
+including frozen displayed text. Verification is compile/sign/stage only under
+the existing live-session restriction; fixture assertions are compiled, not run.
+This addresses a protocol gap, but the specific Codex-over-SSH overwrite is not
+yet reproduced or confirmed fixed. Oliver's fresh-session versus post-resize
+clarification and live workflow confirmation remain pending. No publication.
+
+Optimized compilation and `cargo test --locked --no-run --bin schnauz --features
+ui-checks` passed. No test executable, app or native helper was launched.
+Bundle allowlist and deep/strict Apple Development signature verification passed.
+The initial safe-install check was sandbox-blocked at `/bin/ps`; approved
+packaging safely staged signed 0.9.14 without replacing the running bundle.
+Apply with `./update.sh` after a deliberate quit. Live SSH/Codex sessions remain
+untouched. Logs: `.build-cache/0.9.14-terminal-protocol-test-compile.log`,
+`.build-cache/0.9.14-terminal-protocol-build.log`,
+`.build-cache/0.9.14-terminal-protocol-package.log`.
+
+
+## Local 0.9.15 — Current Project shortcut in reference menus
+
+File/folder Add to Project submenus now start with Current Project, followed by
+a separator and the existing Personal/named-project destinations. Tab Add to
+Favourites also starts with the same action, above its existing destinations.
+It adds the captured file/folder references to the project active when the menu
+opened, including Personal, using existing typed/deduplicated favourites storage.
+Remote server/network identity and the selected tab's folder are preserved.
+The destination cannot change if another window switches projects while the
+menu is open. No project switch, file transfer or terminal change is involved.
+Verification remains compile/sign/stage only under the live-session restriction.
+
+Optimized build, bundle allowlist and deep/strict Apple Development signature
+verification passed. The sandbox initially blocked `/bin/ps`; approved packaging
+staged signed 0.9.15, preserving the running bundle and every live session.
+No native/UI tests, app or helper launches. Apply with `./update.sh` after a
+deliberate quit. Includes the 0.9.14 terminal protocol change. No publication.
+Logs: `.build-cache/0.9.15-current-project-build.log`,
+`.build-cache/0.9.15-current-project-package.log`.
+
+
+## Local 0.9.16 — duplicate downloads retain file extensions
+
+Oliver reported server files opening under names such as x.pdf 2 when x.pdf
+already exists in Downloads, breaking the automatic application association.
+The server-download path now reuses the existing copy destination naming helper:
+x.pdf, x 2.pdf, x 3.pdf. Both download-and-open and explicit Download to Downloads
+use it. The file extension and original download remain intact. Mounted SMB
+files opened directly still use their existing native open route.
+Verification remains compile/sign/stage only under the live-session restriction;
+no live server/download, app/helper launch or native/UI test is run.
+
+Optimized compilation, bundle allowlist and deep/strict Apple Development
+signature verification passed. The initial installer check was blocked by the
+sandbox at `/bin/ps`; approved packaging safely staged signed 0.9.16 without
+replacing the running app or changing any live terminal/server session. Apply
+with `./update.sh` after a deliberate quit. No tests/app/helpers were launched.
+Logs: `.build-cache/0.9.16-download-extension-build.log`,
+`.build-cache/0.9.16-download-extension-package.log`.
+
+## Local 0.9.17 — project strip matches file selection
+
+The top project-row background now uses the theme's selected-file colour
+(`Theme.selected`) instead of translucent Schnauz blue, following light/dark
+and custom palettes. Active project chips retain their existing blue treatment.
+Verification remains compile/sign/stage only, preserving the running bundle
+and all live sessions. No native/UI tests or app/helper launches.
+Build log: `.build-cache/0.9.17-project-background-build.log`.
+
+Optimized compilation, bundle allowlist and deep/strict Apple Development
+signature verification passed. An approved packaging rerun resolved the
+sandbox-blocked `/bin/ps` safety check and staged 0.9.17, preserving the live app.
+Packaging log: `.build-cache/0.9.17-project-background-package.log`.
+
+## Local 0.9.18 — simpler Customization settings
+
+Customization now starts with two illustrated Light/Dark cards, the current
+palette name and a live sample of sidebar, project-strip, normal, selected and
+hovered file rows. The other 28 built-in palettes remain available behind
+More themes. Existing saved themes load unchanged; no user settings are migrated
+or overwritten simply by opening Settings.
+
+The former three always-visible 85-swatch grids are replaced by optional compact
+Background, Text, Selection and Hover rows, with only one picker expanded at a
+time. Each has a small curated palette, six-digit custom hex entry with paste,
+explicit Apply/Enter, Escape cancellation, inline validation and Reset color.
+Background derives matching surfaces/dividers/hover/selection, restoring readable
+foregrounds on a light/dark crossing; Text updates secondary labels too.
+Selection controls both selected files and the top project strip (0.9.17).
+Active-project and toolbar blue, native macOS icons and native menu styling
+retain their existing behavior; no misleading global accent/menu controls added.
+Reset to Schnauz Light resets only the theme, without the former unrelated
+legacy menu-style write. The unused menu-style apply function and generated
+255-swatch UI/palette code are removed; saved legacy menu metadata is preserved.
+
+Verification remains compile/sign/stage only under the live-session restriction.
+Pure regression assertions cover exact hex parsing, grouped field updates,
+mode changes and per-color resets; compile them without execution. Visual
+confirmation awaits Oliver's manual test; no UI/native test or app/helper launch.
+Logs: `.build-cache/0.9.18-customization-build.log`,
+`.build-cache/0.9.18-customization-test-compile.log`.
+
+Optimized compilation and `cargo test --locked --no-run --bin schnauz --features
+ui-checks` passed. Tests were compiled, not executed. Bundle allowlist, helper
+architectures and deep/strict Apple Development signatures passed. Approved
+packaging safely staged the combined 0.9.18 update without replacing the running
+bundle or touching any live session. Apply with `./update.sh` after a deliberate
+quit; no publication. Packaging log:
+`.build-cache/0.9.18-customization-package.log`.
+
+## Local 0.9.19 — approved Shuffle cleanup review
+
+Oliver approved implementing the ten findings from the source review. This
+stand includes the 0.9.18 Customization redesign and selected-file-colour project
+strip, with the following safety, responsiveness and maintenance changes.
+
+File copy/move uses `src/file_transfer.rs`. Same-volume moves and publication
+of completed copies use macOS exclusive rename. Copies are assembled inside a
+0700, uniquely reserved directory at the destination; failure/cancellation only
+cleans that owned stage. A competing destination is preserved. Cross-volume
+moves check the source's identity before removing it, and report a saved copy
+whose original could not be removed. Preparation/size scans check cancellation,
+and a failed source does not prevent other eligible items in the batch. Only
+affected local panes/searches refresh on completion, preserving unrelated SSH
+tabs and project switches. Exclusive-rename support on mounted filesystems
+remains a manual QA item; unsupported filesystems fail safely.
+
+Local folder constructors now allocate state only. Names and metadata listing
+passes both run on dedicated workers, with loading/error UI, cancellation and
+captured tab IDs/generations, including parked tabs. Terminal cwd updates on
+parked/inactive local tabs defer their listings until visible. Ordinary folder
+navigation no longer validates a directory synchronously before requesting its
+listing. `src/workers.rs` also isolates SFTP, preview, archive, script, cloud and
+Get Info waits from GPUI's shared pool. SFTP batch requests have cancellation
+and a 45-second command deadline; SSH command/control checks have bounded waits.
+Only the newly spawned child is killed, never an existing master or terminal.
+
+Session and last-directory saves now queue atomic writes on workers.
+`src/persistence.rs` orders/coalesces snapshots and explicit Library.save
+transactions by generation, so stale autosaves cannot overwrite newer metadata.
+Quit flushes pending writes. Existing projects/session formats are retained;
+unchanged windows still skip saves. Explicit metadata transactions retain error
+reporting and synchronous commit semantics.
+
+Remote image/PDF keys contain the complete nonsecret host/user/port/alias/path
+identity and cannot collide with real local paths. Downloads use unique 0700
+temporary folders, a 40 MiB cap checked during transfer, bounded retained source
+storage, captured servers and cancellation/request checks. Every SFTP path uses
+the literal argument encoder, including create/rename. Local text/native preview
+and Information content cannot leak through an identical remote pathname.
+PDF reads are capped at 64 MiB and serialized; cancelled/unneeded page requests
+are retired and discarded. Downloaded temporary files are removed off the UI
+thread when their last retained owner is released. Get Info reads and recursive
+totals also run on workers, stop on close/replacement and display scan errors.
+
+Removed the unused floating palette/action panel and its mode flag, global
+palette-history reader/writer, menu-style state/observers/persistence and opacity
+preference. AppKit menus retain their actual native styling. The search menu,
+keyboard recall, clear action and history switch use the same per-project list;
+recall preserves File/Content and scope. Old shortcut IDs/preferences remain
+readable; the old shared history file is untouched and not imported. Retired the
+optional Waterfall tree, removing its unlimited prefetch/cache and idle polling.
+User-created sidebar groups, favourites, tabs and compatibility files remain.
+
+`native/sftp/` adds a signed `sftpctl` helper using Security/LocalAuthentication.
+Credentials travel through private stdin/stdout; native writes report failure
+and preserve the form. Native reads are noninteractive; the existing CLI client's
+read-only path stays in legacy.rs to preserve access to older items with its
+access policy. Neither old service is deleted or rewritten for migration.
+The owned expect authentication helper now receives a UTF-8 hex line on stdin,
+with no password in argv/environment or the script file. Stale/double form
+submissions cannot apply credentials metadata to a different form/project.
+Removed the live diagnostic flags that accepted passwords or executed scripts;
+remaining diagnostics are excluded from normal builds, and unknown options exit
+before app startup. Build/install allowlists include the signed new helper.
+
+Removed unused direct terminal dependencies anyhow/ropey; ropey and str_indices
+leave the locked graph. The image-codec dependency tree stays because GPUI also
+requests it. Regenerated notices for 495 dependencies and replaced their stale
+unpublished-candidate MPL download reference with the published releases index.
+Original source attribution and licences remain intact. No commit/publication.
+
+Verification remains compile/sign/stage only while Oliver uses Schnauz for this
+chat. Rust regression fixtures cover competing destinations, owned stage cleanup,
+cancelled moves, remote-source identities, ordered saves and owned-child timeout
+scope. Swift credential tests use an injected fake store and exclude Security;
+test.sh includes them for a later permitted run. Tests are compiled, not executed.
+Manual filesystem/SMB, SSH/Keychain and UI workflow confirmation remains pending;
+no measured runtime speedup is claimed. Logs:
+`.build-cache/0.9.19-cleanup-test-compile.log`,
+`.build-cache/0.9.19-cleanup-build.log`,
+`.build-cache/0.9.19-sftp-helper-compile.log`,
+`.build-cache/0.9.19-sftp-fixtures-compile.log`.
+
+Final optimized compilation and the ui-checks-enabled Rust test compilation
+passed. Native SFTP helper and fake-store fixture binaries compiled without
+execution. Notices generation and whitespace checks passed. Approved packaging
+passed the strict bundle allowlist, every executable's architecture check and
+deep/strict Apple Development signature verification, then safely deferred the
+update while Schnauz was running. The pending bundle was independently checked:
+version 0.9.19, local.schnauz.app identity, new helper present, and its main build
+UUID and all 16 Mach-O sections match the compiled release binary (code-signing
+metadata excluded). The pending signature was verified again after staging.
+Packaging log: `.build-cache/0.9.19-cleanup-package.log`.
+
+The combined update is at the normal pending-app location. Apply with
+`./update.sh` only after a deliberate quit. The installed/running bundle and
+every live session remain untouched. No application, helper or test binary was
+launched; no real account/Keychain credential, SMB share or server was used for
+QA. No commit, tag, release or other publication.
+
+## Local 0.9.20 — Eject in Devices
+
+Oliver reported that external drives could not be ejected from the sidebar.
+Devices rows now have an AppKit right-click menu with Eject “drive name” for
+eligible external local volumes. Internal/startup/unknown/nonlocal volumes
+cannot invoke it; duplicate in-flight requests are disabled across windows.
+Opening or rendering the menu performs no filesystem query or eject operation.
+
+The existing volumectl helper now reports eligibility and a captured mount
+identity (persistent UUID when available plus kernel filesystem ID, including
+filesystems without UUIDs). On the explicit click it obtains a fresh mounted
+snapshot and validates path/identity/eligibility before calling the normal
+NSWorkspace unmountAndEjectDevice API. There is no force, diskutil fallback,
+process termination or network-share unmount. Native refusal/busy errors and
+progress/completion use the fixed footer.
+
+Metadata and eject operations run on owned workers. All windows refresh their
+Devices cache with generation checks; the originating window may close without
+stranding the shared busy state. Related native media previews are released and
+suppressed while ejecting, with pending preview work cancelled. Successful eject
+clears stale local listings/selections and shows a reconnect/Retry error while
+retaining paths and every live terminal/PTY. Failed eject retains the mounted
+drive and allows retry. The capacity badge's left-click toggle remains intact.
+
+Native logic lives in native/volumes/Core.swift with injected fake eject calls
+for startup/internal/network/identity changes, missing mounts, busy refusal and
+success fixtures. test.sh compiles/runs those only when execution is permitted.
+The current workflow compiles them without execution, along with the real helper
+and Rust/ui-checks fixtures. No drive has been queried, unmounted or ejected for
+QA, and no application/helper/test binary has been launched. Actual hardware/UI
+confirmation remains Oliver's manual test. No commit or publication.
+
+Logs: `.build-cache/0.9.20-eject-test-compile.log`,
+`.build-cache/0.9.20-eject-build.log`,
+`.build-cache/0.9.20-volume-helper-compile.log`,
+`.build-cache/0.9.20-volume-fixtures-compile.log`.
+
+Optimized 0.9.20 compilation, Rust/ui-checks test compilation and real/native
+fixture helper compilation passed; no binaries were executed. Bundle allowlist,
+all helper architectures and deep/strict Apple Development signatures passed.
+Approved packaging safely staged the update while preserving the running app
+bundle and every live session. Pending bundle version/identity/helper presence
+and its deep/strict signature were checked after staging. Apply with
+`./update.sh` after a deliberate quit. No real-drive eject or UI test was run.
+Packaging log: `.build-cache/0.9.20-eject-package.log`.
+
+
+## Authorized 0.9.21 publication — 2026-10-30
+
+Oliver confirmed Schnauz is working well and requested a new GitHub release.
+Publish the current version with changes since public 0.8.9, both architecture
+DMGs, exact MPL sources and checksums using release.sh and docs/RELEASING.md.
+Earlier candidate holds are superseded; preserve all existing tags/assets and
+exclude local website/video work and test.csv from committed source.
+Validation remains compile/sign/package only: no test binaries, applications or
+native helpers are executed. Runtime/UI, real-drive eject, live provider actions
+and physical Intel checks are not newly verified. Issues #1/#2 remain open and
+the specific Codex-over-SSH redraw symptom is not claimed resolved. Preserve the
+installed live bundle and all windows, terminals, SSH sessions and settings.
+
+
+## Local 0.9.21 — immediate Devices refresh, Info and Eject controls
+
+During the release Oliver reported delayed detection of newly attached drives,
+requested Info and Eject on right-click, and an Eject symbol beside eligible
+drives. He explicitly requested continuing publication with these changes.
+
+The old 30-second poll was the only mount-detection trigger. Devices now also
+subscribes once to NSWorkspace's own mount/unmount/rename/wake notifications.
+Callbacks only wake window subscribers; owned workers refresh the cached list.
+Requests are coalesced, with at most one in-flight listing and one follow-up,
+while the 30-second timer remains for capacity updates. No filesystem work runs
+inside notification callbacks or rendering.
+
+Every drive menu offers Info. Eligible drives additionally show Eject and a small
+native eject symbol beside the name; other drives show neither and have no
+cannot-eject placeholder. Busy eligible drives disable duplicate ejection.
+Info displays cached capacity, available/used space and the mount path through
+the existing modal; it never recursively scans a drive or reads its folders.
+The eject button consumes its click so it cannot navigate or change terminals.
+Existing native mount-identity revalidation and normal, non-forced eject remain.
+
+Compile-only fixtures cover delivery to multiple window subscribers, cleanup of
+closed subscriptions and Info for a nonexistent path using cached capacity.
+Physical-drive latency/UI/eject checks remain manual; no app, helper or test
+binary is launched under the current live-session restriction.

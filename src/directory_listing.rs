@@ -89,72 +89,40 @@ pub(super) fn error_panel(error: &ListingError, pane: usize, cx: &Context<Schnau
         .into_any_element()
 }
 
-/// Read a directory's entries with full metadata (one `stat` per entry), sorted
-/// directories-first then case-insensitive by name. This is the slow path; the
-/// UI shows `read_entries_fast` first and swaps this in from the background.
+/// Listing reads, including the first names-only pass, run on owned workers.
 pub(super) fn read_entries(dir: &Path) -> std::io::Result<Vec<Entry>> {
-    let mut entries: Vec<Entry> = Vec::new();
-    {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            // One stat, following symlinks: gives is_dir, size, and mtime.
-            let md = fs::metadata(entry.path()).ok();
-            let is_dir = md.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-            let size = md.as_ref().map(|m| m.len()).unwrap_or(0);
-            let modified = md.as_ref().and_then(|m| m.modified().ok());
-            let created = md.as_ref().and_then(|m| m.created().ok());
-            entries.push(Entry {
-                name,
-                is_dir,
-                size,
-                modified,
-                created,
-                mode: md.as_ref().map(|m| {
-                    use std::os::unix::fs::PermissionsExt;
-                    m.permissions().mode()
-                }),
-                loaded: true,
-                hidden_flag: md.as_ref().is_some_and(|m| {
-                    use std::os::macos::fs::MetadataExt;
-                    m.st_flags() & libc::UF_HIDDEN != 0
-                }),
-            });
-        }
+    read_cancellable(dir, true, &AtomicBool::new(false))
+}
+#[cfg(any(test,feature="ui-checks"))]
+pub(super) fn read_entries_fast(dir: &Path) -> std::io::Result<Vec<Entry>> {
+    read_cancellable(dir, false, &AtomicBool::new(false))
+}
+pub(super) fn read_cancellable(dir: &Path, full: bool, cancel: &AtomicBool) -> std::io::Result<Vec<Entry>> {
+    let mut entries=Vec::new();
+    for item in fs::read_dir(dir)? {
+        if cancel.load(Ordering::Acquire) { return Err(std::io::Error::new(std::io::ErrorKind::Interrupted,"Listing cancelled")); }
+        let entry=item?;
+        let name=entry.file_name().to_string_lossy().into_owned();
+        let kind=entry.file_type()?;
+        let md=if full || kind.is_symlink() {fs::metadata(entry.path()).ok()} else {None};
+        let is_dir=if kind.is_symlink() {md.as_ref().is_some_and(|m|m.is_dir())} else {kind.is_dir()};
+        entries.push(Entry {
+            name,is_dir,
+            size:md.as_ref().map_or(0,|m|m.len()),
+            modified:md.as_ref().and_then(|m|m.modified().ok()),
+            created:md.as_ref().and_then(|m|m.created().ok()),
+            mode:md.as_ref().map(|m|{use std::os::unix::fs::PermissionsExt;m.permissions().mode()}),
+            loaded:full,
+            hidden_flag:md.as_ref().is_some_and(|m|{use std::os::macos::fs::MetadataExt;m.st_flags()&libc::UF_HIDDEN!=0}),
+        });
     }
-    sort_default(&mut entries);
-    Ok(entries)
+    if cancel.load(Ordering::Acquire) {return Err(std::io::Error::new(std::io::ErrorKind::Interrupted,"Listing cancelled"));}
+    sort_default(&mut entries);Ok(entries)
 }
 
-/// Read a directory's entries cheaply — names + folder/file from the readdir
-/// `d_type`, with **no** per-file `stat` (only symlinks are resolved). This is
-/// near-instant even for very large folders; size/dates fill in later.
-pub(super) fn read_entries_fast(dir: &Path) -> std::io::Result<Vec<Entry>> {
-    let mut entries: Vec<Entry> = Vec::new();
-    {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let is_dir = match entry.file_type() {
-                Ok(t) if t.is_dir() => true,
-                // Resolving a symlink needs a stat, but symlinks are rare.
-                Ok(t) if t.is_symlink() => entry.path().is_dir(),
-                _ => false,
-            };
-            entries.push(Entry {
-                name,
-                is_dir,
-                size: 0,
-                modified: None,
-                created: None,
-                mode: None,
-                loaded: false,
-                hidden_flag: false,
-            });
-        }
-    }
-    sort_default(&mut entries);
-    Ok(entries)
+pub(super) fn loading_panel() -> AnyElement {
+    div().w_full().min_w_0().flex_1().p_4().text_color(rgb(theme().text_muted))
+        .child("Loading folder…").into_any_element()
 }
 
 #[cfg(test)]
@@ -163,7 +131,7 @@ mod tests {
     #[test]
     fn distinguishes_empty_denied_and_failed_listings_and_allows_retry() {
         let folder = crate::tests::scratch("fallible-listing");
-        let mut tab = Tab::new(folder.clone());
+        let mut tab = Tab::fixture(folder.clone());
         assert!(tab.entries.is_empty() && tab.listing_error.is_none());
         tab.install_listing(Err(std::io::Error::from_raw_os_error(libc::EPERM)));
         assert!(tab.listing_error.as_ref().unwrap().permission_denied);
@@ -181,7 +149,7 @@ mod tests {
         fs::create_dir(root.join("child")).unwrap();
         fs::write(root.join("parent.txt"), "parent").unwrap();
         fs::write(root.join(".hidden"), "hidden").unwrap();
-        let mut tab = Tab::new(root.join("child"));
+        let mut tab = Tab::fixture(root.join("child"));
         tab.find_query = Some("unmatched".into());
         tab.change_directory(root.clone());
         tab.install_listing(read_entries_fast(&root));

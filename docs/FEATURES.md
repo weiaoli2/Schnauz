@@ -135,9 +135,15 @@ hidden items and uses metadata without reading file contents. Directory symlinks
 and unrelated volumes are not traversed; scanning the startup root includes its
 paired macOS Data volume through the merged folder hierarchy without counting
 the backing mount twice. Scanned logical file sizes are shown separately from
-volume capacity and available space. Permission failures or the 500,000-item memory
-limit show explicit partial-map details above the map. Snapshots and filesystem
-overhead are not mapped. Closing the panel cancels the scan.
+volume capacity and available space. The map appears progressively, with provisional
+sizes marked as counted so far. Every top-level folder gets an initial pass, then
+larger known branches receive priority; clicking a folder prioritises its scan.
+Roughly 50,000 entries form an update batch, not a scan-stopping limit. Retained
+detail is bounded independently: extra files are grouped with their full byte
+totals, and large files discovered later remain visible. Clicking a grouped area
+analyses its containing folder with finer detail. Unreadable entries and excluded
+volumes are reported explicitly. Snapshots and filesystem overhead are not mapped.
+Closing the panel cancels the scan. The item count appears once, in the footer.
 The map starts below the path and filter bars. Selecting outside it closes it;
 navigation from inside its graphic keeps it open.
 
@@ -596,6 +602,8 @@ Right-click a tab and choose Move to Project… to move it with its existing ter
 output and running jobs. Choose a project, leave Activate Project checked to switch
 there immediately, and click Move. Clear that option to stay in the source project.
 Add to Favourites… in the tab menu adds its folder as a project shortcut instead.
+Its first destination is **Current Project**, also first in the file/folder
+**Add to Project** submenu, to add references to the project you are working in.
 
 Click the idle Schnauz dog to open About Schnauz / Coffee for Cookie. Its Updates
 section offers an optional startup check (off by default) and Check for Updates….
@@ -692,3 +700,47 @@ uploaded automatically.
 Source builds stage a verified update while the installed app is running;
 applying it requires a deliberate quit. For manual DMG/Finder updates, quit the
 old app before replacing Schnauz.app.
+
+### Customization (local 0.9.18)
+
+Settings → Customization offers Schnauz Light and Dark first, a live file-list
+preview, and additional palettes under More themes. Optional Colors controls
+adjust Background, Text, Selection and Hover with a small palette or an exact
+hex value. Background creates matching interface shades; Text includes secondary
+labels; Selection also colors the top project strip. Reset individual colors
+to the current light/dark Schnauz defaults, or reset the whole theme to Schnauz
+Light. Saved custom themes are retained until you choose a change.
+
+### Reliability and cleanup (local 0.9.19)
+
+Folder listings load in the background with visible loading and error states.
+Session autosaves also run in the background. Copy/move destinations are claimed
+exclusively, preserving a file created by a competing operation; cancelled copies
+clean up their own partial work. Preparation and explicit Get Info scans can
+stop without occupying the shared file-work queue.
+
+SSH image/PDF previews are separated by server and account, use private temporary
+storage and discard cancelled results. SFTP password saving uses native Keychain
+access; existing saved credentials and authenticated terminals are preserved.
+
+Search history has one list per project for both its menu and keyboard recall.
+Settings → General → Search controls future recording. Existing history can be
+cleared from the search menu. The optional inherited Waterfall tree is retired;
+Common, Favourites, saved projects and user-created sidebar groups remain.
+
+### Eject external drives (local 0.9.20)
+
+Right-click an external drive under Devices and choose Eject. Schnauz uses
+macOS's normal eject operation and reports a busy drive in the footer. It never
+forces an unmount or ends a running terminal. Devices refresh across windows;
+tabs on an ejected drive retain their paths for reconnecting later.
+
+
+### Devices updates and controls (0.9.21)
+
+Mounted drives refresh when macOS reports a mount, unmount or rename, while
+free-space figures keep their periodic refresh. Right-click any drive for Info
+(capacity, available/used space and mount path, without a folder scan). Eligible
+drives also have an Eject menu item and a small eject button beside their name.
+Other drives omit both controls. Eject uses the normal macOS operation, retains
+busy-drive errors and never forces an unmount or ends a terminal.

@@ -34,6 +34,7 @@ pub(super) struct State {
     drag: usize,
     view: usize,
     count: usize,
+    paths: Vec<PathBuf>,
     operation: Option<Operation>,
     copy_only: bool,
     hovered_tab: Option<(usize, u64, Bounds<gpui::Pixels>)>,
@@ -126,6 +127,10 @@ impl Schnauz {
             .dragged_item()
             .downcast_ref::<ExternalPaths>()
             .map_or(0, |p| p.paths().len());
+        if fresh {
+            self.file_drag.paths = ev.dragged_item().downcast_ref::<ExternalPaths>()
+                .map_or_else(Vec::new, |p| p.paths().to_vec());
+        }
         self.file_drag.copy_only = false;
         let op = native_file_drag::destination(false);
         if self.file_drag.operation != Some(op) {
@@ -161,6 +166,33 @@ impl Schnauz {
             .detach();
         }
     }
+    /// Resolve reference drops before nested row/scroll handlers consume release.
+    pub(super) fn finish_sidebar_file_drop(
+        &mut self,
+        event: &gpui::MouseUpEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.button != MouseButton::Left { return; }
+        if self.favourite_drag.is_some() {
+            let inside = self.sidebar_drop_target(event.position).is_some();
+            self.finish_favourite_drag(event.position, cx);
+            if inside { cx.stop_propagation(); }
+            return;
+        }
+        if !cx.has_active_drag()
+            || !native_file_drag::active_in(self.file_drag.view) || self.file_drag.paths.is_empty() {
+            return;
+        }
+        let Some(common) = self.sidebar_drop_target(event.position) else { return; };
+        let paths = std::mem::take(&mut self.file_drag.paths);
+        self.favourites_drop_hover = false;
+        self.common_drop_hover = false;
+        cx.stop_active_drag(window);
+        cx.stop_propagation();
+        self.add_dropped_favourites(self.projects.active, common, paths, cx);
+    }
+
     pub(super) fn drag_over_browser(
         &mut self,
         pane: usize,

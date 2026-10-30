@@ -210,7 +210,7 @@ impl Drop for Session {
 impl Schnauz {
     pub(super) fn sync_text_preview(&mut self) {
         let tab = self.active_tab();
-        let wanted = (prefs().preview && tab.selection.len() == 1)
+        let wanted = (prefs().preview && tab.remote.is_none() && tab.selection.len() == 1)
             .then(|| tab.selection.iter().next().cloned())
             .flatten()
             .and_then(|path| {
@@ -321,6 +321,7 @@ impl Schnauz {
 }
 
 /// Native regression check: a private pasteboard leaves the user's clipboard intact.
+#[cfg(feature="ui-checks")]
 pub(super) fn smoke_test() -> Result<String, String> {
     use objc2_app_kit::{NSApplication, NSPasteboard};
     use objc2_foundation::NSRange;

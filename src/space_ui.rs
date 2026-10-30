@@ -12,6 +12,7 @@ pub(super) struct State {
     root: PathBuf,
     pub(super) pane: usize,
     cancel: Arc<AtomicBool>,
+    priority: Arc<std::sync::Mutex<Option<PathBuf>>>,
     tree: Option<Arc<Tree>>,
     view_root: usize,
     progress: space_map::Progress,
@@ -27,6 +28,7 @@ impl Drop for State {
 }
 enum Update {
     Progress(space_map::Progress),
+    Snapshot(Tree,space_map::Progress),
     Done(Option<Tree>),
 }
 
@@ -50,11 +52,13 @@ impl Schnauz {
         todoist_window::visibility_changed(cx);
         let id = NEXT_INSPECTION.fetch_add(1, Ordering::Relaxed);
         let cancel = Arc::new(AtomicBool::new(false));
+        let priority=Arc::new(std::sync::Mutex::new(None));
         self.space_map = Some(State {
             id,
             root: root.clone(),
             pane,
             cancel: cancel.clone(),
+            priority:priority.clone(),
             tree: None,
             view_root: 0,
             progress: Default::default(),
@@ -66,15 +70,14 @@ impl Schnauz {
         window.focus(&self.focus);
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let (tx, rx) = std::sync::mpsc::channel();
+            let (tx, rx) = std::sync::mpsc::sync_channel(2);
             let worker_cancel = cancel.clone();
-            cx.background_spawn(async move {
-                let tree = space_map::scan(&root, &worker_cancel, |p| {
-                    let _ = tx.send(Update::Progress(p));
-                });
+            let _=std::thread::Builder::new().name("schnauz-disk-usage".into()).spawn(move || {
+                let tree = space_map::scan_progressive(&root, &worker_cancel, |p| {
+                    let _ = tx.try_send(Update::Progress(p));
+                },|tree,p| {let _=tx.try_send(Update::Snapshot(tree,p));},&priority);
                 let _ = tx.send(Update::Done(tree));
-            })
-            .detach();
+            });
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(80))
@@ -103,7 +106,19 @@ impl Schnauz {
                         for update in updates {
                             match update {
                                 Update::Progress(p) => state.progress = p,
-                                Update::Done(Some(tree)) => state.tree = Some(Arc::new(tree)),
+                                Update::Snapshot(tree,p) => {
+                                    state.progress=p;
+                                    state.tree=Some(Arc::new(tree));
+                                    state.hovered=None;state.selected=None;
+                                    state.geometry.borrow_mut().key=None;
+                                    state.geometry.borrow_mut().tiles=Arc::new(Vec::new());
+                                }
+                                Update::Done(Some(tree)) => {
+                                    state.tree = Some(Arc::new(tree));
+                                    state.hovered=None;state.selected=None;
+                                    state.geometry.borrow_mut().key=None;
+                                    state.geometry.borrow_mut().tiles=Arc::new(Vec::new());
+                                }
                                 Update::Done(None) => {
                                     state.error = Some("This folder could not be inspected.".into())
                                 }
@@ -145,11 +160,26 @@ impl Schnauz {
             return;
         };
         let path = node.path.clone();
-        let directory = node.directory;
+        let grouped = node.grouped_files > 0;
+        let directory = node.directory || grouped;
         let pane = state.pane.min(self.panes.len() - 1);
+        let needs_detail=grouped || (directory && node.children.iter().any(|child|tree.nodes[*child].grouped_files>0));
+        if needs_detail {
+            // Rebase the detail budget on an explicitly chosen smaller folder.
+            // The old scan is cancelled by State::drop, never left running.
+            self.active_pane=pane;
+            if self.tab(pane).remote.is_some() {
+                self.panes[pane].tabs.push(Tab::new(path.clone()));
+                self.panes[pane].active=self.panes[pane].tabs.len()-1;
+            }
+            self.navigate_in(pane,path.clone(),cx);
+            self.inspect_folder(pane,path,window,cx);
+            return;
+        }
         state.selected = Some(index);
         if directory {
-            state.view_root = index;
+            *state.priority.lock().unwrap()=Some(path.clone());
+            state.view_root = if grouped { node.parent.unwrap_or(0) } else { index };
             state.hovered = None;
             state.geometry.borrow_mut().key = None;
         }
@@ -293,7 +323,8 @@ impl Schnauz {
                     .text_size(px(11.))
                     .text_color(rgb(t.text_muted))
                     .child(format!(
-                        "Scanned files: {} · {} {}",
+                        "{}: {} · {} {}",
+                        if tree.scanning {"Counted so far"} else {"Scanned files"},
                         format_size(false, tree.nodes[root].bytes),
                         tree.counts[root],
                         if tree.counts[root] == 1 {
@@ -310,24 +341,32 @@ impl Schnauz {
                         format_size(false, total), format_size(false, available)
                     )));
             }
-            if tree.unreadable > 0 || tree.limited || tree.skipped_volumes > 0 {
+            if tree.scanning {
+                panel=panel.child(div().flex_none().px_3().pb_2().text_size(px(11.)).text_color(rgb(t.text_muted))
+                    .child(format!("Scanning… sizes so far · {} folders pending. Click a folder to prioritise it.",tree.pending_folders)));
+            }
+            if tree.grouped_files > 0 {
+                panel = panel.child(div().flex_none().px_3().pb_2().text_size(px(11.))
+                    .text_color(rgb(t.text_muted)).child(format!(
+                        "{} · {} files grouped for map detail. Inspect a smaller folder for finer detail.",
+                        if tree.scanning {"Scan continues"} else {"All readable files counted"},tree.grouped_files)));
+            }
+            if tree.unreadable > 0 || tree.skipped_volumes > 0 {
                 let mut details = Vec::new();
-                if tree.limited {
-                    details.push(format!("{}-item safety limit reached; scan a smaller folder", space_map::MAX_NODES));
-                }
                 if tree.unreadable > 0 {
                     details.push(format!("{} entries could not be read", tree.unreadable));
                 }
                 if tree.skipped_volumes > 0 {
                     details.push(format!("{} entries on other volumes excluded", tree.skipped_volumes));
                 }
-                let label = if tree.limited || tree.unreadable > 0 { "Partial map" } else { "Scan scope" };
+                let label = if tree.unreadable > 0 { "Unreadable entries" } else { "Scan scope" };
                 panel = panel.child(div().flex_none().px_3().pb_2().text_size(px(11.))
                     .text_color(rgb(t.text_muted)).child(format!("{label}: {}.", details.join("; "))));
             }
             if tree.nodes[root].bytes == 0 {
                 panel = panel.child(div().flex_1().p_4().text_color(rgb(t.text_muted)).child(
-                    "No readable file data found. Check the scan details above for exclusions or read errors.",
+                    if tree.scanning {"Discovering folder sizes… the map will appear as file data is counted."}
+                    else {"No readable file data found. Check the scan details above for exclusions or read errors."},
                 ));
             } else {
                 let geometry = state.geometry.clone();
@@ -399,7 +438,7 @@ impl Schnauz {
                                             let name = format!(
                                                 "{}{}",
                                                 if tile.folder { "▸ " } else { "" },
-                                                path_label(&node.path)
+                                                map_node_label(node)
                                             );
                                             paint_label(
                                                 name,
@@ -470,8 +509,8 @@ impl Schnauz {
                     .gap_1()
                     .child(div().truncate().text_size(px(11.)).child(format!(
                         "{} · {}",
-                        if node.directory { "Folder" } else { "File" },
-                        path_label(&node.path)
+                        if node.grouped_files > 0 { "File group" } else if node.directory { "Folder" } else { "File" },
+                        map_node_label(node)
                     )))
                     .child(
                         div()
@@ -483,7 +522,9 @@ impl Schnauz {
                     .child(div().text_size(px(10.)).child(format!(
                         "{} · click to {}",
                         format_size(false, node.bytes),
-                        if node.directory {
+                        if node.grouped_files > 0 {
+                            "open containing folder"
+                        } else if node.directory {
                             "open folder and zoom"
                         } else {
                             "show file on the left"
@@ -513,6 +554,10 @@ impl Schnauz {
         );
         Some(panel.into_any_element())
     }
+}
+fn map_node_label(node: &space_map::Node) -> String {
+    if node.grouped_files > 0 { format!("{} additional files",node.grouped_files) }
+    else { path_label(&node.path) }
 }
 fn map_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
     let t = theme();

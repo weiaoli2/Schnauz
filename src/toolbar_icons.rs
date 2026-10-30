@@ -22,11 +22,14 @@ pub(super) enum Icon {
     Terminal,
     Split,
     Preview,
+    Sidebar,
+    History,
     Tasks,
     Project,
     Settings,
     Storage,
     Drive,
+    Eject,
     Globe,
     Cloud,
     Question,
@@ -99,6 +102,9 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
         Icon::Question => apple_symbol("questionmark", color),
         Icon::PinDocked => apple_symbol("pin", color),
         Icon::PinFloating => apple_symbol("pin.slash", color),
+        Icon::Sidebar => apple_symbol("sidebar.left", color),
+        Icon::History => apple_symbol("clock.arrow.circlepath", color),
+        Icon::Eject => apple_symbol("eject", color),
         _ => None,
     };
     if let Some(image) = symbol {
@@ -211,6 +217,10 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
                     line!(5,14.5;6,14.5);
                     line!(9,14.5;10,14.5);
                 }
+                Icon::Eject => {
+                    line!(4,12;10,4;16,12;4,12);
+                    line!(4,16;16,16);
+                }
                 Icon::Search => {
                     circle!(8.5, 8.5, 5.5);
                     line!(12.5,12.5;17,17);
@@ -298,6 +308,14 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
                     line!(12,3;12,17);
                     line!(5,7;9,7);
                     line!(5,10;9,10);
+                }
+                Icon::Sidebar => {
+                    rect!(2, 3, 16, 14);
+                    line!(7,3;7,17);
+                }
+                Icon::History => {
+                    circle!(10, 10, 7);
+                    line!(10,5;10,10;14,12);
                 }
                 Icon::Tasks => {
                     line!(2,5;4,7;7,3);

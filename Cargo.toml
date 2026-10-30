@@ -1,6 +1,6 @@
 [package]
 name = "schnauz"
-version = "0.9.2"
+version = "0.9.21"
 edition = "2021"
 description = "A native, project-first Mac file manager with an interactive terminal"
 license = "MIT"
