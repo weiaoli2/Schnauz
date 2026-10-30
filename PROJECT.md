@@ -2325,3 +2325,52 @@ Compile-only fixtures cover delivery to multiple window subscribers, cleanup of
 closed subscriptions and Info for a nonexistent path using cached capacity.
 Physical-drive latency/UI/eject checks remain manual; no app, helper or test
 binary is launched under the current live-session restriction.
+
+
+## Local 0.9.22 — selected Illustrator preview flicker; release paused
+
+Oliver paused publication before any push/tag/upload and reported a selected
+.ai preview repeatedly appearing and disappearing. The 0.9.21 source commit
+193ed56 and both installers remain local unpublished preparation. Do not publish
+them while this reported preview problem is being investigated/tested.
+
+Source tracing found that the shared vnode watcher treated every NOTE_ATTRIB
+notification on a selected file as a content change. Quick Look can update
+access metadata/extended attributes while generating its thumbnail; invalidating
+that thumbnail then runs the generator again. The watcher now suppresses only
+attribute-only events on an unchanged regular file, comparing device/inode,
+length and modification time. Access/change time and xattrs do not cause preview
+invalidation. Actual writes (even equal-length writes with restored timestamps),
+removal/rename/revoke, changed file identity/mtime/length and all directory
+attribute events still refresh normally. No personal .ai file was read and the
+specific live event sequence has not been measured or claimed reproduced.
+
+Rust/ui-checks regression fixtures compile without execution under the current
+live-session restriction. They cover unchanged-file attributes versus real writes,
+combined write/attribute events, replacement/removal and directory attributes.
+Prepare the normal signed 0.9.22 local build for Oliver's manual preview check;
+keep the running bundle and all terminal/SSH sessions intact. Publication remains
+paused pending his feedback; no further commit/tag/push/release is implied.
+
+
+0.9.22 verification: optimized compilation, Rust/ui-checks test compilation,
+bundle allowlist and deep/strict Apple Development signatures passed. The normal
+update is staged for `./update.sh` after a deliberate quit. All 19 recorded files
+in the installed live bundle retain their original inode/device/hash. No app,
+helper or test executable was launched; no live .ai file was opened for QA.
+Logs: `.build-cache/0.9.22-preview-{test-compile,build}.log`; receipt:
+`.build-cache/0.9.22-preview-verification.json`. Await Oliver's manual .ai check;
+publication remains paused, with no push/tag/upload or additional source commit.
+
+
+## Authorized 0.9.22 publication — resumed
+
+Oliver explicitly requested releasing the new version after the preview fix.
+This supersedes the hold above. Publish 0.9.22 with both architectures, current
+source, exact MPL sources and checksums, retaining the early-prerelease and
+Apple Development/not-notarized disclosures. Fresh validation remains compilation,
+static signatures/architectures, package/source/checksums only; no app/helper/test
+binary launches or live account/hardware operations. Preserve the running app,
+all terminals and SSH, and all existing release tags/assets. Exclude website/,
+video/ and test.csv. Do not claim issues #1/#2 or the specific SSH/Codex redraw
+symptom resolved. The normal signed local 0.9.22 build is already safely staged.

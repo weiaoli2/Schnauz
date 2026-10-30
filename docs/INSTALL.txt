@@ -1,4 +1,4 @@
-Schnauz 0.9.21 — early preview
+Schnauz 0.9.22 — early preview
 
 For an update, first finish any terminal/SSH work and quit Schnauz.
 Then drag Schnauz.app to Applications and open it from there.
@@ -20,7 +20,7 @@ https://github.com/weiaoli2/Schnauz/releases
 
 Original Shuffle MIT license and third-party notices are included inside the app
 under Contents/Resources/Licenses. Exact unmodified MPL-2.0 component sources are
-available as Schnauz-0.9.21-MPL-sources.zip on the same release page, and from
+available as Schnauz-0.9.22-MPL-sources.zip on the same release page, and from
 the repository's vendor/mpl-sources directory.
 
 Developer, design and product direction: Oliver Weber

@@ -6,6 +6,7 @@ use std::{
     io,
     os::unix::{
         ffi::OsStrExt,
+        fs::MetadataExt,
         io::{AsRawFd, FromRawFd},
     },
     path::{Path, PathBuf},
@@ -13,9 +14,40 @@ use std::{
 };
 struct Watched {
     file: Option<File>,
-    mtime: Option<SystemTime>,
+    state: Option<FileState>,
     checked: Instant,
     interval: Duration,
+}
+
+/// Access time, change time and extended attributes are intentionally excluded:
+/// Quick Look may update those while reading an unchanged document.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileState {
+    regular: bool,
+    device: u64,
+    inode: u64,
+    bytes: u64,
+    modified: Option<SystemTime>,
+}
+
+fn file_state(path: &Path) -> Option<FileState> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some(FileState {
+        regular: metadata.is_file(),
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        bytes: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+fn needs_refresh(previous: &Option<FileState>, current: &Option<FileState>, flags: u32) -> bool {
+    // Keep directory attribute notifications (hidden items, tags, permissions)
+    // and all writes/replacements/removals, including equal-length writes whose
+    // timestamps an editor restores. Only suppress unchanged-file ATTRIB events.
+    !(flags == libc::NOTE_ATTRIB
+        && previous.as_ref().is_some_and(|state| state.regular)
+        && previous == current)
 }
 pub struct Watcher {
     queue: Option<File>,
@@ -75,12 +107,12 @@ impl Watcher {
         for path in wanted {
             if !self.folders.contains_key(&path) {
                 let file = self.attach(&path).ok();
-                let mtime = modified(&path);
+                let state = file_state(&path);
                 self.folders.insert(
                     path.clone(),
                     Watched {
                         file,
-                        mtime,
+                        state,
                         checked: Instant::now(),
                         interval: Duration::from_secs(1),
                     },
@@ -116,8 +148,11 @@ impl Watcher {
                             .as_ref()
                             .is_some_and(|f| f.as_raw_fd() as usize == event.ident)
                         {
-                            changed.insert(path.clone());
-                            watch.mtime = modified(path);
+                            let state = file_state(path);
+                            if needs_refresh(&watch.state, &state, event.fflags) {
+                                changed.insert(path.clone());
+                            }
+                            watch.state = state;
                             if event.fflags
                                 & (libc::NOTE_DELETE | libc::NOTE_RENAME | libc::NOTE_REVOKE)
                                 != 0
@@ -143,27 +178,56 @@ impl Watcher {
             .collect();
         for path in retry {
             let file = self.attach(&path).ok();
-            let now = modified(&path);
+            let now = file_state(&path);
             let watch = self.folders.get_mut(&path).unwrap();
-            if watch.mtime != now {
+            if watch.state != now {
                 changed.insert(path);
                 watch.interval = Duration::from_secs(1);
             } else {
                 watch.interval = (watch.interval * 2).min(Duration::from_secs(15));
             }
             watch.file = file;
-            watch.mtime = now;
+            watch.state = now;
             watch.checked = Instant::now();
         }
         changed
     }
 }
-fn modified(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path).ok()?.modified().ok()
-}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unchanged_document_attributes_do_not_restart_its_preview() {
+        let original = Some(FileState {
+            regular: true,
+            device: 1,
+            inode: 2,
+            bytes: 100,
+            modified: Some(SystemTime::UNIX_EPOCH),
+        });
+        assert!(!needs_refresh(&original, &original, libc::NOTE_ATTRIB));
+        // Real writes must still refresh even when length and mtime are equal.
+        assert!(needs_refresh(&original, &original, libc::NOTE_WRITE));
+        assert!(needs_refresh(
+            &original,
+            &original,
+            libc::NOTE_WRITE | libc::NOTE_ATTRIB
+        ));
+        for flag in [libc::NOTE_DELETE, libc::NOTE_RENAME, libc::NOTE_REVOKE] {
+            assert!(needs_refresh(&original, &original, flag));
+        }
+        let mut edited = original.clone();
+        edited.as_mut().unwrap().modified = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        assert!(needs_refresh(&original, &edited, libc::NOTE_ATTRIB));
+        let mut replaced = original.clone();
+        replaced.as_mut().unwrap().inode += 1;
+        assert!(needs_refresh(&original, &replaced, libc::NOTE_ATTRIB));
+        assert!(needs_refresh(&original, &None, libc::NOTE_ATTRIB));
+        let mut folder = original.clone();
+        folder.as_mut().unwrap().regular = false;
+        assert!(needs_refresh(&folder, &folder, libc::NOTE_ATTRIB));
+    }
+
     #[test]
     fn reacts_to_create_rename_delete_and_releases_old_folders() {
         let root = crate::tests::scratch("folder-watch");

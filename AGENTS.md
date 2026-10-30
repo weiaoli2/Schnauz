@@ -978,3 +978,17 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   recursive scan. Show Eject and a native eject symbol only for eligible drives;
   omit both and any cannot-eject placeholder otherwise. Eject button clicks never
   navigate. Oliver requested continuing the public release with these changes.
+
+
+- Local 0.9.22: Oliver paused release publication for flickering selected .ai
+  previews. Keep the 0.9.21 commit/installers unpublished. Ignore attribute-only
+  vnode events for regular files with unchanged dev/inode/size/mtime, so preview
+  generator metadata cannot repeatedly invalidate the image. Preserve writes,
+  replacements/removals and directory attribute refreshes. Verification remains
+  compile/sign/stage only; live .ai confirmation is Oliver's manual workflow.
+
+
+- Oliver resumed publication of 0.9.22 after the Illustrator preview fix.
+  This supersedes the preview hold above. Use both verified signed architecture
+  installers, exact MPL sources, checksums and English notes since 0.8.9.
+  Retain compile/sign/package-only QA and preserve all live app/terminal sessions.

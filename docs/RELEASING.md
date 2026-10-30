@@ -4,6 +4,26 @@ Official repository: https://github.com/weiaoli2/Schnauz (public).
 Current release: **v0.8.9**, public Apple Silicon + Intel early preview.
 Previous published release: **v0.8.1**.
 
+## Authorized release — 0.9.22 (2026-10-30)
+
+Oliver explicitly resumed publication of the new 0.9.22 version after the
+Illustrator preview fix. This supersedes the preview hold below. Publish the
+current source and both signed architecture DMGs, exact MPL sources and checksums
+as an early prerelease. Retain Apple Development / unnotarized disclosure and
+compile/sign/package-only validation while the live session is in use.
+Preserve all prior tags/assets, running bundles, windows, terminals and SSH.
+Do not publish the superseded 0.9.2 or 0.9.21 installers. Website/video work and
+test.csv remain outside the source commit/archive. Issues #1/#2 stay open.
+
+## Publication paused — selected .ai preview flicker
+
+Oliver stopped publication while reporting a selected Illustrator preview that
+repeatedly disappears. No source push, tag, asset upload or GitHub release has
+occurred. Commit 193ed56 and dist/0.9.21 are local preparation only. The watcher
+fix is being delivered locally as 0.9.22 for his feedback. Keep publication
+paused while this preview report is unresolved; preserve all built artifacts
+and live app/terminal sessions.
+
 ## Authorized release — 0.9.21 (2026-10-30)
 
 Oliver confirmed Schnauz is working well and requested a new public GitHub
