@@ -58,7 +58,7 @@ struct TDDraft {
   }
 }
 
-@MainActor final class TDComposer: NSObject, NSWindowDelegate {
+@MainActor final class TDComposer: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate {
   static func color(_ value: UInt32) -> NSColor {
     NSColor(srgbRed: CGFloat((value >> 16) & 255)/255,
       green: CGFloat((value >> 8) & 255)/255, blue: CGFloat(value & 255)/255, alpha: 1)
@@ -67,6 +67,9 @@ struct TDDraft {
   var draft: TDDraft
   let name = NSTextField()
   let details = NSTextView()
+  // NSTextField draws typed text through the window's shared NSTextView.
+  // Keep our own editor so its caret follows this form's actual theme ink.
+  let inputEditor = NSTextView()
   let date = NSTextField()
   let labels = NSTextField()
   let priority = NSPopUpButton()
@@ -95,7 +98,32 @@ struct TDDraft {
     let rgb = (palette?["bg"] ?? 0xf8f9fc)
     let luminance = ((rgb >> 16) & 255)*299 + ((rgb >> 8) & 255)*587 + (rgb & 255)*114
     window.appearance = NSAppearance(named: luminance < 128000 ? .darkAqua : .aqua)
+    inputEditor.isFieldEditor = true; inputEditor.isRichText = false
+    inputEditor.drawsBackground = false; inputEditor.backgroundColor = bg
+    inputEditor.textColor = ink; inputEditor.insertionPointColor = ink
+    inputEditor.isEditable = !saved
     build(project: project, message: message)
+  }
+
+  func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
+    guard sender === window, let field = client as? NSTextField,
+          [name, date, labels].contains(where: { $0 === field }), field.isEnabled else { return nil }
+    inputEditor.insertionPointColor = ink
+    return inputEditor
+  }
+
+  func controlTextDidBeginEditing(_ notification: Notification) {
+    guard let field = notification.object as? NSTextField,
+          let editor = field.currentEditor() as? NSTextView else { return }
+    // AppKit configures the shared editor when focus moves between fields.
+    editor.insertionPointColor = ink
+    editor.updateInsertionPointStateAndRestartTimer(true)
+  }
+
+  func textDidBeginEditing(_ notification: Notification) {
+    guard let editor = notification.object as? NSTextView, editor === details else { return }
+    editor.insertionPointColor = ink
+    editor.updateInsertionPointStateAndRestartTimer(true)
   }
 
   func label(_ value: String, size: CGFloat = 12, bold: Bool = false) -> NSTextField {
@@ -117,6 +145,7 @@ struct TDDraft {
     input.font = .systemFont(ofSize: 12); input.textColor = ink
     input.backgroundColor = bg; input.isBezeled = false; input.drawsBackground = false
     input.focusRingType = .none; input.isEnabled = !saved
+    input.delegate = self
   }
   func optionButton(_ button: NSButton, title: String, action: Selector) {
     button.title = title; button.target = self; button.action = action
@@ -142,6 +171,7 @@ struct TDDraft {
     scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
     details.string = draft.description; details.font = .systemFont(ofSize: 12)
     details.textColor = ink; details.backgroundColor = bg; details.isRichText = false
+    details.insertionPointColor = ink; details.delegate = self
     details.isEditable = !saved; details.isSelectable = true
     details.isVerticallyResizable = true; details.isHorizontallyResizable = false
     details.frame = NSRect(x: 0, y: 0, width: 490, height: 174)

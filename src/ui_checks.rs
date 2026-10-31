@@ -618,7 +618,7 @@ impl Render for CloudRowFixture {
             is_dir:false, size:123, modified:None, created:None, mode:None, loaded:true, hidden_flag:false };
         div().size_full().bg(rgb(theme().bg)).text_size(px(UI_FONT_SIZE)).child(file_row(
             &entry, Path::new("/fixture"), 0, false, false, &self.layout,
-            icon_element(Path::new("/fixture/document.pdf"),false), self.cloud, false, None,
+            icon_element(Path::new("/fixture/document.pdf"),false), self.cloud, false, None, None,
             |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}))
     }
 }

@@ -142,8 +142,9 @@ impl Schnauz {
     }
 }
 
-/// Same editor in List, Icons and search results, including errors and caret.
-pub(super) fn entry_name(name: &str, edit: Option<EditText>) -> AnyElement {
+/// The marker hugs the filename. Selection stays on the row/cell, and the
+/// native-style inline editor retains its own background and hit geometry.
+pub(super) fn marked_entry_name(name: &str, edit: Option<EditText>, marker: Option<u32>) -> AnyElement {
     let t = theme();
     let Some(EditText {
         text,
@@ -157,10 +158,12 @@ pub(super) fn entry_name(name: &str, edit: Option<EditText>) -> AnyElement {
     }) = edit
     else {
         return div()
-            .flex_1()
+            .when(marker.is_none(), |d| d.flex_1())
             .min_w_0()
+            .max_w_full()
             .truncate()
-            .text_color(rgb(t.text))
+            .when_some(marker, |d, color| d.rounded_sm().bg(rgb(color)))
+            .text_color(rgb(if marker.is_some() { 0x1b1b1b } else { t.text }))
             .child(name.to_string())
             .into_any_element();
     };

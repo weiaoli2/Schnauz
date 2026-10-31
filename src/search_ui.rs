@@ -3,6 +3,8 @@ use super::*;
 use crate::file_search::{self, Mode, Scope};
 
 pub(super) struct State {
+    pub(super) marked_versions: HashMap<PathBuf,u32>,
+    pub(super) mark_revision: Option<(u64, usize, version_mark::Rule)>,
     project: Option<u64>,
     history_recorded: bool,
     pub(super) history_pos: Option<usize>,
@@ -23,6 +25,8 @@ pub(super) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            marked_versions: HashMap::new(),
+            mark_revision: None,
             project: None,
             history_recorded: false,
             history_pos: None,
@@ -834,7 +838,8 @@ impl Schnauz {
                             .child(div().flex_none().w(px(cell_width)).min_w_0().flex().items_center().gap_2()
                                 .child(div().flex_none().child(icon_element(path,*is_dir)))
                                 .child(div().id(("search-entry-name",i)).flex_1().min_w_0().flex()
-                                    .child(rename_ui::entry_name(&item.title,this.rename_text(pane,path,cx)))
+                                    .child(rename_ui::marked_entry_name(&item.title,this.rename_text(pane,path,cx),
+                                        this.file_search.marked_versions.get(path).copied()))
                                     .on_click(cx.listener(move|this,ev:&ClickEvent,window,cx| {
                                         this.click_search_entry(i,true,ev,window,cx);
                                         this.suppress_entry_click = true;

@@ -95,6 +95,7 @@ mod new_text_file;
 mod entry_filter;
 mod trash;
 mod project_file_filter;
+mod version_mark;
 use entry_filter::EntryFilter;
 mod schnauz;
 mod clipboard_path;
@@ -947,6 +948,8 @@ struct Tab {
     find_query: Option<String>,
     entry_filter: EntryFilter,
     project_file_filter: project_file_filter::Rule,
+    version_mark_rule: version_mark::Rule,
+    marked_versions: HashMap<PathBuf,u32>,
     show_hidden: bool,
     hidden_count: usize,
     copy_feedback: Option<(String, Instant)>,
@@ -1061,6 +1064,7 @@ impl Tab {
 
     /// Combine the type switch with the text query, preserving the current sort.
     fn recompute_results(&mut self) {
+        self.refresh_version_marks();
         self.hidden_count = self.entries.iter().filter(|entry| entry.is_hidden()).count();
         let tab = self;
         let q = tab.find_query.as_deref().unwrap_or("").trim();
@@ -1168,6 +1172,8 @@ impl Tab {
             find_query: None,
             entry_filter: EntryFilter::All,
             project_file_filter: Default::default(),
+            version_mark_rule: Default::default(),
+            marked_versions: HashMap::new(),
             show_hidden: false,
             hidden_count: 0,
             copy_feedback: None,
@@ -8651,6 +8657,7 @@ impl Schnauz {
                                         CloudSync::Local,
                                         true,        // accepts drops (move into parent)
                                         None,        // never renamed
+                                        None,        // parent is never version-marked
                                         cx.listener({
                                             let parent = parent.clone();
                                             move |this, _: &ClickEvent, _, cx| {
@@ -8732,6 +8739,7 @@ impl Schnauz {
                                     cloud,
                                     entry.is_folder(), // ordinary folders accept drops
                                     rename_text,       // editable name when renaming
+                                    this.version_marker(pane, &ctx_target),
                                     cx.listener(move |this, ev: &ClickEvent, window, cx| {
                                         this.click_entry(pane, target.clone(), is_dir, false, ev, window, cx);
                                     }),
@@ -8868,7 +8876,8 @@ impl Schnauz {
                                 let ctx_active = this.is_ctx_target(&target);
                                 let edit = this.rename_text(pane, &target, cx);
                                 let cloud = if this.tab(pane).remote.is_none() { this.cloud_state(&target, is_dir, cx) } else { CloudSync::Local };
-                                cells.push(icon_cell(pane, name, target, is_dir, selected, ctx_active, cell_w, edit, cloud, cx));
+                                let marker = this.version_marker(pane, &target);
+                                cells.push(icon_cell(pane, name, target, is_dir, selected, ctx_active, cell_w, edit, marker, cloud, cx));
                             }
                             out.push(div().flex().w_full().px_2().children(cells).into_any_element());
                         }
@@ -8990,6 +8999,7 @@ impl Render for Schnauz {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_local_listings(cx);
         if self.apply_project_file_filters() && self.palette_open { self.refresh_file_search(cx); }
+        self.sync_version_marks();
         self.publish_project_activity(cx);
         native_file_drag::install(window);
         if std::mem::take(&mut self.dismiss_space_map) { self.close_space_map(cx); }
@@ -10267,6 +10277,7 @@ fn file_row(
     // with (text, cursor char-index, selection-anchor char-index, invalid).
     // Invalid names render the field in red (the pane shows the reason).
     rename_text: Option<rename_ui::EditText>,
+    marker: Option<u32>,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_name_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_right: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
@@ -10281,7 +10292,7 @@ fn file_row(
     let name = &entry.name;
     let name_el = div().id(("entry-name", key)).flex_1().min_w_0().flex()
         .when(cloud != CloudSync::Local, |d| d.relative().children(ui_checks::probe("cloud-name-text")))
-        .child(rename_ui::entry_name(name, rename_text))
+        .child(rename_ui::marked_entry_name(name, rename_text, marker))
         .on_click(on_name_click);
 
     let name_cell = div()
@@ -10325,6 +10336,7 @@ fn icon_cell(
     ctx_active: bool,
     cell_w: f32,
     edit: Option<rename_ui::EditText>,
+    marker: Option<u32>,
     cloud: CloudSync,
     cx: &Context<Schnauz>,
 ) -> AnyElement {
@@ -10394,7 +10406,7 @@ fn icon_cell(
                 .min_w_0()
                 .flex()
                 .text_size(px(UI_SMALL_FONT_SIZE))
-                .child(rename_ui::entry_name(&name, edit))
+                .child(rename_ui::marked_entry_name(&name, edit, marker))
                 .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                     this.click_entry(pane, name_t.clone(), is_dir, true, ev, window, cx);
                     this.suppress_entry_click = true;

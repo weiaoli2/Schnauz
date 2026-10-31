@@ -1,6 +1,6 @@
 # Schnauz
 
-Last updated: 2026-10-30
+Last updated: 2026-10-31
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -2420,3 +2420,229 @@ with a corrective explanation crediting his live verification. Release notes
 were updated accordingly; binaries, tag and asset checksums are unchanged.
 Issue #2 remains open because returning to preserved search results/selection
 after Show in Folder is not implemented; recent-search recall reruns a search.
+
+
+## Local 0.9.23 — identify SMB copy error 45 by operation
+
+Oliver reports that Finder can copy into the mounted SMB folder while Schnauz
+fails with OS error 45, and reopening Schnauz does not fix it. The failure is
+therefore not established as a startup-tab-only problem. Existing saved network
+references are read/write; alternative suffixed mount roots exist, but their
+presence does not prove a wrong mount or establish the failing syscall.
+
+The existing copy path reports one generic “Couldn't finish” error for staging,
+data/permission copy, destination reopening and exclusive rename finalization.
+These can fail separately. Add operation context to each failure and fixed
+operation-only diagnostics. This is a diagnostic build, not a claimed fix:
+rename_exclusive and the no-overwrite/cancellation/owned-stage rules stay intact.
+In particular EXDEV handling still reads the original syscall error before any
+message wrapping. Do not reconnect/unmount/remount a share or change credentials,
+write permissions, source/destination files or live sessions to diagnose it.
+
+The footer/tooltip now identifies temporary-folder creation, file creation,
+copying data/permissions, date-reopen and finalizing without overwriting. Private
+session diagnostics record only a fixed failed-operation label, never paths,
+filenames, server/account identities, file contents or credentials. Oliver can
+retry his normal operation and report the full footer message; no live SMB,
+app/helper/test execution is performed by Codex under the current restriction.
+Rust/ui-checks fixtures are compiled only. No commit or publication requested.
+
+
+0.9.23 verification completed: optimized build, Rust/ui-checks fixture compilation,
+bundle allowlist, helper architecture and deep/strict Apple Development signatures
+passed. Tests were compiled, not executed. The signed app is safely staged for
+./update.sh after a deliberate quit. Every recorded installed live-bundle file
+retains its inode/device/hash. No live SMB file operation, account/helper/app/test
+launch, reconnect/remount or terminal restart ran. Logs:
+`.build-cache/0.9.23-transfer-{test-compile,build}.log`; receipt:
+`.build-cache/0.9.23-transfer-verification.json`. Await the operation-specific
+message from Oliver's next small-file copy attempt. No commit/publication.
+
+
+## Local 0.9.24 — filename version text marker
+
+Oliver requested Mark: On / Off / Settings… beside Show and Filter, highlighting
+the newest filename version with text-marker colors. A marker backgrounds only
+the filename; file-row/cell selection and inline rename retain their own styling.
+
+Each project's Sidebar.version_mark stores its independent enable flag, patterns
+and pastel color in projects.json through the existing ordered persistence path.
+Legacy/new projects default Off with vX, vX.X and vX.X.X patterns and yellow.
+Settings accepts up to eight comma-separated patterns (X = numeric component),
+case-insensitive prefixes such as vX or revX, plus Yellow/Green/Pink/Blue/Orange/
+Lavender choices with native color dots. Save captures the project and rejects
+stale changes; Cancel retains the previous flag/patterns/color. The native editor
+shares normal clipboard shortcuts and modal/native-preview suppression.
+
+Filename parsing accepts space/underscore/dash/dot before a final version token,
+immediately before the file extension (or at the end of extensionless names).
+Compare whole numeric components, not lexical order or floating-point numbers:
+v10 > v2, v1.10 > v1.9; leading/trailing zero forms such as v02 and v2.0 tie.
+Group by parent folder, base name and extension, ignoring case. Only groups of
+at least two recognized files receive marks; all tied highest files are marked.
+Folders and parent rows are excluded. No files are renamed/changed/read and no
+extra folder/recursive scans run. Normal views compare loaded siblings even if
+some are hidden by a view filter; recursive search compares its accumulated
+results within each containing folder/type and updates as results arrive.
+
+Tab listing/rule changes refresh cached winner sets; rendering uses cache-only
+path lookups. Search caches by search generation, result count and project rule.
+List, Icons and search share the marker label renderer. Rules propagate across
+windows and active/parked project tabs without changing selection, terminals,
+filtering or sort order. The control row retains 30 pt height and horizontal
+scrolling when narrow. This build retains 0.9.23's operation-specific SMB errors;
+the copy report is still awaiting the diagnostic message, not claimed fixed.
+
+Rust/ui-checks regression fixtures compile only under the live-session restriction.
+They cover numeric/dotted/large versions, separators/case/Unicode, equal versions,
+extensionless names, folder/type scope, invalid patterns, persistence/defaults,
+listing updates, folders excluded and selection/name preservation. No application,
+helper or test executable is launched. Stage a normal signed local update for
+Oliver's manual feature feedback; no commit, tag or release is requested.
+
+
+0.9.24 verification completed: optimized build, Rust/ui-checks fixture compilation,
+bundle allowlist, helper architectures and deep/strict Apple Development
+signatures passed. The pending app was checked again after staging for version,
+identity and signature. All recorded live installed file inodes/device/hashes are
+unchanged. No app, helper or test binary was executed and no live account/SMB
+operation was performed. Stage is ready for ./update.sh after a deliberate quit;
+await Oliver's manual Mark controls/settings/color/names feedback. Logs:
+`.build-cache/0.9.24-version-mark-{test-compile,build}.log`; receipt:
+`.build-cache/0.9.24-version-mark-verification.json`. No commit or publication.
+
+
+## Local 0.9.25 — independent marking rules for files and folders
+
+Oliver expanded Mark settings to multiple type/pattern/color rows, then requested
+exactly six text-marker choices as appealing round dots, and separate Files /
+Folders targets. Each project now stores enabled + ordered MarkRow values in
+Sidebar.version_mark. Each row contains target (files/folders), kind (newest
+version/version match/name ending), patterns and one of the same six pastel
+colors. Old 0.9.24 enabled/patterns/color settings migrate to one Files/Newest
+version row, preserving their values. Explicitly empty rows remain empty.
+
+The native standalone modal editor has aligned Apply to / Type / Pattern(s) /
+Marker color / Priority columns in a vertically scrolling table. Add Rule,
+per-row Remove and Up/Down ordering keep drafts until Save. Colors are six
+clickable, Retina round swatches; the selected color gets a blue ring immediately.
+No full color picker or extra colors are offered. Native fields retain ordinary
+clipboard shortcuts and all changes stay bound to the captured project with the
+existing stale-save check. Cancel changes no settings. Add/remove/reorder end
+and retire the old native modal session before rebuilding it with retained drafts.
+The editor handles up to 16 rules and 8 comma-separated patterns per row.
+
+Newest version retains numeric comparison and sibling/base/type groups with
+at least two matches. Version match can mark all tokens matching vX / vX.X,
+or specific versions such as v1 / v2.1. Name ending matches whole-name literal
+suffixes (e.g. .pdf, _final.ai, _archive), ignoring case; an initial * is accepted
+and normalized away. Files and folders are independent. Folder versions use
+the whole name, so v1.10 is not mistaken for a file extension. Topmost matching
+row supplies the filename background color. Selection and inline rename keep
+their own styling. Cached per-tab/search path-to-color maps replace the previous
+single-color winner set; listing/rule/search updates rebuild them without any
+extra directory scan, content read, transfer, native tag write or filesystem change.
+
+Rust/ui-checks fixtures compile only under the current live-session restriction.
+New cases cover mixed colors and overlapping priorities, separate files/folders,
+folder decimal versions, exact and wildcard version matches, literal endings,
+legacy migration, empty-rule preservation and new-format roundtrips. Existing
+numeric ordering, tie, grouping and selection tests remain. This local build also
+retains the pending SMB copy diagnostics. No app/helper/test execution or live
+account operation, commit or publication is requested/performed for this feature.
+
+
+0.9.25 verification completed: optimized normal build, Rust/ui-checks fixture
+compilation, every helper's architecture, bundle allowlist and deep/strict Apple
+Development signatures passed. The pending version/identity/allowlist/signature
+were independently rechecked after staging. All recorded installed live files
+retain their inode/device/hash; the running app and all sessions stay untouched.
+No app/helper/test binary or live account operation was executed. Ready for
+./update.sh after a deliberate quit, then Oliver's manual row-editor, color-dot,
+file/folder matching and priority feedback. Logs:
+`.build-cache/0.9.25-mark-rules-{test-compile,build}.log`; receipt:
+`.build-cache/0.9.25-mark-rules-verification.json`. No commit or publication.
+
+
+## Local 0.9.26 — Todoist composer insertion caret
+
+Oliver reports no visible caret while typing the Add Task title or description.
+The native form set foreground/background colors and its appearance but left
+insertion-point colors at AppKit defaults. Set the description NSTextView caret
+to the captured theme ink and give the composer window an owned NSTextView field
+editor for its title/date/labels. NSWindowDelegate supplies it only for these
+editable fields; normal editing/font/selection behavior remains native.
+Reapply the explicit caret color and restart native blinking when a field or
+description starts editing. This is focus-driven, not a redraw timer. The
+partially saved retry form keeps its text fields and description locked.
+
+Native offline layout fixtures now check the actual window.fieldEditor path,
+light/dark caret colors, reassigning an editor after a color reset, description
+focus reapplication, unchanged draft text and locked partial-save fields. Compile
+these fixtures without executing them under the current live-session restriction;
+no task/API/Keychain operations or app/helper/test launches are permitted for QA.
+Build the normal signed update for Oliver's manual typing/caret check. Keep Mark
+rule rows, pending SMB copy diagnostics and all live app/terminal/SSH sessions.
+No commit, tag or public release requested.
+
+
+0.9.26 verification: native composer regression fixtures compiled successfully
+without execution. Optimized normal build, every helper architecture, strict
+bundle allowlist and deep/strict Apple Development signatures passed; todoistctl
+and the pending version/identity/signature were checked again after staging.
+All recorded installed live-bundle inodes/device/hashes are unchanged. No
+app/helper/test executable or live task/account/Keychain operation was run.
+The update is ready for ./update.sh after a deliberate quit; await Oliver's
+manual title/description typing-caret check. Logs:
+`.build-cache/0.9.26-composer-fixture-compile.log`,
+`.build-cache/0.9.26-composer-caret-build.log`; receipt:
+`.build-cache/0.9.26-composer-caret-verification.json`. No commit/publication.
+
+
+## Local 0.9.27 — confirmed SMB exclusive-rename failure
+
+Oliver retried on installed 0.9.26. The newest local session records
+`transfer failed: exclusive copy finalization`, confirming that data/permissions
+copy and staging succeeded before the destination volume rejected RENAME_EXCL
+with reported OS error 45. This supersedes the earlier unconfirmed hypothesis;
+there is no evidence that restored tabs or SMB authentication caused this error.
+
+`src/file_transfer.rs` keeps the normal exclusive rename fast path. ENOTSUP or
+ENOSYS triggers exclusive creation from the completed private stage: create_new
+file handles, mkdir and symlink, with no ordinary rename or check-then-overwrite
+fallback. Regular-file writes retain their reserved handle, preserve permissions
+and modification dates, and check cancellation between 1 MiB blocks. Folders
+and links are supported. The additional byte pass is included in footer progress.
+Moves on volumes without exclusive rename follow copy then identity-checked
+original removal, so failed copies retain originals.
+
+Fallback destinations become visible during copying; whole-tree atomicity is
+not available with these SMB primitives. Cleanup records every created object's
+dev/inode, removes children first, and removes directories only when empty.
+Other clients' existing, added or replaced files are preserved. Unsupported
+exclusive creation still reports an error rather than overwriting. Regressions
+cover simulated ENOTSUP for copy/move trees and dangling links, racing file/folder/
+symlink targets, simultaneous publishers, cancellation, failed-copy cleanup and
+other clients' additions/replacements. Current QA compiles fixtures without
+executing them; no live SMB transfer or account access is performed.
+
+0.9.27 verification: Rust/ui-checks test compilation and optimized build passed.
+Deep/strict certificate signature and bundle allowlist passed independently on
+the pending 0.9.27 app. All running bundle files retain the recorded device IDs,
+inodes and SHA-256 values. Apply after a deliberate quit with `./update.sh`,
+then retry the SMB copy. No fixtures/app/helper binaries were run, no mounts
+were changed and no commit/release was made. Logs:
+`.build-cache/0.9.27-smb-test-compile.log`,
+`.build-cache/0.9.27-smb-build.log`; receipt:
+`.build-cache/0.9.27-smb-verification.json`.
+
+
+## Public 0.9.27 release requested — 2026-10-31
+
+Oliver confirmed that SMB copying now works and explicitly requested a new
+GitHub release. Publish current 0.9.27 source and both architecture installers
+with Mark rules and Todoist caret changes since 0.9.22. Use the established
+Apple Development / unnotarized early-prerelease policy. Static compile/sign/
+package checks only; live SMB success is Oliver's confirmation. Preserve
+all live windows, terminals, mounts, credentials and existing release tags.
+Exclude website/, video/ and test.csv from the source commit/archive.

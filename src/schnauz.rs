@@ -311,6 +311,7 @@ impl Schnauz {
                     .children(buttons),
             )
             .child(self.render_project_file_filter(pane,cx))
+            .child(self.render_version_mark(pane,cx))
             .when(tab.remote.is_some(), |d| d.child(
                 toolbar_icons::toolbar_button("reload-folder", pane, Icon::Reload, false, true, "Reload SSH folder · ⌘R")
                     .w(px(24.)).h(px(22.))

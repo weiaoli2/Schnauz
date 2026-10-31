@@ -12,7 +12,7 @@ thread_local! {
 
 /// Native, full-colour menu images, cached at Retina resolution. Non-template
 /// images retain their tag colour when AppKit highlights a menu row.
-fn tag_dot(color: u32) -> Option<Retained<NSImage>> {
+pub(super) fn tag_dot(color: u32) -> Option<Retained<NSImage>> {
     TAG_DOTS.with(|cache| {
         if let Some(image) = cache.borrow().get(&color) { return Some(image.clone()); }
         let rep = unsafe {

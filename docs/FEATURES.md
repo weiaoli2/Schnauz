@@ -744,3 +744,38 @@ free-space figures keep their periodic refresh. Right-click any drive for Info
 drives also have an Eject menu item and a small eject button beside their name.
 Other drives omit both controls. Eject uses the normal macOS operation, retains
 busy-drive errors and never forces an unmount or ends a terminal.
+
+
+### Mark newest filename versions (local 0.9.24)
+
+Beside Show and Filter, **Mark: On / Off / Settings…** marks the highest filename
+version with a pastel background behind its name. Settings belongs to the current
+project and offers Yellow, Green, Pink, Blue, Orange or Lavender. Mark starts Off.
+
+Use patterns such as **vX**, **vX.X**, **vX.X.X** or **revX**; X stands for a whole
+number. Patterns ignore case. Names such as `Drawing v1.ai`, `Drawing_v2.ai` and
+`Drawing-v10.ai` form one group, with v10 newest. Dotted versions compare by
+component: v1.10 is newer than v1.9. Each folder and extension is a separate group;
+groups need at least two versioned files, and tied highest versions are all marked.
+Marking works in List, Icons and search results, using loaded names without an
+additional folder scan or any change to your files.
+
+
+### Marking rules for Files and Folders (local 0.9.25)
+
+Mark → Settings… contains independent rule rows with **Files / Folders**, a
+rule type, comma-separated patterns and **six round text-marker color dots**.
+Click a dot to select its color. Add Rule creates another row; − removes one;
+↑ / ↓ changes priority. The topmost matching rule determines the color.
+
+| Type | Example patterns | Marks |
+| --- | --- | --- |
+| Newest version | vX, vX.X | The highest numeric version in each matching sibling group |
+| Version match | v1, v2.1, vX.X | Every item matching those version tokens |
+| Name ending | .pdf, _final.ai, _archive | Names ending with the literal text |
+
+File and folder rules stay separate, so the same pattern can have different
+colors for each. Folder version numbers can contain dots. All matching ignores
+case. Save stores the ordered rows for the project; Cancel preserves its settings.
+The original one-rule Mark setting migrates automatically. These are visual name
+markers: they do not set Finder tags, change files or scan extra folders.

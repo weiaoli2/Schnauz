@@ -185,6 +185,8 @@ pub(crate) struct Sidebar {
     pub recent_searches: Vec<RecentSearch>,
     #[serde(skip_serializing_if = "crate::project_file_filter::Rule::is_default")]
     pub file_filter: crate::project_file_filter::Rule,
+    #[serde(skip_serializing_if = "crate::version_mark::Rule::is_default")]
+    pub version_mark: crate::version_mark::Rule,
     pub shortcuts: Vec<Shortcut>,
     pub web_links: Vec<WebLink>,
     pub servers: Vec<SftpServer>,
@@ -322,6 +324,7 @@ impl<'de> Deserialize<'de> for Sidebar {
         struct Stored {
             recent_searches: Vec<RecentSearch>,
             file_filter: crate::project_file_filter::Rule,
+            version_mark: crate::version_mark::Rule,
             shortcuts: Vec<Shortcut>,
             web_links: Vec<WebLink>,
             locations: Vec<PathBuf>,
@@ -336,6 +339,7 @@ impl<'de> Deserialize<'de> for Sidebar {
         let mut sidebar = Self {
             recent_searches: Vec::new(),
             file_filter: old.file_filter,
+            version_mark: old.version_mark,
             shortcuts: Vec::new(),
             web_links: old.web_links,
             servers: old.servers,

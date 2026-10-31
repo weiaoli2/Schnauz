@@ -22,6 +22,22 @@ for dark in [false, true] {
   precondition(form.name.frame.width > 450, "Task title needs readable width")
   precondition(form.date.frame.width >= 150 && form.date.frame.height >= 24, "Date control must not collapse")
   precondition(form.details.frame.width > 400, "Description text must have a usable width")
+  precondition(form.details.insertionPointColor.isEqual(form.ink), "Description caret follows the themed text color")
+  for field in [form.name, form.date, form.labels] {
+    let editor = form.window.fieldEditor(true, for: field) as! NSTextView
+    precondition(editor === form.inputEditor && editor.isFieldEditor, "Editable fields use the owned field editor")
+    precondition(editor.insertionPointColor.isEqual(form.ink), "Field-editor caret contrasts with the themed background")
+    // Simulate AppKit resetting editor attributes between fields; assigning
+    // the field editor again must restore the visible caret.
+    editor.insertionPointColor = .clear
+    _ = form.windowWillReturnFieldEditor(form.window, to: field)
+    precondition(editor.insertionPointColor.isEqual(form.ink))
+  }
+  form.details.insertionPointColor = .clear
+  form.textDidBeginEditing(Notification(name: NSText.didBeginEditingNotification, object: form.details))
+  precondition(form.details.insertionPointColor.isEqual(form.ink), "Description focus restores its caret color")
+  precondition(form.name.stringValue == draft.content && form.details.string == draft.description,
+    "Caret styling preserves the task draft")
   let project = descendants(content).compactMap { $0 as? NSTextField }.first { $0.stringValue == "# Project Alpha" }!
   precondition(!project.isEditable && project.frame.width >= 150, "Captured project stays readable and locked")
   precondition(form.priority.indexOfSelectedItem == 3, "Default P4 matches API's normal priority")
@@ -32,7 +48,9 @@ for dark in [false, true] {
   precondition(!retry.name.isEnabled && !retry.date.isEnabled && !retry.priority.isEnabled,
     "A partial-save retry cannot change the task's destination/details")
   precondition(retry.submit.title == "Retry options", "Retry is clearly distinguished from new creation")
+  precondition(!retry.inputEditor.isEditable && !retry.details.isEditable,
+    "Caret styling must not unlock saved task fields")
 }
-print("PASS compact light/dark composer layout, locked project, readable fields and partial-save retry state; no windows shown or accounts contacted")
+print("PASS compact light/dark composer layout, themed title/description carets, locked project, readable fields and partial-save retry state; no windows shown or accounts contacted")
   }
 }

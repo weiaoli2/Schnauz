@@ -48,18 +48,18 @@ Folder preferences live in central settings, rather than scattering configuratio
 files through your projects. Todoist and Nextcloud are optional; their credentials
 stay in macOS Keychain.
 
-## Download for Mac — 0.9.22 preview
+## Download for Mac — 0.9.27 preview
 
 **macOS 14 Sonoma or later.** Choose the build for your Mac:
 
 | Mac | Download |
 | --- | --- |
-| Apple Silicon — M1 and newer | [Apple Silicon DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.9.22/Schnauz-0.9.22-macos-arm64.dmg) |
-| Intel | [Intel DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.9.22/Schnauz-0.9.22-macos-x86_64.dmg) |
+| Apple Silicon — M1 and newer | [Apple Silicon DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.9.27/Schnauz-0.9.27-macos-arm64.dmg) |
+| Intel | [Intel DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.9.27/Schnauz-0.9.27-macos-x86_64.dmg) |
 
 For an update, finish any terminal/SSH work and **quit Schnauz before replacing it**.
 Open the disk image and drag **Schnauz.app** to **Applications**. Checksums and
-release notes accompany the [release](https://github.com/weiaoli2/Schnauz/releases/tag/v0.9.22).
+release notes accompany the [release](https://github.com/weiaoli2/Schnauz/releases/tag/v0.9.27).
 Explore the app on [TechGuyZone](https://techguyzone.com/apps/).
 
 This is an **early preview**, signed with an Apple Development certificate and

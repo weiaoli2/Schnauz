@@ -928,7 +928,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   moves use `src/file_transfer.rs`: private staging, exclusive destination
   publication and cancellation during preparation. Never restore check-then-
   overwrite moves or delete a destination the job did not create. A filesystem
-  without exclusive rename must report an error rather than silently clobber.
+  without exclusive rename must use genuinely exclusive destination creation or
+  report an error; never fall back to a check followed by overwriting rename.
 - Folder constructors perform no reads. `reload_pane` loads both listing passes
   on owned workers, with tab identity/generation checks and cancellation.
   Parked terminal cwd updates mark listings dirty; load when their tab is shown.
@@ -1012,3 +1013,64 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   notes are superseded. Attribute this runtime evidence to Oliver's workflow,
   not to automated tests. Issue #2's preserved-search-results return remains
   unimplemented and open; ordinary recent-search recall is a separate feature.
+
+
+- Local 0.9.23 diagnoses the SMB error-45 report with operation-specific footer
+  errors and fixed, nonsecret diagnostic labels. Finder copying works and app
+  reopening does not resolve the report; neither mount restoration nor exclusive
+  rename is a confirmed cause yet. Keep no-overwrite transfer safety, existing
+  mounts and credentials unchanged. Compile/sign/stage only; Oliver retries the
+  live copy. No further release/commit is requested.
+
+
+- Local 0.9.24 adds per-project Mark: On / Off / Settings… next to Show/Filter.
+  Use filename-only numeric version suffixes (default vX, vX.X, vX.X.X), with
+  spaces/underscores/dashes/dots, separate parent-folder/base/extension groups,
+  and all highest ties marked when a group contains at least two files. Default
+  Off, pastel yellow; native settings offers six text-marker colors. Background
+  only the filename, retaining readable text, real selection and inline rename.
+  Persist centrally in Sidebar.version_mark, with captured-project/stale-save
+  guards. Cache winner sets on listing/rule/search-result changes; never scan
+  subfolders, read files or mutate them for marks. List/Icons/search agree.
+  Compile/sign/stage only; retain pending SMB diagnostics and all live sessions.
+
+
+- Local 0.9.25 supersedes the single-rule Mark editor with ordered per-project
+  rows: Files/Folders target, Newest version / Version match / Name ending,
+  comma-separated patterns and one of exactly six pastel text-marker colors.
+  Display six clickable round swatches with a selected ring for every row.
+  Add/remove/reorder drafts, Save atomically, Cancel unchanged; first matching
+  row wins overlaps. Retain old single-rule settings through read migration and
+  preserve explicitly empty rows. Folder versions use full folder names. Cache
+  per-path colors for List/Icons/search; no file changes or extra scans. Retain
+  SMB diagnostics, native-modal guards and all live sessions. Compile/sign/stage
+  only; do not execute apps/helpers/test binaries or publish without a request.
+
+
+- Local 0.9.26: Todoist Add Task title/description carets follow the captured
+  theme ink explicitly. The composer supplies its own native field editor for
+  editable title/date/labels and reapplies caret color/blinking on editing focus.
+  Preserve native fonts/selection, task drafts, routing and locked partial-save
+  retry state. Compile/sign/stage only; no account or native-runtime QA launches.
+
+
+- Local 0.9.27: Oliver's live 0.9.26 diagnostic log confirms SMB copy error 45
+  at exclusive copy finalization, after staging data succeeds. On ENOTSUP/ENOSYS
+  only, publish from the private stage using create_new file handles, exclusive
+  mkdir/symlink and cancellable copying; never use ordinary overwriting rename.
+  Same-volume moves lacking exclusive rename use copy then original-identity
+  recheck/removal. Keep existing targets untouched. Track every created object's
+  dev/inode; clean children first, remove only owned files and empty directories,
+  preserving other clients' added/replaced objects. Fallback progress includes
+  the second data pass. This fallback is not atomic whole-tree publication.
+  Compile/sign/stage only; Oliver verifies the real SMB retry. Preserve mounts,
+  live windows/PTYs, credentials and all 0.9.26 features. No commit/release.
+
+
+- Oliver confirmed the SMB copy works in 0.9.27 and requested a new public
+  GitHub release on 2026-10-31. This supersedes the no-release notes above.
+  Publish 0.9.27 source, both signed architecture DMGs, exact MPL sources and
+  checksums as an Apple Development-signed, unnotarized early prerelease.
+  Include Mark rules and Todoist caret changes since 0.9.22. Retain compile/
+  sign/package-only QA, attribute SMB live verification to Oliver, exclude
+  website/video/test.csv and preserve every live session and existing tag/asset.

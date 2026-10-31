@@ -32,7 +32,7 @@ define_class!(
         }
     }
 );
-fn editor_field(input: &str, mtm: objc2::MainThreadMarker) -> objc2::rc::Retained<NSTextField> {
+pub(super) fn editor_field(input: &str, mtm: objc2::MainThreadMarker) -> objc2::rc::Retained<NSTextField> {
     let frame = objc2_foundation::NSRect::new(
         objc2_foundation::NSPoint::new(0., 0.),
         objc2_foundation::NSSize::new(480., 28.),

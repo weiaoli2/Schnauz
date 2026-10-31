@@ -1,8 +1,19 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Current release: **v0.9.22**, public Apple Silicon + Intel early preview.
-Previous published release: **v0.8.9**.
+Current release: **v0.9.27**, public Apple Silicon + Intel early preview.
+Previous published release: **v0.9.22**.
+
+## Authorized release — 0.9.27 (2026-10-31)
+
+Oliver confirmed the SMB copy fix and requested publication. Publish current
+0.9.27 with Mark rule rows, Files/Folders scopes, six round marker colors and
+Todoist composer caret fixes. Keep Apple Silicon + Intel installers, exact MPL
+sources and checksums together. Apple Development signed, not notarized, early
+prerelease. Compile/sign/package-only verification; no new runtime/UI/Intel
+hardware tests. Oliver's real SMB copy confirmation is separate runtime evidence.
+Exclude website/, video/ and test.csv. Preserve all existing tags/assets and
+live app bundles/windows/PTYs/SSH; do not restart or replace the live app.
 
 ## Published release — 0.9.22
 
