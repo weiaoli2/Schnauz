@@ -1074,3 +1074,15 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Include Mark rules and Todoist caret changes since 0.9.22. Retain compile/
   sign/package-only QA, attribute SMB live verification to Oliver, exclude
   website/video/test.csv and preserve every live session and existing tag/asset.
+
+
+- During authorized release preparation Oliver requested a per-rule Newest
+  version checkbox: “Mark also if only one version”. Deliver as 0.9.28 and
+  continue the requested GitHub release with this change, superseding 0.9.27
+  publication preparation (no 0.9.27 tag/release was published). Default Off
+  preserves existing behavior. Save/migrate the bool per row; include single
+  matching versioned Files/Folders when enabled while retaining numeric winner
+  selection and all ties for larger groups. Never mark unversioned names.
+  Native checkbox is enabled only for Newest version and retains its draft
+  value across type changes, row reorder and validation. Keep six round colors
+  and captured-project/modal safety. Compile/sign/package-only QA persists.

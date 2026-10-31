@@ -2646,3 +2646,18 @@ Apple Development / unnotarized early-prerelease policy. Static compile/sign/
 package checks only; live SMB success is Oliver's confirmation. Preserve
 all live windows, terminals, mounts, credentials and existing release tags.
 Exclude website/, video/ and test.csv from the source commit/archive.
+
+
+## 0.9.28 — single-version Mark option and continued release
+
+During the requested GitHub release Oliver asked to include lone versions.
+Each Newest version row now offers “Mark also if only one version”. It saves
+`mark_single_version` per row, defaults Off for old/new rules, supports Files
+and Folders independently, and preserves numeric winner/tie rules. Other rule
+types disable the checkbox, retaining its draft value when switching back.
+The native row includes a second compact line; scroll viewport stays bounded.
+Fixtures cover both targets, old-settings migration, persistence, independent
+rows, highest-only multi-version groups and unversioned exclusions. Compile
+fixtures without running them under the existing session-preservation rules.
+Continue publication as 0.9.28 with all changes since 0.9.22. 0.9.27 packaging
+was superseded before any push/tag/draft/publication; never publish those assets.

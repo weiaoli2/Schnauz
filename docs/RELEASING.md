@@ -1,8 +1,16 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Current release: **v0.9.27**, public Apple Silicon + Intel early preview.
+Current release: **v0.9.28**, public Apple Silicon + Intel early preview.
 Previous published release: **v0.9.22**.
+
+## Authorized release — 0.9.28 (2026-10-31)
+
+Oliver added the single-version checkbox request during 0.9.27 preparation.
+Continue the requested release as 0.9.28 with that change and all work since
+0.9.22. No 0.9.27 tag/release was published. Retain both architecture DMGs,
+exact MPL sources, checksums, early-prerelease signing disclosures, compile/
+sign/package-only QA and preserved live sessions. Supersede 0.9.27 artifacts.
 
 ## Authorized release — 0.9.27 (2026-10-31)
 

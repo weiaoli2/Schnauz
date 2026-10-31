@@ -53,6 +53,7 @@ pub(crate) struct MarkRow {
     pub kind: Kind,
     pub patterns: Vec<String>,
     pub color: u32,
+    pub mark_single_version: bool,
 }
 impl Default for MarkRow {
     fn default() -> Self {
@@ -61,6 +62,7 @@ impl Default for MarkRow {
             kind: Kind::NewestVersion,
             patterns: vec!["vX".into(), "vX.X".into(), "vX.X.X".into()],
             color: PALETTE[0].1,
+            mark_single_version: false,
         }
     }
 }
@@ -116,6 +118,7 @@ impl MarkRow {
             kind,
             patterns,
             color,
+            mark_single_version: false,
         })
     }
     fn marker_color(&self) -> u32 {
@@ -261,11 +264,12 @@ impl Version {
 }
 
 /// Compare sibling files of the same base name and extension. A lone versioned
-/// file is left alone; all numerically tied highest versions are marked.
+/// file is optional; all numerically tied highest versions are marked.
 fn newest(
     patterns: &[String],
     files: impl IntoIterator<Item = PathBuf>,
     folders: bool,
+    mark_single_version: bool,
 ) -> HashSet<PathBuf> {
     let patterns: Vec<_> = patterns
         .iter()
@@ -325,7 +329,7 @@ fn newest(
     }
     groups
         .into_values()
-        .filter(|(count, _, _)| *count > 1)
+        .filter(|(count, _, _)| mark_single_version || *count > 1)
         .flat_map(|(_, _, paths)| paths)
         .collect()
 }
@@ -403,6 +407,7 @@ pub(super) fn marks(
                 &row.patterns,
                 files.iter().cloned(),
                 row.target == Target::Folders,
+                row.mark_single_version,
             )
             .into_iter()
             .collect(),
@@ -837,5 +842,57 @@ mod tests {
         }
         let sidebar: projects::Sidebar = serde_json::from_str("{}").unwrap();
         assert_eq!(sidebar.version_mark, Rule::default());
+    }
+
+    #[test]
+    fn single_version_option_is_per_rule_and_keeps_only_highest_versions() {
+        for target in [Target::Files, Target::Folders] {
+            let mut row = MarkRow::parse(target, Kind::NewestVersion, "vX", PALETTE[0].1).unwrap();
+            let folder = target == Target::Folders;
+            let items = ["Only_v1", "Pair_v1", "Pair_v2", "ordinary"]
+                .map(|name| (PathBuf::from(name), folder));
+            let rule = |row| Rule {
+                enabled: true,
+                rows: vec![row],
+            };
+            assert_eq!(
+                marks(&rule(row.clone()), items.clone())
+                    .keys()
+                    .cloned()
+                    .collect::<HashSet<_>>(),
+                HashSet::from([PathBuf::from("Pair_v2")])
+            );
+            row.mark_single_version = true;
+            let enabled = rule(row);
+            assert_eq!(
+                marks(&enabled, items)
+                    .keys()
+                    .cloned()
+                    .collect::<HashSet<_>>(),
+                HashSet::from([PathBuf::from("Only_v1"), PathBuf::from("Pair_v2")])
+            );
+            let saved: Rule =
+                serde_json::from_str(&serde_json::to_string(&enabled).unwrap()).unwrap();
+            assert_eq!(saved, enabled);
+        }
+        let old: MarkRow = serde_json::from_str(r#"{"patterns":["vX"]}"#).unwrap();
+        assert!(!old.mark_single_version);
+        let mut first = MarkRow::default();
+        first.mark_single_version = true;
+        let mut second = MarkRow::default();
+        second.target = Target::Folders;
+        let rule = Rule {
+            enabled: true,
+            rows: vec![first, second],
+        };
+        let marked = marks(
+            &rule,
+            [
+                (PathBuf::from("File_v1"), false),
+                (PathBuf::from("Folder_v1"), true),
+            ],
+        );
+        assert!(marked.contains_key(Path::new("File_v1")));
+        assert!(!marked.contains_key(Path::new("Folder_v1")));
     }
 }

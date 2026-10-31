@@ -756,7 +756,7 @@ Use patterns such as **vX**, **vX.X**, **vX.X.X** or **revX**; X stands for a wh
 number. Patterns ignore case. Names such as `Drawing v1.ai`, `Drawing_v2.ai` and
 `Drawing-v10.ai` form one group, with v10 newest. Dotted versions compare by
 component: v1.10 is newer than v1.9. Each folder and extension is a separate group;
-groups need at least two versioned files, and tied highest versions are all marked.
+groups need at least two versioned files by default, and tied highest versions are all marked.
 Marking works in List, Icons and search results, using loaded names without an
 additional folder scan or any change to your files.
 
@@ -779,3 +779,12 @@ colors for each. Folder version numbers can contain dots. All matching ignores
 case. Save stores the ordered rows for the project; Cancel preserves its settings.
 The original one-rule Mark setting migrates automatically. These are visual name
 markers: they do not set Finder tags, change files or scan extra folders.
+
+
+### Single-version highlighting (0.9.28)
+
+Each Newest version rule has **Mark also if only one version**. Enable it to
+mark a lone matching versioned file or folder as well as the highest version
+in larger groups. This option is saved independently per rule; existing rules
+keep it Off. It is disabled for Version match and Name ending, which already
+match individual items. Ordinary names without a version remain unmarked.

@@ -11,6 +11,7 @@ use objc2_foundation::{NSPoint, NSRect, NSSize};
 struct EditorState {
     colors: RefCell<Vec<u32>>,
     swatches: RefCell<Vec<Vec<Retained<NSButton>>>>,
+    single_checks: RefCell<Vec<Retained<NSButton>>>,
 }
 define_class!(
     #[unsafe(super(NSObject))]
@@ -20,6 +21,12 @@ define_class!(
     struct Actions;
     unsafe impl NSObjectProtocol for Actions {}
     impl Actions {
+        #[unsafe(method(changeKind:))]
+        fn change_kind(&self, sender:&NSPopUpButton) {
+            if let Some(check)=self.ivars().single_checks.borrow().get(sender.tag().max(0) as usize) {
+                check.setEnabled(sender.indexOfSelectedItem()==0);
+            }
+        }
         #[unsafe(method(editRows:))]
         fn edit_rows(&self, sender:&NSButton) {
             let app=NSApplication::sharedApplication(objc2::MainThreadMarker::new().expect("Mark settings on main thread"));
@@ -120,6 +127,7 @@ struct Draft {
     kind: Kind,
     text: String,
     color: u32,
+    mark_single_version: bool,
 }
 impl From<&MarkRow> for Draft {
     fn from(row: &MarkRow) -> Self {
@@ -128,6 +136,7 @@ impl From<&MarkRow> for Draft {
             kind: row.kind,
             text: row.patterns.join(", "),
             color: row.marker_color(),
+            mark_single_version: row.mark_single_version,
         }
     }
 }
@@ -165,10 +174,10 @@ pub(super) fn open(browser: &mut Schnauz, cx: &mut Context<Schnauz>) {
         loop {
             let alert=NSAlert::new(mtm);
             alert.setMessageText(&NSString::from_str(&format!("Mark rules — {name}")));
-            let help="Choose Files or Folders for each rule. Newest version compares numeric suffixes (vX, vX.X); Version match also accepts v1 or v2.1. Name ending matches literal endings such as .pdf, _final.ai or _archive. Newest-version groups need two or more items; equal highest versions are all marked. Topmost matching rule supplies the color. All patterns ignore case. Mark On applies the saved rules.";
+            let help="Choose Files or Folders for each rule. Newest version compares numeric suffixes (vX, vX.X); Version match also accepts v1 or v2.1. Name ending matches literal endings such as .pdf, _final.ai or _archive. Enable ‘Mark also if only one version’ to include a lone versioned item. Equal highest versions are all marked. Topmost matching rule supplies the color. All patterns ignore case. Mark On applies the saved rules.";
             alert.setInformativeText(&NSString::from_str(&error.as_ref().map(|e|format!("{e}\n\n{help}")).unwrap_or_else(||help.into())));
-            let visible=(draft.len().clamp(1,6)*40) as f64;
-            let height=(draft.len().max(1)*40) as f64;
+            let visible=(draft.len().clamp(1,4)*64) as f64;
+            let height=(draft.len().max(1)*64) as f64;
             let content=NSView::initWithFrame(NSView::alloc(mtm),rect(0.,0.,760.,visible+26.));
             for (text,x,width) in [("Apply to",0.,92.),("Type",98.,142.),("Pattern(s)",248.,220.),("Marker color",480.,144.),("Priority",640.,90.)] {
                 content.addSubview(&label(text,rect(x,visible+4.,width,20.),mtm));
@@ -181,11 +190,21 @@ pub(super) fn open(browser: &mut Schnauz, cx: &mut Context<Schnauz>) {
             *target.ivars().colors.borrow_mut()=draft.iter().map(|d|d.color).collect();
             let mut controls=Vec::new();
             for (row,initial) in draft.iter().enumerate() {
-                let y=height-(row+1) as f64*40.+6.;
+                let y=height-(row+1) as f64*64.+30.;
                 let scope=popup(&["Files","Folders"],if initial.target==Target::Files{0}else{1},rect(0.,y,92.,26.),mtm);
                 let kinds=popup(&KINDS.map(Kind::label),KINDS.iter().position(|k|*k==initial.kind).unwrap_or(0),rect(98.,y,142.,26.),mtm);
                 let field=project_file_filter::editor_field(&initial.text,mtm);field.setFrame(rect(248.,y,220.,26.));
                 document.addSubview(&scope);document.addSubview(&kinds);document.addSubview(&field);
+                let single=NSButton::initWithFrame(NSButton::alloc(mtm),rect(248.,y-24.,350.,22.));
+                single.setButtonType(NSButtonType::Switch);
+                single.setTitle(&NSString::from_str("Mark also if only one version"));
+                single.setFont(Some(&NSFont::systemFontOfSize(11.)));
+                single.setState(if initial.mark_single_version{1}else{0});
+                single.setEnabled(initial.kind==Kind::NewestVersion);
+                document.addSubview(&single);
+                target.ivars().single_checks.borrow_mut().push(single.clone());
+                kinds.setTag(row as isize);
+                unsafe{kinds.setTarget(Some(&target));kinds.setAction(Some(objc2::sel!(changeKind:)));}
                 let mut buttons=Vec::new();
                 for (index,(name,color)) in PALETTE.into_iter().enumerate() {
                     let dot=button("",name,(row*6+index) as isize,rect(480.+index as f64*24.,y,24.,26.),&target,true,mtm);
@@ -197,7 +216,7 @@ pub(super) fn open(browser: &mut Schnauz, cx: &mut Context<Schnauz>) {
                 let down=button("↓","Move rule down · lower priority",4000+row as isize,rect(666.,y,24.,26.),&target,false,mtm);
                 down.setEnabled(row+1<draft.len());document.addSubview(&down);
                 document.addSubview(&button("−","Remove rule",2000+row as isize,rect(702.,y,24.,26.),&target,false,mtm));
-                controls.push((scope,kinds,field));
+                controls.push((scope,kinds,field,single));
             }
             if draft.is_empty(){document.addSubview(&label("No rules. Click Add Rule to begin.",rect(0.,8.,700.,24.),mtm));}
             scroll.setDocumentView(Some(&document));content.addSubview(&scroll);alert.setAccessoryView(Some(&content));
@@ -206,10 +225,10 @@ pub(super) fn open(browser: &mut Schnauz, cx: &mut Context<Schnauz>) {
             alert.addButtonWithTitle(&NSString::from_str("Add Rule")).setEnabled(draft.len()<MAX_RULES);
             let appearance=objc2_app_kit::NSAppearance::appearanceNamed(unsafe{if theme().is_light(){objc2_app_kit::NSAppearanceNameAqua}else{objc2_app_kit::NSAppearanceNameDarkAqua}});
             alert.window().setAppearance(appearance.as_deref());
-            if let Some((_,_,field))=controls.get(focus.min(controls.len().saturating_sub(1))) {alert.window().setInitialFirstResponder(Some(field));}
+            if let Some((_,_,field,_))=controls.get(focus.min(controls.len().saturating_sub(1))) {alert.window().setInitialFirstResponder(Some(field));}
             alert.layout();alert.window().center();
             let session=app.beginModalSessionForWindow(&alert.window());
-            if let Some((_,_,field))=controls.get(focus.min(controls.len().saturating_sub(1))) {field.scrollRectToVisible(field.bounds());unsafe{field.selectText(None);}}
+            if let Some((_,_,field,_))=controls.get(focus.min(controls.len().saturating_sub(1))) {field.scrollRectToVisible(field.bounds());unsafe{field.selectText(None);}}
             let response=loop {
                 let response=unsafe{app.runModalSession(session)};
                 if response!=objc2_app_kit::NSModalResponseContinue{break response;}
@@ -217,15 +236,15 @@ pub(super) fn open(browser: &mut Schnauz, cx: &mut Context<Schnauz>) {
             };
             unsafe{app.endModalSession(session);}
             let colors=target.ivars().colors.borrow().clone();
-            draft=controls.iter().enumerate().map(|(i,(scope,kind,field))|Draft{
+            draft=controls.iter().enumerate().map(|(i,(scope,kind,field,single))|Draft{
                 target:if scope.indexOfSelectedItem()==1{Target::Folders}else{Target::Files},
                 kind:*KINDS.get(kind.indexOfSelectedItem().max(0) as usize).unwrap_or(&Kind::NewestVersion),
-                text:field.stringValue().to_string(),color:colors.get(i).copied().unwrap_or(PALETTE[0].1)
+                text:field.stringValue().to_string(),color:colors.get(i).copied().unwrap_or(PALETTE[0].1),mark_single_version:single.state()==1
             }).collect();
             alert.window().orderOut(None);
             if response==objc2_app_kit::NSAlertThirdButtonReturn && draft.len()<MAX_RULES {
                 focus=draft.len();
-                draft.push(if draft.is_empty(){Draft::from(&MarkRow::default())}else{Draft{target:Target::Files,kind:Kind::FilenameEnding,text:".pdf".into(),color:PALETTE[draft.len()%6].1}});
+                draft.push(if draft.is_empty(){Draft::from(&MarkRow::default())}else{Draft{target:Target::Files,kind:Kind::FilenameEnding,text:".pdf".into(),color:PALETTE[draft.len()%6].1,mark_single_version:false}});
                 error=None;continue;
             }
             if (2000..2000+draft.len() as isize).contains(&response){focus=(response-2000) as usize;draft.remove(focus);error=None;continue;}
@@ -233,7 +252,7 @@ pub(super) fn open(browser: &mut Schnauz, cx: &mut Context<Schnauz>) {
             if (4000..4000+draft.len() as isize).contains(&response){let i=(response-4000) as usize;if i+1<draft.len(){draft.swap(i,i+1);focus=i+1;}error=None;continue;}
             if response!=objc2_app_kit::NSAlertFirstButtonReturn{break;}
             if draft.len()>MAX_RULES {error=Some(format!("Use at most {MAX_RULES} rules."));continue;}
-            let rows:Result<Vec<_>,_>=draft.iter().enumerate().map(|(i,d)|MarkRow::parse(d.target,d.kind,&d.text,d.color).map_err(|e|format!("Rule {}: {e}",i+1))).collect();
+            let rows:Result<Vec<_>,_>=draft.iter().enumerate().map(|(i,d)|MarkRow::parse(d.target,d.kind,&d.text,d.color).map(|mut row|{row.mark_single_version=d.mark_single_version;row}).map_err(|e|format!("Rule {}: {e}",i+1))).collect();
             match rows {
                 Err(message)=>error=Some(message),
                 Ok(rows)=>match this.update(cx,|this,cx|this.save_version_mark(project,&previous,Rule{enabled:previous.enabled,rows},cx)) {
