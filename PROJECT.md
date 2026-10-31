@@ -2661,3 +2661,20 @@ rows, highest-only multi-version groups and unversioned exclusions. Compile
 fixtures without running them under the existing session-preservation rules.
 Continue publication as 0.9.28 with all changes since 0.9.22. 0.9.27 packaging
 was superseded before any push/tag/draft/publication; never publish those assets.
+
+
+## 0.9.28 — Mark settings redesign during release preparation
+
+Oliver requested the first redesigned menu/dialog be Mark settings, without
+the Schnauz logo or centered content. Replace NSAlert with a dedicated native
+window: transparent titlebar and themed 56 pt header, all labels left-aligned,
+project context, a short instruction, compact rounded rule rows, six round
+marker colors and the single-version checkbox. Keep bounded scrolling and
+Add Rule left / Cancel and Save right in a fixed footer. Position initially
+near the originating window and within its screen; preserve placement while
+editing/reordering. Native close/Escape cancels, Return saves. Retain original
+project capture, stale-save checks, preview/modal guard and draft persistence.
+Other dialogs remain outside this requested first step. No logo is added to
+this window. Rebuild all release artifacts from the final committed source;
+no earlier preparation artifacts were published. Runtime visual QA remains
+Oliver's workflow under the existing compile/sign/package-only restriction.

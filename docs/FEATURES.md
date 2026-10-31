@@ -788,3 +788,8 @@ mark a lone matching versioned file or folder as well as the highest version
 in larger groups. This option is saved independently per rule; existing rules
 keep it Off. It is disabled for Version match and Name ending, which already
 match individual items. Ordinary names without a version remain unmarked.
+
+Mark settings uses a dedicated, logo-free native window with Schnauz's themed
+header, left-aligned labels, compact rounded rule rows and a fixed action bar.
+Add Rule is at the left; Cancel and Save are at the right. Escape or closing
+the window discards changes; Return saves.

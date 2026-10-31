@@ -1086,3 +1086,14 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Native checkbox is enabled only for Newest version and retains its draft
   value across type changes, row reorder and validation. Keep six round colors
   and captured-project/modal safety. Compile/sign/package-only QA persists.
+
+
+- During 0.9.28 preparation Oliver requested a logo-free redesign, starting
+  with Mark settings, with left-aligned content. Mark now uses its own native
+  NSWindow instead of NSAlert: transparent titlebar, 56 pt themed header with
+  traffic-light clearance, left-aligned title/project/help/column labels, compact
+  rounded rule surfaces and bounded scrolling. Add Rule left, Cancel/Save right
+  in the footer; no app logo or centered alert copy. Preserve keyboard Save/
+  Cancel, close-button cancellation, per-row options, draft/reorder/validation
+  and captured-project/modal guards. Other dialogs are outside this first step.
+  Keep publication authorized, with compile/sign/package-only QA.
