@@ -1097,3 +1097,15 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Cancel, close-button cancellation, per-row options, draft/reorder/validation
   and captured-project/modal guards. Other dialogs are outside this first step.
   Keep publication authorized, with compile/sign/package-only QA.
+
+
+- Published 0.9.28 on 2026-11-01 at
+  https://github.com/weiaoli2/Schnauz/releases/tag/v0.9.28, source 8fb1165.
+  Both signed architecture DMGs, exact MPL sources, checksums, all four GitHub
+  asset digests and all 1769 tagged source files verified. Public unauthenticated
+  release available; Apple Development signed, not notarized, early prerelease.
+  Compile/sign/package-only QA; Oliver confirmed live SMB copying separately.
+  Includes Mark rules/single-version option/logo-free left-aligned Mark window
+  and Todoist caret fix. Normal signed 0.9.28 safely staged; live app identities/
+  hashes/windows/PTYs/SSH preserved. Receipts dist/0.9.28. Request complete;
+  future release needs a new request. Preserve every published tag/asset.

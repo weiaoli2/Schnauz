@@ -4,6 +4,27 @@ Official repository: https://github.com/weiaoli2/Schnauz (public).
 Current release: **v0.9.28**, public Apple Silicon + Intel early preview.
 Previous published release: **v0.9.22**.
 
+## Published release — 0.9.28
+
+Published 2026-11-01 at https://github.com/weiaoli2/Schnauz/releases/tag/v0.9.28,
+source 8fb1165c797a8ad2bc2613042233c79168cf8976. Both signed DMGs, exact MPL
+component sources and checksums match all four GitHub asset digests. All 1769
+tagged source files match the downloaded GitHub archive. App/helper architectures
+and certificate signatures, bundle allowlists, read-only mounted installers and
+unauthenticated public availability passed. Apple Development signed, not
+notarized, early prerelease. Compile/sign/package-only QA: no app/helper/test
+execution, UI runtime or Intel hardware check. Oliver confirmed live SMB copying.
+
+Includes ordered Files/Folders marking rules, six round colors, optional lone-
+version highlighting, the logo-free left-aligned native Mark settings window
+and Todoist composer caret changes. The normal signed 0.9.28 update is safely
+staged; all recorded installed bundle identities/hashes remain unchanged.
+Apply after a deliberate quit using ./update.sh; never restart live sessions.
+Receipts: dist/0.9.28/{LOCAL-,DRAFT-,RELEASE-}VERIFICATION.json,
+SOURCE-PREFLIGHT.json, NORMAL-LOCAL-BUILD.json and PUBLIC-RELEASE.json.
+Publication request complete. Preserve v0.9.28 and all previous tags/assets;
+future publication requires a new request. 0.9.27 artifacts remain unpublished.
+
 ## Authorized release — 0.9.28 (2026-10-31)
 
 Oliver added the single-version checkbox request during 0.9.27 preparation.

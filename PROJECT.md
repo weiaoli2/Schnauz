@@ -1,6 +1,6 @@
 # Schnauz
 
-Last updated: 2026-10-31
+Last updated: 2026-11-01
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -2678,3 +2678,27 @@ Other dialogs remain outside this requested first step. No logo is added to
 this window. Rebuild all release artifacts from the final committed source;
 no earlier preparation artifacts were published. Runtime visual QA remains
 Oliver's workflow under the existing compile/sign/package-only restriction.
+
+
+## Published 0.9.28 — 2026-11-01
+
+https://github.com/weiaoli2/Schnauz/releases/tag/v0.9.28
+
+Source 8fb1165c797a8ad2bc2613042233c79168cf8976. Published Apple Silicon +
+Intel early prerelease with exact MPL component sources/checksums. Both app/
+helper architectures and stable certificate signatures, bundle allowlists,
+read-only mounted installer contents and all four GitHub asset SHA-256 digests
+passed. All 1769 GitHub source files match the tag, release notes match exactly,
+and unauthenticated public availability passed. Apple Development signed, not
+notarized. Compile/sign/package-only QA: fixtures compiled, not run; no fresh
+app/helper/UI/Rosetta/physical Intel test. Oliver confirmed the real SMB copy.
+
+Includes all Mark rules, lone-version checkbox and the requested left-aligned,
+logo-free native Mark window, plus Todoist caret and SMB transfer fixes. The
+normal signed 0.9.28 is safely staged for ./update.sh after a deliberate quit.
+All recorded installed app file identities/hashes remain unchanged; no live
+window, PTY, SSH, mount, account or privacy change was made for QA. Local website/
+video/test.csv remain excluded. Receipts and final notes in dist/0.9.28; build
+logs .build-cache/0.9.28-final-{release,normal}-build.log and fixture compilation
+.build-cache/0.9.28-mark-window-test-compile.log. The release request is complete;
+preserve all tags/assets. No 0.9.27 release/tag was published.
