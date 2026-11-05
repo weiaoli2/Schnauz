@@ -2811,3 +2811,33 @@ only verification. No app/helper/test/UI/Intel hardware or live account/provider
 QA is authorized. Positive feedback is not a substitute for scoped runtime
 verification. Preserve live windows/PTYs/SSH/mounts/settings and all earlier
 release tags/assets. Exclude website/, video/ and test.csv.
+
+
+## Published 0.9.30 — 2026-11-05
+
+Published 2026-11-05 at https://github.com/weiaoli2/Schnauz/releases/tag/v0.9.30,
+source 7f145677b937d43f9ba3ab472f6cf0634d200231. Apple Silicon + Intel installers,
+exact MPL component sources and checksum asset match all four GitHub SHA-256
+digests. All 1770 tagged source files match the GitHub archive. App/helper
+architectures and certificate signatures, bundle allowlists, read-only mounted
+installer contents, exact release notes and unauthenticated public availability
+passed. Apple Development signed, not notarized, early prerelease.
+
+Validation remained compile/sign/package only: Rust/UI and native File Provider
+fixtures compiled, not executed; no fresh application/helper/UI/Rosetta/physical
+Intel or live Nextcloud/account QA. Normal signed 0.9.30 is safely staged for
+./update.sh after a deliberate quit. All recorded installed file identities/
+hashes are unchanged; live windows/PTYs/SSH/mounts/settings were preserved.
+
+Includes grey Nextcloud syncing filenames, rotating activity arrows, pending-
+upload status, fresh rename/batch/rename-undo protection and separated, draggable
+Show/Filter/Mark groups with persisted order. Status percentages are not
+fabricated; real-provider upload/rename QA remains manual. Source archives
+exclude website/, video/ and test.csv; all existing releases/tags are preserved.
+Receipts: dist/0.9.30/{LOCAL-,DRAFT-,RELEASE-}VERIFICATION.json,
+SOURCE-PREFLIGHT.json, NORMAL-LOCAL-BUILD.json and PUBLIC-RELEASE.json.
+Publication request complete; future releases require a new request.
+
+Build/fixture logs: `.build-cache/0.9.30-release-{build,test-compile}.log`,
+`.build-cache/0.9.30-release-normal-build.log` and
+`.build-cache/0.9.30-nextcloud-native-compile.log`.

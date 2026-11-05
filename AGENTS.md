@@ -1161,3 +1161,14 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   package-only QA. Do not claim fresh live Nextcloud/UI/Intel verification.
   Preserve all previous tags/assets/live sessions, and exclude video/website/
   test.csv from source archives. No privacy changes or app/helper/test launches.
+
+
+- Published 0.9.30 on 2026-11-05 at
+  https://github.com/weiaoli2/Schnauz/releases/tag/v0.9.30, source 7f14567.
+  Both signed installers, exact MPL sources, checksum asset, all four GitHub
+  digests and all 1770 tagged source files verified. Public unauthenticated
+  downloads available. Apple Development signed, not notarized, early prerelease.
+  Compile/sign/package-only QA; no fresh app/helper/test/UI/Intel/live Nextcloud
+  execution. Normal signed 0.9.30 safely staged; live app identities/hashes and
+  all sessions preserved. Receipts dist/0.9.30. Request complete; future releases
+  need a new request. Never overwrite this tag/assets or earlier releases.
