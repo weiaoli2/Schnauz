@@ -301,17 +301,30 @@ impl Schnauz {
             .bg(rgb(if filtered { filter_tint(t) } else { t.sidebar }))
             .text_size(px(UI_SMALL_FONT_SIZE))
             .text_color(rgb(t.text_muted))
-            .child("Show")
-            .child(
-                div()
+            .child({
+                let show = div().flex_none().flex().items_center().gap(px(6.))
+                    .child(self.filterbar_label(filterbar_order::Group::Show,pane,cx))
+                    .child(div()
                     .flex_none().flex()
                     .p(px(1.0))
                     .rounded_lg()
                     .bg(rgb(t.surface))
-                    .children(buttons),
-            )
-            .child(self.render_project_file_filter(pane,cx))
-            .child(self.render_version_mark(pane,cx))
+                    .children(buttons)).into_any_element();
+                let mut show = Some(show);
+                let mut groups = div().flex_none().flex().items_center().gap(px(10.));
+                for (index, group) in prefs().filterbar_order.into_iter().enumerate() {
+                    if index > 0 {
+                        groups = groups.child(div().flex_none().w(px(1.)).h(px(16.)).bg(rgb(t.border_strong)));
+                    }
+                    let content = match group {
+                        filterbar_order::Group::Show => show.take().unwrap(),
+                        filterbar_order::Group::Filter => self.render_project_file_filter(pane,cx),
+                        filterbar_order::Group::Mark => self.render_version_mark(pane,cx),
+                    };
+                    groups = groups.child(self.filterbar_group(group,pane,content,cx));
+                }
+                groups
+            })
             .when(tab.remote.is_some(), |d| d.child(
                 toolbar_icons::toolbar_button("reload-folder", pane, Icon::Reload, false, true, "Reload SSH folder · ⌘R")
                     .w(px(24.)).h(px(22.))

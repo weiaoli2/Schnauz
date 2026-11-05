@@ -65,7 +65,7 @@ int main(void) { @autoreleasepool {
     FakeLocal *adapter=[FakeLocal new];
     NSDictionary *base=@{@"path":@"/fixture/online.txt",@"provider":@"com.nextcloud.desktopclient.FileProviderExt",
         @"folder":@NO,@"downloaded":@NO,@"recursivelyDownloaded":@NO,
-        @"downloading":@NO,@"keepDownloaded":@NO,@"supported":@YES,
+        @"downloading":@NO,@"uploading":@NO,@"uploaded":@YES,@"uploadFailed":@NO,@"keepDownloaded":@NO,@"supported":@YES,
         @"_domain":@"private-routing",@"_identifier":@"private-id"};
     adapter.item=base;
     NSDictionary *status=call(@{@"operation":@"local-status",@"paths":@[@"/fixture/online.txt"]},adapter);
@@ -77,12 +77,12 @@ int main(void) { @autoreleasepool {
     // Exercise the actual public JSON boundary, not just Objective-C boolValue.
     for(NSNumber *flag in @[@0,@1]) {
         NSMutableDictionary *numeric=[base mutableCopy];
-        numeric[@"recursivelyDownloaded"]=flag; adapter.item=numeric;
+        numeric[@"recursivelyDownloaded"]=flag; numeric[@"uploading"]=flag; numeric[@"uploaded"]=flag; numeric[@"uploadFailed"]=flag; adapter.item=numeric;
         NSDictionary *reply=call(@{@"operation":@"local-status",@"paths":@[@"/fixture/online.txt"]},adapter);
         NSData *json=[NSJSONSerialization dataWithJSONObject:reply options:0 error:nil];
         NSDictionary *decoded=[NSJSONSerialization JSONObjectWithData:json options:0 error:nil];
         NSDictionary *wireItem=[decoded[@"items"] firstObject];
-        for(NSString *key in @[@"supported",@"folder",@"downloaded",@"recursivelyDownloaded",@"downloading",@"keepDownloaded",@"canKeepDownloaded"]) {
+        for(NSString *key in @[@"supported",@"folder",@"downloaded",@"recursivelyDownloaded",@"downloading",@"keepDownloaded",@"canKeepDownloaded",@"uploading",@"uploaded",@"uploadFailed"]) {
             NSCAssert(CFGetTypeID((__bridge CFTypeRef)wireItem[key])==CFBooleanGetTypeID(),@"Every wire flag must be a JSON Boolean, never numeric 0/1");
         }
         NSCAssert([wireItem[@"recursivelyDownloaded"] boolValue]==flag.boolValue,@"Preserve native flag values");

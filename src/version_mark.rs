@@ -533,7 +533,7 @@ impl Schnauz {
             .items_center()
             .gap(px(6.))
             .whitespace_nowrap()
-            .child("Mark:")
+            .child(self.filterbar_label(filterbar_order::Group::Mark,pane,cx))
             .child(
                 div()
                     .flex_none()

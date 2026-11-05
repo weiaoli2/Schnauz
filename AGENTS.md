@@ -1109,3 +1109,55 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   and Todoist caret fix. Normal signed 0.9.28 safely staged; live app identities/
   hashes/windows/PTYs/SSH preserved. Receipts dist/0.9.28. Request complete;
   future release needs a new request. Preserve every published tag/asset.
+
+
+- Local 0.9.29: Oliver requested clearer separation and movable Show/Filter/
+  Mark groups. Keep the existing compact 30 pt row; add 16 pt vertical hairline
+  dividers with 10 pt spacing on each side. Drag only a group's label to reorder
+  whole groups, with an inset insertion indicator; retain normal button clicks.
+  `src/filterbar_order.rs` uses its own internal payload, never file/tab/project
+  drags. Persist `filterbar_order` centrally in prefs, shared across windows and
+  launches, with complete/default order for missing/duplicate/unknown IDs.
+  No writes during hover; commit only a valid drop. Preserve horizontal scrolling
+  and Disk Usage/SSH actions. Compile/sign/stage only; public 0.9.28 stays fixed,
+  and no further commit/release is requested for this local change.
+
+
+- 2026-11-03 Contacts prompt investigation: macOS TCC logs identify
+  org.mozilla.thunderbird as accessing AddressBook and local.schnauz.app as
+  responsible. Oliver confirmed Thunderbird ran from Schnauz's terminal.
+  Schnauz source has no direct Contacts access; normal file/app opening already
+  uses LaunchServices (`open`). System prompt wording is OS-controlled. For
+  GUI apps, normal LaunchServices launch (`open -a Thunderbird`) avoids direct
+  terminal-binary attribution on a fresh launch. Do not blanket-disclaim all
+  terminal shells, intercept arbitrary commands, add fake permission dialogs,
+  read contact data, reset/change TCC or restart live apps to change the label.
+  No code/build/release change was made for this diagnostic investigation.
+
+
+- Local 0.9.30: Oliver requested truthful Nextcloud upload status and disabled
+  renaming while syncing, then chose grey filenames instead of yellow. Read
+  runtime/ABI-checked isUploading/isUploaded/uploadingError from the existing
+  File Provider bridge. Local materialization alone must not yield a completed
+  check: uploading or a not-yet-uploaded file shows rotating circular-arrow
+  activity and grey text in List/Icons/search. Suppress name marker background
+  while busy, restoring it afterward. Upload errors have a separate error badge.
+  No fabricated percentage; this interface exposes state, not byte progress.
+  Poll visible status off-thread (1 s while busy), active windows only; stop
+  polling after leaving Nextcloud views. Never scan descendants or read content.
+  Rename menus/shortcuts/delayed clicks and batch start are guarded; inline,
+  batch and rename-undo commits require fresh provider confirmation on an owned
+  worker. Preserve cancelled/edited drafts, navigation/tab identity and undo
+  history on failure; unknown status must not authorize a rename. Retain the
+  previous local 0.9.29 controls and all live sessions. Compile/sign/stage only,
+  no native/test/helper execution or live provider/server/Keychain QA. No release.
+
+
+- 2026-11-05: Oliver explicitly requested a new public GitHub release after
+  0.9.30 Nextcloud sync work. Publish 0.9.30 with the 0.9.29 control separation/
+  reordering, both signed Mac installers, exact MPL component sources and
+  checksums. This supersedes the local no-release notes above. Keep Apple
+  Development signing, unnotarized early-prerelease disclosure and compile/sign/
+  package-only QA. Do not claim fresh live Nextcloud/UI/Intel verification.
+  Preserve all previous tags/assets/live sessions, and exclude video/website/
+  test.csv from source archives. No privacy changes or app/helper/test launches.

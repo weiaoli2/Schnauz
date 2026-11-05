@@ -793,3 +793,24 @@ Mark settings uses a dedicated, logo-free native window with Schnauz's themed
 header, left-aligned labels, compact rounded rule rows and a fixed action bar.
 Add Rule is at the left; Cancel and Save are at the right. Escape or closing
 the window discards changes; Return saves.
+
+
+### Show / Filter / Mark arrangement (local 0.9.29)
+
+The three groups have additional spacing and subtle vertical dividers. Drag
+the **Show**, **Filter** or **Mark** label to move its whole group before or
+after another; a thin line indicates the insertion position. Their buttons
+continue to work normally. The order is remembered across windows and launches.
+
+
+### Nextcloud sync activity (local 0.9.30)
+
+Files uploading or waiting to upload show a rotating circular arrow and greyed
+filename, with normal appearance restored after completion. A local copy no
+longer suffices for a completed-file check. Upload errors have a separate error
+indicator. This provider interface supplies status rather than a reliable byte
+percentage.
+
+Renaming is unavailable while Nextcloud is syncing or its status is unconfirmed.
+Inline and batch renames recheck the provider before changing names; rename undo
+uses the same protection. Failed checks preserve the draft or undo history.

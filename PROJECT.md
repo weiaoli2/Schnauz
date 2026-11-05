@@ -1,6 +1,6 @@
 # Schnauz
 
-Last updated: 2026-11-01
+Last updated: 2026-11-05
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -2702,3 +2702,112 @@ video/test.csv remain excluded. Receipts and final notes in dist/0.9.28; build
 logs .build-cache/0.9.28-final-{release,normal}-build.log and fixture compilation
 .build-cache/0.9.28-mark-window-test-compile.log. The release request is complete;
 preserve all tags/assets. No 0.9.27 release/tag was published.
+
+
+## Local 0.9.29 — separated, reorderable Show / Filter / Mark groups
+
+Oliver requested more space and separation stripes, plus movable groups.
+The 30 pt row now has thin 16 pt vertical separators with 10 pt space on each
+side. Show, Filter and Mark each have a draggable label (open-hand pointer and
+tooltip); drag a label before/after another group to move the whole group.
+On/Off, file-type selection and Modify/Settings buttons retain normal clicks.
+The insertion indicator is painted without shifting layout. Internal group
+drag payloads contain only group IDs and cannot initiate file or tab operations.
+
+`src/filterbar_order.rs` encodes/decodes and reorders all three groups.
+`filterbar_order` is a central pref, loaded with backward-compatible defaults,
+unknown/duplicate ID filtering and missing-group recovery. It applies across
+windows and launches. Write only after a changed valid drop; cancellation
+outside leaves order unchanged. Keep the existing row's horizontal scrolling
+and trailing Disk Usage/SSH actions. Persistence fixtures compile without
+execution under current QA restrictions. Build/sign/stage locally as 0.9.29;
+0.9.28 remains the published release and no new publication is requested.
+
+0.9.29 verification: Rust/ui-checks fixture compilation and optimized normal
+build passed. Pending app version/identity, deep/strict certificate signature
+and bundle allowlist verified independently. Every installed live app file
+retains its recorded device/inode/SHA-256. The signed update is staged for
+./update.sh after a deliberate quit. No app/helper/test executable was run;
+visual/drag QA awaits Oliver. No commit or release. Logs:
+`.build-cache/0.9.29-filterbar-{test-compile,build}.log`; receipt:
+`.build-cache/0.9.29-filterbar-verification.json`.
+
+
+## Contacts permission attribution — 2026-11-03
+
+Oliver reported a Contacts prompt naming Schnauz. Narrow macOS TCC logs show
+Thunderbird (org.mozilla.thunderbird) as the accessing process with Schnauz
+(local.schnauz.app) as responsible. Oliver confirmed it ran from the integrated
+terminal. This is terminal process-chain attribution, not a new Schnauz Contacts
+feature. Source/bundle review found no Contacts API/request or usage description.
+Normal Schnauz file/app opening already uses LaunchServices through `open`.
+
+macOS owns the system prompt wording. Launch desktop apps through LaunchServices
+(e.g. `open -a Thunderbird`) on their next fresh launch for app-owned attribution;
+activating an already-running directly launched process does not rewrite its
+identity. Do not change responsibility for all terminal commands just to relabel
+this dialog; preserve terminal permissions and live PTYs. No contacts were read,
+TCC settings changed, arbitrary shell commands intercepted, applications restarted
+or test binaries executed during investigation. Sanitized finding receipt:
+`.build-cache/2026-11-03-contacts-attribution.json`.
+
+
+## Local 0.9.30 — Nextcloud upload activity and rename protection
+
+Oliver reported a green check during file uploads and requested a sync
+indicator plus rename protection. He then chose greyed filenames instead of
+yellow. The existing bridge only checked local downloaded state. Local data
+does not prove the pending upload finished. Read isUploading/isUploaded and
+uploadingError through the existing File Provider bridge, with selector/ABI
+availability checks and optional unknown values. Serialize upload booleans
+correctly, preserving unknown rather than claiming completion.
+
+Upload-active and not-yet-uploaded files show a rotating circular-arrow activity
+indicator and grey names in List, Icons and search. Temporarily suppress Mark
+backgrounds to preserve the grey appearance; restore normal Mark after syncing.
+Upload errors show a separate red error indicator. This bridge does not expose
+reliable byte percentages, so do not fabricate a filling circle. Missing provider
+metadata shows unknown rather than falling back to a green local-data check.
+
+Visible status refreshes on an owned metadata worker, faster while pending. A
+bounded timer requests repaints only while recently displaying Nextcloud and
+active; no recursive scans, file content, server requests or credentials are
+needed. Folder reloads invalidate child status so changed files refresh.
+
+Rename entry points (including keyboard and delayed click), context menus and
+batch forms reject busy/unknown status. Immediately before inline/batch/rename-
+undo writes, an owned worker fetches fresh provider metadata for every target
+in bounded batches. Require matching provider/path, upload complete and no
+upload/download/error. A cancelled/reopened/edited draft or changed tab/folder
+cannot be committed by an old response. Failures retain the draft/undo history
+and explain in the footer. Other providers and remote SSH keep existing behavior.
+
+Fixture coverage: pending but locally materialized uploads, completed uploads,
+errors, unknown/malformed flags and mismatched/foreign provider responses; native
+JSON upload flags. Compile fixtures without executing them under current live-
+session QA restrictions. No live provider/server/account/Keychain calls. Build/
+sign/stage locally; retain 0.9.29 group controls. No commit/public release.
+
+0.9.30 verification: Rust/ui-checks fixtures and Objective-C local-provider
+fixtures compiled successfully without execution. Optimized build, every
+helper/package check, independent pending-version/bundle-identity, deep/strict
+certificate signature and bundle allowlist passed. All installed live app files
+retain the recorded device/inode/SHA-256. Signed 0.9.30 is safely staged for
+./update.sh after a deliberate quit; no app/helper/test binaries were executed
+or live Nextcloud/Keychain/server actions performed. Runtime upload/rename
+confirmation remains Oliver's workflow. No commit/release. Logs:
+`.build-cache/0.9.30-nextcloud-sync-{test-compile,build}.log`,
+`.build-cache/0.9.30-nextcloud-native-compile.log`; receipt:
+`.build-cache/0.9.30-nextcloud-sync-verification.json`.
+
+
+## Public 0.9.30 release requested — 2026-11-05
+
+Oliver requested a new GitHub release after the Nextcloud sync work. Publish
+0.9.30 with all changes since 0.9.28, including separated/reorderable filter-bar
+groups. Keep both signed architecture installers, exact MPL sources/checksums,
+Apple Development / unnotarized prerelease disclosures and compile/sign/package-
+only verification. No app/helper/test/UI/Intel hardware or live account/provider
+QA is authorized. Positive feedback is not a substitute for scoped runtime
+verification. Preserve live windows/PTYs/SSH/mounts/settings and all earlier
+release tags/assets. Exclude website/, video/ and test.csv.

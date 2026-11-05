@@ -144,8 +144,9 @@ impl Schnauz {
 
 /// The marker hugs the filename. Selection stays on the row/cell, and the
 /// native-style inline editor retains its own background and hit geometry.
-pub(super) fn marked_entry_name(name: &str, edit: Option<EditText>, marker: Option<u32>) -> AnyElement {
+pub(super) fn marked_entry_name(name: &str, edit: Option<EditText>, marker: Option<u32>, muted: bool) -> AnyElement {
     let t = theme();
+    let marker=if muted {None}else{marker};
     let Some(EditText {
         text,
         cursor,
@@ -163,7 +164,7 @@ pub(super) fn marked_entry_name(name: &str, edit: Option<EditText>, marker: Opti
             .max_w_full()
             .truncate()
             .when_some(marker, |d, color| d.rounded_sm().bg(rgb(color)))
-            .text_color(rgb(if marker.is_some() { 0x1b1b1b } else { t.text }))
+            .text_color(rgb(if muted {if t.is_light(){0x808080}else{0x969ba4}} else if marker.is_some() { 0x1b1b1b } else { t.text }))
             .child(name.to_string())
             .into_any_element();
     };

@@ -123,6 +123,7 @@ mod updates;
 mod tab_projects;
 mod toolbar_icons;
 mod toolbar_order;
+mod filterbar_order;
 use folder_views::{Column, ListLayout, ViewMode};
 use toolbar_icons::{ui_icon, Icon};
 mod previews;
@@ -159,6 +160,7 @@ struct Prefs {
     /// Explicit opt-in: public GitHub release check, once at app startup.
     check_updates_at_startup: bool,
     toolbar_order: [toolbar_order::Control; 11],
+    filterbar_order: [filterbar_order::Group; 3],
     /// Show a file preview in the inspector when a file is selected.
     preview: bool,
     /// Show ‹ › page arrows on multi-page PDF previews in the inspector.
@@ -203,6 +205,7 @@ impl Default for Prefs {
         Prefs {
             check_updates_at_startup: false,
             toolbar_order: toolbar_order::DEFAULT,
+            filterbar_order: filterbar_order::DEFAULT,
             preview: true,
             preview_pages: true,
             preview_width: 420,
@@ -233,6 +236,7 @@ thread_local! {
     static ACTIVE_PREFS: RefCell<Prefs> = const { RefCell::new(Prefs {
         check_updates_at_startup: false,
         toolbar_order: toolbar_order::DEFAULT,
+            filterbar_order: filterbar_order::DEFAULT,
         preview: true,
         preview_pages: true,
         preview_width: 420,
@@ -879,6 +883,7 @@ enum CloudSync {
     KeptOffline,
     /// Actively downloading (we kicked off a materialize; clears once local).
     Syncing,
+    SyncError,
 }
 
 /// `SF_DATALESS` (super-user file flag): the bytes aren't on disk — a cloud
@@ -1401,6 +1406,7 @@ struct Schnauz {
     /// Cloud files with a download/evict in flight — shown with the syncing
     /// badge until the operation finishes and the listing is re-read.
     cloud_busy: HashSet<PathBuf>,
+    cloud_rename_check: bool,
     /// A short status message (cloud sync, undo, …) shown as a neutral
     /// banner; the generation lets a stale auto-dismiss leave a newer one be.
     notice: Option<String>,
@@ -1682,6 +1688,7 @@ impl Schnauz {
             hovered: None,
             remote_error: None,
             cloud_busy: HashSet::new(),
+            cloud_rename_check: false,
             notice: None,
             notice_gen: 0,
             cloud_sync_gen: 0,
@@ -1832,6 +1839,7 @@ impl Schnauz {
             self.reload_remote_pane(pane, cx);
             return;
         }
+        nextcloud_local::invalidate_folder(&self.tab(pane).current_dir);
         self.tab_mut(pane).ssh_progress = None;
         if self.tab(pane).network.is_some() {
             self.reload_network_pane(pane, cx);
@@ -2696,6 +2704,7 @@ impl Schnauz {
 
     fn open_batch_rename(&mut self, pane: usize, targets: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         self.close_context_menu(cx);
+        if let Some(message)=self.nextcloud_rename_wait(pane,&targets,cx) {self.set_notice(message.into(),cx);return;}
         // A single item is just an inline rename.
         if targets.len() == 1 {
             let p = targets[0].clone();
@@ -2703,6 +2712,7 @@ impl Schnauz {
             return;
         }
         self.batch_rename = Some(BatchRename {
+            identity: Rc::new(()),
             pane,
             targets,
             mode: BatchMode::Replace,
@@ -2752,6 +2762,15 @@ impl Schnauz {
     /// Rename every target per the dialog, as one undoable step. Refuses (and
     /// keeps the dialog open) if any new name is invalid or collides.
     fn apply_batch_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(br)=self.batch_rename.as_ref() else {return;};
+        let pane=br.pane; let targets=br.targets.clone(); let expected=br.plan(); let identity=br.identity.clone();
+        if expected.iter().any(|(_,_,problem)|problem.is_some()){cx.notify();return;}
+        if self.check_nextcloud_rename(pane,&targets,cx,move|this,cx| {
+            if this.batch_rename.as_ref().is_some_and(|br| Rc::ptr_eq(&br.identity,&identity) && br.pane==pane && br.plan()==expected) {this.apply_batch_rename_checked(cx);}
+        }) {return;}
+        self.apply_batch_rename_checked(cx);
+    }
+    fn apply_batch_rename_checked(&mut self, cx: &mut Context<Self>) {
         let Some(br) = self.batch_rename.as_ref() else { return };
         let plan = br.plan();
         if plan.iter().any(|(_, _, problem)| problem.is_some()) {
@@ -3000,6 +3019,15 @@ impl Schnauz {
     /// ⌘Z: reverse the most recent file operation, if everything it touched
     /// is still where it left it (otherwise say why and leave it alone).
     fn undo_last(&mut self, cx: &mut Context<Self>) {
+        if let Some(UndoOp::Renamed(pairs))=self.undo_stack.last() {
+            let expected=pairs.clone(); let sources:Vec<_>=pairs.iter().map(|(_,to)|to.clone()).collect();
+            if self.check_nextcloud_rename(self.active_pane,&sources,cx,move|this,cx| {
+                if matches!(this.undo_stack.last(),Some(UndoOp::Renamed(current)) if *current==expected) {this.undo_last_checked(cx);}
+            }) {return;}
+        }
+        self.undo_last_checked(cx);
+    }
+    fn undo_last_checked(&mut self, cx: &mut Context<Self>) {
         let Some(op) = self.undo_stack.pop() else {
             self.set_notice("Nothing to undo".into(), cx);
             return;
@@ -3089,6 +3117,7 @@ impl Schnauz {
     /// Begin renaming `path`: the row's name becomes an editable field.
     fn begin_rename(&mut self, pane: usize, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.pending_click_rename = None;
+        if let Some(message)=self.nextcloud_rename_wait(pane,std::slice::from_ref(&path),cx) {self.set_notice(message.into(),cx);return;}
         self.drag_candidate = None;
         self.active_pane = pane;
         let text = path
@@ -3144,6 +3173,16 @@ impl Schnauz {
 
     /// Commit the in-progress rename (Enter), renaming the file on disk.
     fn commit_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(rename)=self.rename.as_ref() else {return;};
+        if self.rename_error().is_some() {cx.notify();return;}
+        let pane=rename.pane; let path=rename.path.clone(); let text=rename.text.clone(); let identity=rename.layout.clone();
+        let expected=path.clone();
+        if self.check_nextcloud_rename(pane,&[path],cx,move|this,cx| {
+            if this.rename.as_ref().is_some_and(|r|Rc::ptr_eq(&r.layout,&identity) && r.pane==pane && r.path==expected && r.text==text) {this.commit_rename_checked(cx);}
+        }) {return;}
+        self.commit_rename_checked(cx);
+    }
+    fn commit_rename_checked(&mut self, cx: &mut Context<Self>) {
         // An invalid name keeps the field open with the error showing — Enter
         // shouldn't silently discard the edit. Escape still cancels.
         if self.rename.is_some() && self.rename_error().is_some() {
@@ -3592,13 +3631,15 @@ impl Schnauz {
             || cloud_locations::identify(&home_dir(),path).is_some_and(|p|p.name=="Nextcloud");
         if nextcloud && cloud_kind(path)==Some(CloudKind::Provider) {
             if let Some(item)=nextcloud_local::display(path) {
-                return if item.downloading {CloudSync::Syncing}
+                return if item.upload_failed {CloudSync::SyncError}
+                    else if item.syncing() {CloudSync::Syncing}
                     else if item.folder && !item.recursively_downloaded {CloudSync::FolderOnline}
                     else if !item.folder && !item.downloaded {CloudSync::OnlineOnly}
+                    else if !item.folder && item.uploaded!=Some(true) {CloudSync::Unknown}
                     else if item.keep_downloaded {CloudSync::KeptOffline}
                     else if item.folder {CloudSync::FolderDownloaded} else {CloudSync::Available};
             }
-            if nextcloud_local::error(path).is_some() { return CloudSync::Unknown; }
+            return CloudSync::Unknown;
         }
         let provider = cloud_kind(path).is_some() || nextcloud::location(path, cx).is_some();
         if provider {
@@ -3929,10 +3970,14 @@ impl Schnauz {
             // --- file ops ---
             if !many {
                 let p = path.clone();
+                if self.nextcloud_rename_wait(pane,std::slice::from_ref(&p),cx).is_some() {
+                    nodes.push(MenuNode::Disabled("Rename".into()));
+                } else {
                 nodes.push(mi_hint("Rename", "↩", move |this, window, cx| {
                     this.close_context_menu(cx);
                     this.begin_rename(pane, p.clone(), window, cx);
                 }));
+                }
             }
             {
                 let ts = targets.clone();
@@ -3978,9 +4023,13 @@ impl Schnauz {
                 }));
             } else {
                 let ts = targets.clone();
+                if self.nextcloud_rename_wait(pane,&ts,cx).is_some() {
+                    nodes.push(MenuNode::Disabled(format!("Rename {n} Items…")));
+                } else {
                 nodes.push(mi(format!("Rename {n} Items…"), move |this, window, cx| {
                     this.open_batch_rename(pane, ts.clone(), window, cx);
                 }));
+                }
             }
             // Split view: send the selection straight to the other pane's folder.
             if self.panes.len() > 1 {
@@ -9013,8 +9062,8 @@ impl Render for Schnauz {
         self.sync_preview_zoom();
         self.sync_text_preview();
         let owner=cx.entity().downgrade();
-        window.on_next_frame(move|_,cx|{let _=owner.update(cx,|this,cx|{
-            this.prewarm_icons(cx); this.pump_cloud_status(cx); this.pump_nextcloud_local(cx);
+        window.on_next_frame(move|window,cx|{let active=window.is_window_active();let _=owner.update(cx,|this,cx|{
+            this.prewarm_icons(cx); this.pump_cloud_status(cx); if active {this.pump_nextcloud_local(cx);}
         });});
         let t = theme();
         self.cancel_unused_previews();
@@ -9800,7 +9849,8 @@ fn cloud_storage_label(state: CloudSync) -> &'static str {
         CloudSync::OnlineOnly => "Online only · download required",
         CloudSync::Folder => "Folder available · contents may be online only",
         CloudSync::Unknown => "Local availability unknown",
-        CloudSync::Syncing => "Download / storage operation in progress",
+        CloudSync::Syncing => "Syncing or waiting to upload · rename unavailable until finished",
+        CloudSync::SyncError => "Nextcloud upload failed · rename unavailable until sync finishes",
         CloudSync::FolderOnline => "Folder contents not fully downloaded",
         CloudSync::FolderDownloaded => "Folder contents downloaded · available locally",
         CloudSync::KeptOffline => "Always kept downloaded · available offline",
@@ -9972,6 +10022,7 @@ impl BatchMode {
 
 /// The open "Rename N Items" dialog.
 struct BatchRename {
+    identity: Rc<()>,
     pane: usize,
     targets: Vec<PathBuf>,
     mode: BatchMode,
@@ -10292,7 +10343,7 @@ fn file_row(
     let name = &entry.name;
     let name_el = div().id(("entry-name", key)).flex_1().min_w_0().flex()
         .when(cloud != CloudSync::Local, |d| d.relative().children(ui_checks::probe("cloud-name-text")))
-        .child(rename_ui::marked_entry_name(name, rename_text, marker))
+        .child(rename_ui::marked_entry_name(name, rename_text, marker, matches!(cloud,CloudSync::Syncing|CloudSync::SyncError)))
         .on_click(on_name_click);
 
     let name_cell = div()
@@ -10406,7 +10457,7 @@ fn icon_cell(
                 .min_w_0()
                 .flex()
                 .text_size(px(UI_SMALL_FONT_SIZE))
-                .child(rename_ui::marked_entry_name(&name, edit, marker))
+                .child(rename_ui::marked_entry_name(&name, edit, marker, matches!(cloud,CloudSync::Syncing|CloudSync::SyncError)))
                 .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                     this.click_entry(pane, name_t.clone(), is_dir, true, ev, window, cx);
                     this.suppress_entry_click = true;
@@ -10497,6 +10548,7 @@ fn cloud_status_appearance(cloud: CloudSync) -> (u32, Icon) {
         CloudSync::Available | CloudSync::FolderDownloaded => (0x24864b, Icon::Check),
         CloudSync::KeptOffline => (0x24864b, Icon::PinDocked),
         CloudSync::Syncing => (0xb7791f, Icon::Reload),
+        CloudSync::SyncError => (0xc43838, Icon::Close),
         CloudSync::Folder => (theme().text_dim, Icon::Cloud),
         CloudSync::Unknown => (theme().text_dim, Icon::Question),
         CloudSync::Local => unreachable!(),
@@ -10511,7 +10563,7 @@ fn cloud_status_icon(cloud: CloudSync, size: f32) -> Option<AnyElement> {
     Some(div().id("cloud-item-status").relative().flex_none().w(px(size)).h(px(size)).flex().items_center().justify_center()
         .children(ui_checks::probe("cloud-name-status"))
         .tooltip(tip(cloud_storage_label(cloud)))
-        .child(ui_icon(symbol, size, rgb(color)))
+        .child(cloud_status_symbol(cloud,symbol,size,rgb(color)))
         .into_any_element())
 }
 
@@ -10543,9 +10595,32 @@ fn cloud_badged_icon(icon: AnyElement, cloud: CloudSync, badge: f32) -> AnyEleme
                 .border_color(rgb(t.bg))
                 .text_size(px(badge * 0.64))
                 .text_color(rgb(0xffffff))
-                .child(ui_icon(symbol, (badge - 2.).max(8.), rgb(0xffffff))),
+                .child(cloud_status_symbol(cloud,symbol,(badge - 2.).max(8.),rgb(0xffffff))),
         )
         .into_any_element()
+}
+
+fn cloud_status_symbol(cloud:CloudSync, symbol:Icon, size:f32, color:Rgba)->AnyElement {
+    if cloud==CloudSync::Syncing {
+        let phase=Rc::new(std::cell::Cell::new(0f32));
+        let draw_phase=phase.clone();
+        div().flex_none().size(px(size)).child(gpui::canvas(|bounds,_,_|bounds,move|_,bounds,window,_| {
+            let edge=f32::from(bounds.size.width);
+            let center=bounds.center();let radius=edge*0.28;
+            let start=draw_phase.get()*std::f32::consts::TAU;
+            let at=|angle:f32|center+point(px(radius*angle.cos()),px(radius*angle.sin()));
+            let mut path=gpui::PathBuilder::stroke(px((edge*0.09).max(0.9)));
+            path.move_to(at(start));
+            for step in 1..=24 {path.line_to(at(start+step as f32/24.*std::f32::consts::TAU*0.8));}
+            let end=start+std::f32::consts::TAU*0.8;let tip=at(end);
+            let back=point(px(end.sin()*edge*0.18),px(-end.cos()*edge*0.18));
+            let spread=point(px(end.cos()*edge*0.12),px(end.sin()*edge*0.12));
+            path.move_to(tip+back+spread);path.line_to(tip);path.line_to(tip+back-spread);
+            if let Ok(path)=path.build(){window.paint_path(path,color);}
+        }).size_full())
+            .with_animation("cloud-sync-activity",Animation::new(Duration::from_millis(1200)).repeat(),
+                move|icon,value|{phase.set(value);icon}).into_any_element()
+    } else {ui_icon(symbol,size,color)}
 }
 
 /// Like [`icon_element`] but at an explicit pixel size (for the Icons view).
@@ -12327,6 +12402,7 @@ fn save_prefs(p: &Prefs) {
         body.push_str(&format!("file_access_intro_seen={}\n", p.file_access_intro_seen));
         body.push_str(&format!("check_updates_at_startup={}\n",p.check_updates_at_startup));
         body.push_str(&format!("toolbar_order={}\n", toolbar_order::encode(p.toolbar_order)));
+        body.push_str(&format!("filterbar_order={}\n", filterbar_order::encode(p.filterbar_order)));
         let _ = fs::write(&file, body);
     }
 }
@@ -12386,6 +12462,7 @@ fn load_prefs() -> Prefs {
                 if k.trim()=="check_updates_at_startup" {p.check_updates_at_startup=on;continue;}
                 match k.trim() {
                     "toolbar_order" => p.toolbar_order = toolbar_order::decode(v),
+                    "filterbar_order" => p.filterbar_order = filterbar_order::decode(v),
                     "preview" => p.preview = on,
                     "preview_pages" => p.preview_pages = on,
                     "preview_width" => if let Ok(width) = v.trim().parse::<u16>() { p.preview_width = width.clamp(folder_views::MIN_PREVIEW_WIDTH,1200); },
@@ -12900,6 +12977,7 @@ mod tests {
         fs::write(&b, "b").unwrap();
         fs::write(d.join("taken.jpg"), "x").unwrap();
         let mut br = BatchRename {
+            identity: Rc::new(()),
             pane: 0,
             targets: vec![a.clone(), b.clone()],
             mode: BatchMode::Replace,

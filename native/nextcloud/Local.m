@@ -47,7 +47,7 @@ static BOOL NCCanKeep(NSDictionary *item) {
         if(![item[key] isKindOfClass:NSNumber.class]) return NO;
     }
     if (![item[@"provider"] isEqual:NCProvider] || !NCBool(item,@"supported")
-        || NCBool(item,@"keepDownloaded") || NCBool(item,@"downloading")) return NO;
+        || NCBool(item,@"keepDownloaded") || NCBool(item,@"downloading") || NCBool(item,@"uploading") || NCBool(item,@"uploadFailed")) return NO;
     return !NCBool(item,NCBool(item,@"folder") ? @"recursivelyDownloaded" : @"downloaded");
 }
 
@@ -64,6 +64,9 @@ static BOOL NCCanKeep(NSDictionary *item) {
 - (BOOL)isDownloaded;
 - (BOOL)isRecursivelyDownloaded;
 - (BOOL)isDownloading;
+- (BOOL)isUploading;
+- (BOOL)isUploaded;
+- (id)uploadingError;
 - (BOOL)isKeepDownloaded;
 - (id)initWithActionIdentifier:(NSString *)action providerDomainID:(id)domain itemIdentifiers:(NSArray *)identifiers;
 - (void)setActionCompletionBlock:(void (^)(NSError *))completion;
@@ -137,11 +140,17 @@ static BOOL NCCanKeep(NSDictionary *item) {
                     completion(nil,NCError(@"The item's local availability could not be checked."));return;
                 }
                 BOOL local=(metadata.st_flags & SF_DATALESS)==0;
-                completion(@{@"path":path,@"provider":NCProvider,@"supported":@(offered),
+                NSMutableDictionary *status=[@{@"path":path,@"provider":NCProvider,@"supported":@(offered),
                     @"folder":@([item isFolder]),@"downloaded":@(local),
                     @"recursivelyDownloaded":@(local && [item isRecursivelyDownloaded]),
                     @"downloading":@([item isDownloading]),@"keepDownloaded":@(kept),
-                    @"_domain":domain,@"_identifier":identifier},nil);
+                    @"_domain":domain,@"_identifier":identifier} mutableCopy];
+                // Availability on disk is independent from upload completion.
+                // Keep unsupported metadata absent rather than claiming success.
+                if(NCMethod(item,@selector(isUploading),"BOOL",@[])) status[@"uploading"]=@([item isUploading]);
+                if(NCMethod(item,@selector(isUploaded),"BOOL",@[])) status[@"uploaded"]=@([item isUploaded]);
+                if(NCMethod(item,@selector(uploadingError),"@",@[])) status[@"uploadFailed"]=@([item uploadingError]!=nil);
+                completion(status,nil);
             } @catch(NSException *exception) { completion(nil,NCError(@"Nextcloud local metadata could not be read safely.")); }
         }];
     } @catch(NSException *exception) { completion(nil,NCError(@"Nextcloud local status could not be requested.")); }
@@ -189,7 +198,7 @@ static NSDictionary *NCPublic(NSDictionary *item) {
     // JSON 0/1, which the Rust protocol correctly rejects as non-Boolean.
     // Normalize known numeric flags at the bridge boundary, preserving missing
     // or malformed fields so unknown metadata cannot enable an action.
-    for(NSString *key in @[@"supported",@"folder",@"downloaded",@"recursivelyDownloaded",@"downloading",@"keepDownloaded"]) {
+    for(NSString *key in @[@"supported",@"folder",@"downloaded",@"recursivelyDownloaded",@"downloading",@"keepDownloaded",@"uploading",@"uploaded",@"uploadFailed"]) {
         if([result[key] isKindOfClass:NSNumber.class]) {
             result[key]=[NSNumber numberWithBool:[result[key] boolValue]];
         }

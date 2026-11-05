@@ -1,8 +1,20 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Current release: **v0.9.28**, public Apple Silicon + Intel early preview.
-Previous published release: **v0.9.22**.
+Current release: **v0.9.30**, public Apple Silicon + Intel early preview.
+Previous published release: **v0.9.28**.
+
+## Authorized release — 0.9.30 (2026-11-05)
+
+Oliver requested a new GitHub release after the Nextcloud sync changes. Publish
+0.9.30 with grey syncing filenames, circular-arrow activity, pending-upload
+status, fresh rename protection and the separated/reorderable Show/Filter/Mark
+groups since 0.9.28. Keep both signed Mac architecture DMGs, exact MPL sources
+and checksums together. Apple Development signed, not notarized, early prerelease.
+Retain compile/sign/package-only QA: no fresh app/helper/test/UI/Rosetta/Intel
+hardware or live Nextcloud/account QA. Do not infer new runtime verification
+from general positive feedback. Exclude website/, video/ and test.csv. Preserve
+all existing tags/assets, live app bundles/windows/PTYs/SSH and privacy settings.
 
 ## Published release — 0.9.28
 

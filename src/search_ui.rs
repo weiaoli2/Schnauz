@@ -839,7 +839,7 @@ impl Schnauz {
                                 .child(div().flex_none().child(icon_element(path,*is_dir)))
                                 .child(div().id(("search-entry-name",i)).flex_1().min_w_0().flex()
                                     .child(rename_ui::marked_entry_name(&item.title,this.rename_text(pane,path,cx),
-                                        this.file_search.marked_versions.get(path).copied()))
+                                        this.file_search.marked_versions.get(path).copied(),matches!(cloud,CloudSync::Syncing|CloudSync::SyncError)))
                                     .on_click(cx.listener(move|this,ev:&ClickEvent,window,cx| {
                                         this.click_search_entry(i,true,ev,window,cx);
                                         this.suppress_entry_click = true;

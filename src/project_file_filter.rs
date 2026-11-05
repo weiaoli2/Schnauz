@@ -211,7 +211,7 @@ impl Schnauz {
             .items_center()
             .gap(px(6.))
             .whitespace_nowrap()
-            .child("Filter:")
+            .child(self.filterbar_label(filterbar_order::Group::Filter,pane,cx))
             .child(
                 div()
                     .flex_none()
