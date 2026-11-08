@@ -1224,3 +1224,13 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   those actions still cancel the scan. Preserve map navigation and the up fix.
   Uploaded v1.0.0 is superseded before publication; retain its draft/tag/assets
   unchanged and publish corrected V1 as 1.0.1. Cache cleanup stays deferred.
+
+- Published V1 / v1.0.1 on 2026-11-08, source 69ae00d. Universal primary DMG
+  and identical legacy aliases, exact MPL sources, all five GitHub digests,
+  1772 source files and anonymous public download verified. Public feed selects
+  1.0.1 for both old architecture-specific clients. Includes both Disk Usage
+  fixes and pending project/preview features. Apple Development, unnotarized,
+  prerelease; compile/sign/package-only QA. Universal local update staged;
+  installed live bundle identities/hashes and sessions unchanged. Old v1.0.0
+  draft/tag remains unpublished and superseded. Receipts dist/1.0.1. Release
+  request complete; preserve all tags/assets. Cache cleanup remains deferred.

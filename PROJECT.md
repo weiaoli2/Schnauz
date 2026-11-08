@@ -2956,3 +2956,35 @@ it without moving the tag or overwriting its assets. Continue the V1 release as
 1.0.1 / v1.0.1, including both Disk Usage corrections. Rebuild and verify from the
 new commit, retain identical universal compatibility aliases and compile-only QA.
 Cache cleanup remains deferred; no old cache content has been deleted.
+
+
+## Published V1 / 1.0.1 — 2026-11-08
+
+Published https://github.com/weiaoli2/Schnauz/releases/tag/v1.0.1 from source
+69ae00d1f35bf2e9ad8583e026aaaf87fb24e2da. One 26 MB universal Mac installer
+contains both arm64/x86_64 slices of all nine executables. Identical legacy-named
+DMGs preserve the exact-name update discovery of previous Intel/Apple Silicon
+builds; new discovery prefers universal. All five asset digests/sizes, exact notes,
+1772 source archive files and an actual anonymous public universal download match.
+The anonymous release feed fits the old checker limit and selects 1.0.1 for both
+architectures. Previous public release metadata and asset digests remain unchanged.
+
+Includes sidebar bookmarks, project Rename, middle-button preview panning,
+project/all-project views and sorting, working Disk Usage parent fallback after
+rebased scans and persistent Disk Usage while browsing (explicit Close/Todoist
+replacement only). The uploaded 1.0.0 draft/tag remains superseded and unpublished;
+no existing tag or asset was overwritten.
+
+Verification stayed compile/sign/package only. Rust/UI fixtures compiled, both
+architecture builds, all executable-slice signatures, allowlists, read-only mounted
+installer contents and exact MPL sources passed. Apple Development signed, not
+notarized, prerelease; no new app/helper/test/UI/Rosetta/Intel-hardware/live account
+execution. The universal 1.0.1 local update is safely staged for ./update.sh after
+a deliberate quit; installed app file device/inode/hash values remain unchanged.
+No sessions restarted or privacy settings changed. Cache cleanup was inspected
+but deferred at Oliver's request; no old cache contents were deleted.
+
+Receipts: dist/1.0.1/{LOCAL-,DRAFT-,RELEASE-,PUBLIC-}VERIFICATION.json,
+PUBLIC-UPDATE-COMPATIBILITY.json, GITHUB-SOURCE-VERIFICATION.json and
+NORMAL-LOCAL-BUILD.json. Logs: .build-cache/1.0.1-{test-compile,release-build}.log.
+Publication complete; future releases need a new request. Preserve all tags/assets.

@@ -1,7 +1,24 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Current published release: **v0.9.30**. Authorized next release: **V1 / v1.0.1**.
+Current published release: **V1 / v1.0.1**. Previous: **v0.9.30**.
+
+## Published V1 — 1.0.1
+
+Published 2026-11-08 at https://github.com/weiaoli2/Schnauz/releases/tag/v1.0.1
+from 69ae00d1f35bf2e9ad8583e026aaaf87fb24e2da. One universal installer plus
+byte-identical legacy arm64/x86_64 aliases; all nine executables contain both
+architectures. All five asset digests, source archive correspondence (1772 files),
+read-only mounted contents, exact MPL sources and anonymous public download
+verified. The actual public feed selects V1 for both old update clients and all
+older public release metadata/assets remain unchanged. Normal universal update
+staged without changing installed live-bundle identities/hashes or sessions.
+Apple Development signed, unnotarized, prerelease. Compile/sign/package-only QA;
+fixtures compiled, no app/helper/test/runtime/Intel hardware execution.
+Includes both Disk Usage fixes and the project/bookmark/preview/view features.
+Preserve superseded unpublished v1.0.0 draft/tag; no tag/assets were overwritten.
+Publication complete; future releases require a new request. Receipts dist/1.0.1.
+Cache cleanup remains deferred; no old cache contents were deleted.
 
 ## Corrected V1 candidate — 1.0.1
 
