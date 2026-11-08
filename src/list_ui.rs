@@ -1,5 +1,10 @@
 //! Configurable list columns and folder presentation controls.
 use super::*;
+use folder_views::Scope;
+
+#[derive(Clone)]
+pub(super) struct ViewChange { scope: Scope, root: PathBuf, reset: bool }
+impl gpui::Global for ViewChange {}
 
 #[derive(Clone, Copy)]
 struct ColumnDrag {
@@ -38,7 +43,7 @@ impl Schnauz {
         let style = self
             .folder_views
             .borrow()
-            .resolve(&tab.current_dir)
+            .resolve_project(self.projects.active, &tab.current_dir)
             .cloned()
             .or_else(|| (!only_saved).then(folder_views::FolderView::default));
         if let Some(style) = style {
@@ -46,18 +51,40 @@ impl Schnauz {
         }
     }
     pub(super) fn apply_all_folder_views(&mut self) {
-        for pane in &mut self.panes {
-            for tab in &mut pane.tabs {
-                if tab.remote.is_some() {
-                    continue;
+        let views = self.folder_views.borrow();
+        for (project, panes) in std::iter::once((self.projects.active, &mut self.panes))
+            .chain(self.project_sessions.iter_mut().map(|(id, session)| (*id, &mut session.panes))) {
+            for pane in panes { for tab in &mut pane.tabs {
+                if tab.remote.is_none() {
+                    if let Some(style) = views.resolve_project(project, &tab.current_dir) { apply_style(tab, style); }
                 }
-                if let Some(style) = self.folder_views.borrow().resolve(&tab.current_dir) {
-                    apply_style(tab, style);
-                }
-            }
+            } }
         }
     }
-    fn schedule_view_save(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn observe_view_change(&mut self, cx: &mut Context<Self>) {
+        let change = cx.global::<ViewChange>().clone();
+        self.apply_all_folder_views();
+        if change.reset {
+            let views = self.folder_views.borrow();
+            for (project, panes) in std::iter::once((self.projects.active, &mut self.panes))
+                .chain(self.project_sessions.iter_mut().map(|(id, session)| (*id, &mut session.panes))) {
+                if change.scope != Scope::AllProjects && change.scope != Scope::Project(project) { continue; }
+                for pane in panes { for tab in &mut pane.tabs {
+                    if tab.remote.is_none() && tab.current_dir == change.root {
+                        apply_style(tab, &views.resolve_project(project, &tab.current_dir).cloned().unwrap_or_default());
+                    }
+                } }
+            }
+        }
+        for pane in 0..self.panes.len() { self.scroll_selected_in_pane(pane); }
+        cx.notify();
+    }
+    fn publish_view_change(&mut self, scope: Scope, root: PathBuf, reset: bool, cx: &mut Context<Self>) {
+        cx.set_global(ViewChange { scope, root, reset });
+        self.observe_view_change(cx);
+        self.schedule_view_save(cx);
+    }
+    pub(super) fn schedule_view_save(&mut self, cx: &mut Context<Self>) {
         let error = self.folder_views.borrow().error.clone();
         if let Some(error) = error {
             self.set_notice(
@@ -88,37 +115,41 @@ impl Schnauz {
             return;
         }
         let (path, style) = (tab.current_dir.clone(), style_of(tab));
-        self.folder_views.borrow_mut().remember(path, style, false);
-        self.apply_all_folder_views();
-        self.schedule_view_save(cx);
+        let scope = Scope::Project(self.projects.active);
+        self.folder_views.borrow_mut().remember_scoped(scope, path.clone(), style, false);
+        self.publish_view_change(scope, path, false, cx);
     }
-    pub(super) fn apply_view_to_tree(
-        &mut self,
-        pane: usize,
-        root: PathBuf,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn view_rule_nodes(&self, pane: usize, root: PathBuf) -> Vec<MenuNode> {
+        let project = self.projects.active;
+        let name = project.and_then(|id| self.projects.items.iter().find(|p| p.id == id).map(|p| p.name.as_str())).unwrap_or("Personal");
         let style = style_of(self.tab(pane));
-        self.folder_views.borrow_mut().remember(root.clone(), style, true);
-        self.apply_all_folder_views();
-        self.schedule_view_save(cx);
-        self.close_context_menu(cx);
-        self.close_sidebar_menu(cx);
-        self.set_notice(
-            format!("View applied to {} + subfolders", path_label(&root)),
-            cx,
-        );
-        cx.notify();
-    }
-    fn reset_folder_view(&mut self, pane: usize, cx: &mut Context<Self>) {
-        let path = self.tab(pane).current_dir.clone();
-        self.folder_views.borrow_mut().reset(&path);
-        self.apply_folder_view(pane, false);
-        self.apply_all_folder_views();
-        self.schedule_view_save(cx);
-        self.close_context_menu(cx);
-        self.scroll_selected_in_pane(pane);
-        cx.notify();
+        [
+            ("Save Current View & Sorting for This Folder", false, false),
+            ("Apply Current View & Sorting to This Folder & Subfolders", true, false),
+            ("Use inherited / default view", false, true),
+        ].into_iter().map(|(label, descendants, reset)| {
+            let items = [(Scope::Project(project), format!("This project ({name})")), (Scope::AllProjects, "All projects".into())]
+                .into_iter().map(|(scope, label)| {
+                    let root = root.clone();
+                    let style = style.clone();
+                    mi(label, move |this, _, cx| {
+                        let error = this.folder_views.borrow().error.clone();
+                        if let Some(error) = error {
+                            this.set_notice(format!("Couldn't read saved views: {error}. Existing settings preserved."), cx);
+                            return;
+                        }
+                        if let Scope::Project(Some(id)) = scope {
+                            if !this.projects.items.iter().any(|p| p.id == id) { return; }
+                        }
+                        if reset { this.folder_views.borrow_mut().reset_scoped(scope, &root); }
+                        else { this.folder_views.borrow_mut().remember_scoped(scope, root.clone(), style.clone(), descendants); }
+                        this.publish_view_change(scope, root.clone(), reset, cx);
+                        this.close_context_menu(cx);
+                        this.close_sidebar_menu(cx);
+                    })
+                }).collect();
+            MenuNode::Sub { label: label.into(), items }
+        }).collect()
     }
     pub(super) fn scroll_selected_in_pane(&self, pane: usize) {
         let tab = self.tab(pane);
@@ -245,12 +276,7 @@ impl Schnauz {
         if self.tab(pane).remote.is_none() {
             nodes.push(MenuNode::Sep);
             let root = self.tab(pane).current_dir.clone();
-            nodes.push(mi("Apply view to all subfolders", move |this, _, cx| {
-                this.apply_view_to_tree(pane, root.clone(), cx)
-            }));
-            nodes.push(mi("Use inherited / default view", move |this, _, cx| {
-                this.reset_folder_view(pane, cx)
-            }));
+            nodes.extend(self.view_rule_nodes(pane, root));
         }
         self.context_menu = Some(ContextMenu {
             x,
@@ -279,12 +305,7 @@ impl Schnauz {
         if self.tab(pane).remote.is_none() {
             nodes.push(MenuNode::Sep);
             let root = self.tab(pane).current_dir.clone();
-            nodes.push(mi("Apply view to all subfolders", move |this, _, cx| {
-                this.apply_view_to_tree(pane, root.clone(), cx)
-            }));
-            nodes.push(mi("Use inherited / default view", move |this, _, cx| {
-                this.reset_folder_view(pane, cx)
-            }));
+            nodes.extend(self.view_rule_nodes(pane, root));
         }
         self.context_menu = Some(ContextMenu {
             x,

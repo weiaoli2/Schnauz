@@ -528,27 +528,13 @@ impl crate::todoist_window::Tasks {
                     cache.data.as_ref().map(|d| d.project.name.clone())
                 {
                     let mut candidate = cx.global::<ProjectLibraryGlobal>().0.clone();
-                    let ids: Vec<u64> = candidate
-                        .items
-                        .iter()
-                        .filter(|p| {
-                            p.sidebar.todoist.as_ref().is_some_and(|l| {
-                                l.account_id == link.account_id && l.project_id == link.project_id
-                            }) && p.name != remote_name
-                        })
-                        .map(|p| p.id)
-                        .collect();
-                    if !ids.is_empty() {
-                        let result = ids
-                            .into_iter()
-                            .try_for_each(|id| candidate.set_name(id, &remote_name))
-                            .and_then(|_| this.persist_library(candidate, cx));
-                        if let Err(error) = result {
-                            this.set_notice(
-                                format!("Todoist name could not be matched: {error}"),
-                                cx,
-                            );
-                        }
+                    let result = candidate.observe_todoist_name(&link.account_id, &link.project_id, &remote_name);
+                    let result = result.and_then(|_| {
+                        if candidate == cx.global::<ProjectLibraryGlobal>().0 { Ok(()) }
+                        else { this.persist_library(candidate, cx) }
+                    });
+                    if let Err(error) = result {
+                        this.set_notice(format!("Todoist name could not be matched: {error}"), cx);
                     }
                 }
                 cx.notify();

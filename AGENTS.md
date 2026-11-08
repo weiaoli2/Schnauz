@@ -1172,3 +1172,41 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   execution. Normal signed 0.9.30 safely staged; live app identities/hashes and
   all sessions preserved. Receipts dist/0.9.30. Request complete; future releases
   need a new request. Never overwrite this tag/assets or earlier releases.
+
+
+- Local 0.9.31: sidebar local file/folder drops share geometric Common/current-
+  project Favourites routing and a root fallback. Advertise copy-only on the
+  sidebar, cancel spring navigation there and preserve all originals. Other file
+  destinations keep normal copy/move. Project context menus in the sidebar and
+  top project bar offer Rename… for named projects, with selected existing text,
+  reserved/duplicate checks and captured-ID/original-name stale-save protection.
+  Keep Personal fixed, preserve tabs/PTYs/links, and make no Todoist rename write.
+  Remote snapshot names compare against the last stored remote name so a local
+  rename persists through unchanged refreshes. Retain compile/sign/stage-only QA.
+
+- Visual image/document previews support middle-button drag panning after zoom,
+  retaining left-button panning. Track through the window root outside the image,
+  release on the initiating button and cancel on lost press/selection/modal.
+  Preserve bounded scrolling, zoom reset and native text/video interactions.
+
+- Local 0.9.31 folder views/sorting autosave per project. Preserve old folder-view
+  rules as All projects fallback, resolve nearest ancestor with project priority
+  at equal depth, and give Save / Apply to Subfolders / Inherited-default actions
+  explicit This project (name) / All projects submenu choices. All-project saves
+  replace matching scoped exceptions; tree saves also replace descendants only
+  in the chosen scope. Reset is exact-folder only. Capture folder/style/project
+  at menu opening, notify all windows and resolve parked sessions using their
+  owner project. Remove retired project view maps before IDs can be reused.
+  Preserve debounced atomic central saves, invalid config and unrelated rules.
+
+
+- 2026-11-08: Oliver authorizes public V1 / 1.0.0 release of current code with a
+  universal Mac app. He approved identical legacy arm64/x86_64 download aliases
+  so pre-V1 exact-name update checkers work. One actual universal DMG, one primary
+  Download for Mac link; all aliases must match its hash. Merge all executables,
+  preserve equal resources/identity/version/stable certificate, re-sign helpers
+  then app and verify both slices. New updater prefers universal with legacy
+  fallback. Keep signing/notarization disclosures and compile/sign/package-only
+  QA; no app/helper/test launches or live accounts. Stage normal local universal
+  update safely, preserve all existing tags/assets/sessions and exclude untracked
+  website/video/test.csv. This supersedes the pending 0.9.31 no-release hold.

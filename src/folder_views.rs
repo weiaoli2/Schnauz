@@ -194,12 +194,15 @@ struct Rule {
 struct Data {
     version: u32,
     folders: HashMap<PathBuf, Rule>,
+    #[serde(default)]
+    projects: HashMap<String, HashMap<PathBuf, Rule>>,
 }
 impl Default for Data {
     fn default() -> Self {
         Self {
             version: 1,
             folders: HashMap::new(),
+            projects: HashMap::new(),
         }
     }
 }
@@ -216,6 +219,25 @@ fn normalized(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Scope { Project(Option<u64>), AllProjects }
+fn project_key(project: Option<u64>) -> String {
+    project.map_or_else(|| "personal".into(), |id| id.to_string())
+}
+#[cfg(any(test, feature = "ui-checks"))]
+fn resolve_rules<'a>(rules: &'a HashMap<PathBuf, Rule>, path: &Path) -> Option<&'a FolderView> {
+    path.ancestors().find_map(|ancestor| rules.get(ancestor)
+        .filter(|r| ancestor == path || r.descendants).map(|r| &r.style))
+}
+fn normalize_rules(rules: &mut HashMap<PathBuf, Rule>) {
+    let old = std::mem::take(rules);
+    *rules = old.into_iter().filter(|(p, _)| p.is_absolute()).map(|(p, mut rule)| {
+        rule.style.list.normalize();
+        rule.style.preview_width = rule.style.preview_width.clamp(MIN_PREVIEW_WIDTH, 1200);
+        (normalized(&p), rule)
+    }).collect();
 }
 
 pub(crate) struct Library {
@@ -246,16 +268,8 @@ impl Library {
             Ok(d) => (d, None),
             Err(e) => (Data::default(), Some(e)),
         };
-        data.folders.retain(|p, _| p.is_absolute());
-        data.folders = data
-            .folders
-            .into_iter()
-            .map(|(p, mut rule)| {
-                rule.style.list.normalize();
-                rule.style.preview_width = rule.style.preview_width.clamp(MIN_PREVIEW_WIDTH, 1200);
-                (normalized(&p), rule)
-            })
-            .collect();
+        normalize_rules(&mut data.folders);
+        for rules in data.projects.values_mut() { normalize_rules(rules); }
         Self {
             data,
             path,
@@ -264,41 +278,61 @@ impl Library {
             gate: Arc::new(Mutex::new(())),
         }
     }
+    #[cfg(any(test, feature = "ui-checks"))]
     pub fn resolve(&self, path: &Path) -> Option<&FolderView> {
+        resolve_rules(&self.data.folders, &normalized(path))
+    }
+    pub fn resolve_project(&self, project: Option<u64>, path: &Path) -> Option<&FolderView> {
         let path = normalized(path);
+        let project_rules = self.data.projects.get(&project_key(project));
         path.ancestors().find_map(|ancestor| {
-            self.data
-                .folders
-                .get(ancestor)
+            project_rules.and_then(|rules| rules.get(ancestor))
                 .filter(|r| ancestor == path || r.descendants)
+                .or_else(|| self.data.folders.get(ancestor).filter(|r| ancestor == path || r.descendants))
                 .map(|r| &r.style)
         })
     }
-    pub fn remember(&mut self, path: PathBuf, mut style: FolderView, descendants: bool) {
+    #[cfg(any(test, feature = "ui-checks"))]
+    pub fn remember(&mut self, path: PathBuf, style: FolderView, descendants: bool) {
+        self.remember_scoped(Scope::AllProjects, path, style, descendants);
+    }
+    pub fn remember_scoped(&mut self, scope: Scope, path: PathBuf, mut style: FolderView, descendants: bool) {
         let path = normalized(&path);
-        if !path.is_absolute() {
-            return;
-        }
+        if !path.is_absolute() { return; }
         style.list.normalize();
         style.preview_width = style.preview_width.clamp(MIN_PREVIEW_WIDTH, 1200);
-        let inherited = self.data.folders.get(&path).is_some_and(|r| r.descendants);
-        if descendants {
-            self.data
-                .folders
-                .retain(|p, _| p == &path || !p.starts_with(&path));
-        }
-        self.data.folders.insert(
-            path,
-            Rule {
-                descendants: descendants || inherited,
-                style,
-            },
-        );
+        let rules = match scope {
+            Scope::Project(project) => self.data.projects.entry(project_key(project)).or_default(),
+            Scope::AllProjects => {
+                // Explicit all-project application replaces matching exceptions too.
+                for rules in self.data.projects.values_mut() {
+                    rules.retain(|p, _| p != &path && !(descendants && p.starts_with(&path)));
+                }
+                &mut self.data.folders
+            }
+        };
+        let inherited = rules.get(&path).is_some_and(|r| r.descendants);
+        if descendants { rules.retain(|p, _| p == &path || !p.starts_with(&path)); }
+        rules.insert(path, Rule { descendants: descendants || inherited, style });
         self.revision.fetch_add(1, Ordering::AcqRel);
     }
-    pub fn reset(&mut self, path: &Path) {
-        self.data.folders.remove(&normalized(path));
+    #[cfg(any(test, feature = "ui-checks"))]
+    pub fn reset(&mut self, path: &Path) { self.reset_scoped(Scope::AllProjects, path); }
+    pub fn reset_scoped(&mut self, scope: Scope, path: &Path) {
+        let path = normalized(path);
+        match scope {
+            Scope::Project(project) => { if let Some(rules) = self.data.projects.get_mut(&project_key(project)) { rules.remove(&path); } }
+            Scope::AllProjects => {
+                self.data.folders.remove(&path);
+                for rules in self.data.projects.values_mut() { rules.remove(&path); }
+            }
+        }
         self.revision.fetch_add(1, Ordering::AcqRel);
+    }
+    pub fn remove_project(&mut self, project: u64) {
+        if self.data.projects.remove(&project_key(Some(project))).is_some() {
+            self.revision.fetch_add(1, Ordering::AcqRel);
+        }
     }
     pub fn write_job(&self) -> Option<WriteJob> {
         if self.error.is_some() || self.revision.load(Ordering::Acquire) == 0 {
@@ -337,6 +371,42 @@ impl WriteJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn project_views_shared_fallback_resets_and_tree_scope_roundtrip() {
+        let mut lib = Library::open(None);
+        let shared = FolderView::default();
+        let icons = FolderView { view: ViewMode::Icons, sort: "modified".into(), ascending: false, ..shared.clone() };
+        let root = Path::new("/work");
+        let child = Path::new("/work/child");
+        lib.remember(root.into(), shared.clone(), true);
+        lib.remember_scoped(Scope::Project(Some(7)), root.into(), icons.clone(), true);
+        assert_eq!(lib.resolve_project(Some(7), child), Some(&icons));
+        assert_eq!(lib.resolve_project(Some(8), child), Some(&shared));
+        assert_eq!(lib.resolve_project(None, child), Some(&shared));
+        lib.remember_scoped(Scope::Project(None), child.into(), icons.clone(), false);
+        assert_eq!(lib.resolve_project(None, child), Some(&icons));
+        lib.remember_scoped(Scope::AllProjects, child.into(), shared.clone(), false);
+        assert_eq!(lib.resolve_project(Some(7), child), Some(&shared), "Nearest rule wins; shared exact beats project ancestor");
+        lib.reset_scoped(Scope::Project(Some(7)), child);
+        assert_eq!(lib.resolve_project(Some(7), child), Some(&shared));
+        lib.reset_scoped(Scope::AllProjects, child);
+        assert_eq!(lib.resolve_project(Some(7), child), Some(&icons));
+        lib.remember_scoped(Scope::Project(Some(8)), child.into(), icons.clone(), false);
+        lib.remember_scoped(Scope::Project(Some(7)), root.into(), shared.clone(), true);
+        assert_eq!(lib.resolve_project(Some(8), child), Some(&icons), "Project tree apply preserves other projects");
+        lib.remember_scoped(Scope::AllProjects, root.into(), shared.clone(), true);
+        assert_eq!(lib.resolve_project(Some(8), child), Some(&shared), "All-project tree apply replaces child exceptions in every project");
+        lib.remember_scoped(Scope::Project(Some(7)), child.into(), icons.clone(), false);
+        let bytes = serde_json::to_vec(&lib.data).unwrap();
+        let mut restored = Library::open(None);
+        restored.data = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(restored.resolve_project(Some(7), child), Some(&icons));
+        restored.remove_project(7);
+        assert_eq!(restored.resolve_project(Some(7), child), Some(&shared));
+        let legacy: Data = serde_json::from_str(r#"{"version":1,"folders":{}}"#).unwrap();
+        assert!(legacy.projects.is_empty());
+    }
+
     #[test]
     fn inheritance_overrides_and_apply_all_are_component_based() {
         let mut lib = Library::open(None);

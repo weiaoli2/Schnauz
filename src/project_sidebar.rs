@@ -83,6 +83,18 @@ impl Schnauz {
         Some(self.common_bounds.borrow().is_some_and(|b| b.contains(&position)))
     }
 
+    /// Every local drop path resolves the same geometric destination at release.
+    pub(super) fn drop_sidebar_paths(
+        &mut self, drag: &ExternalPaths, window: &Window, cx: &mut Context<Self>,
+    ) {
+        let Some(common) = self.sidebar_drop_target(window.mouse_position()) else { return; };
+        self.favourites_drop_hover = false;
+        self.common_drop_hover = false;
+        let project = self.projects.active;
+        self.add_dropped_favourites(project, common, drag.paths().to_vec(), cx);
+        cx.stop_propagation();
+    }
+
     /// Bind the destination now so a later project switch cannot redirect it.
     pub(super) fn current_project_reference_node(&self, items: Vec<Shortcut>) -> MenuNode {
         let project = self.projects.active;
@@ -766,11 +778,8 @@ impl Schnauz {
                 this.drop_tab_shortcut(drag, true, cx);
                 cx.stop_propagation();
             }))
-            .on_drop(cx.listener(|this, drag: &ExternalPaths, _, cx| {
-                this.favourites_drop_hover = false;
-                this.common_drop_hover = false;
-                this.add_dropped_favourites(this.projects.active, true, drag.paths().to_vec(), cx);
-                cx.stop_propagation();
+            .on_drop(cx.listener(|this, drag: &ExternalPaths, window, cx| {
+                this.drop_sidebar_paths(drag, window, cx);
             }))
             .into_any_element()
     }

@@ -154,6 +154,19 @@ continue without it, with some folders restricted. The guide remains under
 **Settings → General → File Access**. Acknowledging it does not grant access.
 
 Click **+ beside Projects** or press **⌘⇧S** to create a project from the current tabs.
+Right-click a named project in the sidebar or the top project bar and choose
+**Rename…**. Its favourites, tabs and linked Todoist tasks stay attached. Personal
+keeps its fixed name. Renaming here changes the Schnauz name only.
+View and sorting changes autosave for the current project. View/column menus and
+folder context menus offer **Save Current View & Sorting for This Folder**,
+**Apply Current View & Sorting to This Folder & Subfolders**, and
+**Use inherited / default view**, each with **This project (name)** and
+**All projects**. Existing saved views remain the shared fallback. The nearest
+folder rule wins; project rules take priority when both scopes name the same
+folder. Applying to All projects replaces matching project overrides in that
+folder/tree. Reset removes the chosen scope’s exact folder rule and reveals
+the inherited/shared/default view; unrelated folders retain their settings.
+
 Each project keeps its own **Favourites**, connection settings, Todoist link and
 last tabs/layout. **Personal** has its own profile. The shared **Common** list
 appears above Favourites in every project. It initially includes **Home**, **Desktop**
@@ -198,6 +211,11 @@ available for a manual refresh in every folder.
 Click the **PROJECTS** or **COMMON** heading to collapse/expand that group. The
 heading stays visible, with no extra icon, and its state is remembered. Dropping
 a reference on collapsed Common expands it to show the added item.
+
+Drag files or folders from the file pane or Finder onto **Common** to bookmark
+them for every project, or elsewhere in the expanded sidebar to bookmark them
+in the current project’s **Favourites**. These drops add references and leave
+the originals in place. Folders and files appear in their respective groups.
 
 Drag a folder tab onto Common to share its folder across projects, or elsewhere
 in the expanded sidebar to add it to the captured project's Favourites. The tab
@@ -565,8 +583,9 @@ files, across projects and windows. macOS/Finder defaults remain unchanged.
 Use macOS Default Again removes the Schnauz override. Choices are stored centrally
 in file-apps.json; folders, app bundles and extensionless files retain normal behavior.
 
-Image and document previews support wheel zoom and dragging to pan an enlarged
-image. Selecting another file resets preview zoom. In native text previews,
+Image and document previews support wheel zoom. Hold the middle mouse button
+and drag to pan an enlarged image; left-button dragging also works. Selecting
+another file resets preview zoom. In native text previews,
 ordinary wheel scrolls the text and Shift+wheel changes its size. Image layout
 retains the source aspect ratio at pane width.
 Quick Actions also lists matching installed Automator file actions from the user

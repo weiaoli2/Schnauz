@@ -1,6 +1,6 @@
 # Schnauz
 
-Last updated: 2026-11-05
+Last updated: 2026-11-08
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -2841,3 +2841,92 @@ Publication request complete; future releases require a new request.
 Build/fixture logs: `.build-cache/0.9.30-release-{build,test-compile}.log`,
 `.build-cache/0.9.30-release-normal-build.log` and
 `.build-cache/0.9.30-nextcloud-native-compile.log`.
+
+
+## Local 0.9.31 — sidebar bookmarks and project Rename
+
+Oliver requested file/folder drag bookmarking in Common versus current-project
+Favourites, plus Rename… on both sidebar and top-bar project context menus.
+Local drops now share geometric destination resolution, with a root fallback
+for drops outside nested handlers. The native sidebar operation is copy-only
+so reference creation cannot authorize a source application to delete originals.
+Sidebar hover cancels folder/tab dwell; file operations elsewhere retain their
+existing copy/move behavior. Local metadata validation remains off-thread and
+captures the destination project before waiting; remote drops remain references.
+
+Rename reuses the project naming dialog with the current name selected, Rename
+labels and select-all/copy/cut/paste. It captures the project ID/original name,
+rejects stale saves, validates reserved/duplicate names and persists through the
+shared library. It never switches projects or rebuilds tabs/PTYs. Personal stays
+fixed. Todoist links/IDs remain attached and no remote rename is sent. Snapshot
+name reconciliation compares against the stored remote-name baseline, preserving
+an explicit Schnauz rename until an actual Todoist-side name change occurs.
+
+Regression fixtures cover native mixed file/folder drops to both destinations,
+source retention, copy-only feedback, menu availability, rename validation and
+unchanged layouts/PTYs, plus Todoist baseline/persistence/conflict behavior.
+Verification remains compile/sign/stage only; fixtures are compiled, not run.
+No live app/helper/test, account, provider or Keychain QA; no commit/publication.
+
+
+Oliver additionally requested middle-mouse panning after zooming the preview.
+Visual image/document previews accept middle as well as existing left drags,
+show hand cursors and continue tracking through the browser root when the pointer
+leaves the image. The captured button owns release; losing the pressed button,
+changing selection/tab, closing preview or entering a modal cancels tracking.
+Scroll offsets retain GPUI bounds and wheel zoom behavior remains unchanged.
+Rust/UI fixtures include middle-drag offsets and button-specific release.
+
+
+Oliver also requested explicit project/all-project scope for saved views and
+sorting, especially Use inherited / default view. Existing version-1 folder
+rules remain shared; a backward-compatible projects map adds stable project-ID
+keys and a separate Personal key. Autosaves now target the current project.
+Resolution walks folder ancestors in memory, selecting the nearest rule and
+preferring the project rule at equal depth. Save Current View & Sorting, Apply
+to Folder & Subfolders and Use inherited / default view expose This project
+(name) / All projects in view/column and local folder/sidebar context menus.
+Menus capture source style, folder and destination project at opening.
+
+Explicit All-project saves remove matching project overrides (tree application
+also removes descendants), preserving unrelated rules. Reset removes only exact
+rules in the selected scope; All projects clears exact overrides in every scope.
+Project removal retires its view map before an ID can be reused. All browser
+windows receive scoped view updates; parked project sessions resolve their own
+rules while preserving tabs and PTYs. Terminal-driven local navigation also
+uses project-aware lookup. Atomic debounced background persistence remains in
+folder-views.json, without folder scans or files in browsed directories.
+Fixtures cover legacy loading, shared fallback, independent Personal/projects,
+nearest-rule precedence, scoped tree replacement/reset, roundtrip and cleanup.
+
+
+0.9.31 verification completed: Rust/ui-checks fixture compilation and optimized
+normal build passed. Independently verified pending app version/identity, all
+helper arm64 architectures, deep/strict certificate signature, unchanged signer
+chain and bundle allowlist. Installed live-bundle files retain every recorded
+device/inode/SHA-256. Final signed update is staged for ./update.sh after a
+deliberate quit, with all four requests included. No app/helper/test executable
+or live account/provider operation was run, and no session was restarted.
+Runtime interaction QA remains Oliver's workflow. No commit/publication.
+Logs: `.build-cache/0.9.31-sidebar-rename-{test-compile,build}.log`.
+Receipt: `.build-cache/0.9.31-sidebar-rename-verification.json`.
+
+
+## Authorized V1 / 1.0.0 universal publication — 2026-11-08
+
+Oliver requested releasing the current stage as V1 with one universal package
+and working updates from both older architecture builds. He explicitly approved
+publishing byte-identical legacy-named compatibility downloads, since pre-V1
+update discovery requires exact arm64/x86_64 filenames. Publish v1.0.0 with one
+primary universal DMG, those aliases, exact MPL sources and checksums. Include
+all pending 0.9.31 features; preserve 0.9.30 and all older tags/assets.
+
+The new merger validates source app identities, equal resources/signers and
+thin architectures, merges all nine executables, signs helpers then bundle and
+checks both universal slices and the allowlist. Updates prefer universal assets
+with exact public URL checks, falling back to architecture-specific assets for
+old releases. Installation stays manual, with the same bundle ID/profile/signer.
+Retain Apple Development signing/unnotarized prerelease and compile/sign/package-
+only QA. Do not execute app/helper/test binaries or access live accounts.
+Stage the universal app for the normal local update without replacing live code.
+No website/video/test.csv, live settings, credentials or keys enter source Git.

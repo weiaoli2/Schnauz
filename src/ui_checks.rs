@@ -439,6 +439,26 @@ fn check_previews(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
         })).unwrap();
         let zoomed = BOUNDS.with(|all| *all.borrow().get("preview-image").unwrap());
         assert!(zoomed.size.width > image.size.width && zoomed.size.height > image.size.height);
+        window.update(cx, |fixture, window, cx| fixture.browser.update(cx, |browser, cx| {
+            let start = zoomed.origin + point(px(40.), px(40.));
+            browser.preview_zoom.begin_pan(MouseButton::Middle, start);
+            let before = browser.preview_zoom.scroll.offset();
+            assert!(browser.preview_zoom.move_pan(&MouseMoveEvent {
+                position: start - point(px(30.), px(20.)),
+                pressed_button: Some(MouseButton::Middle), modifiers: Default::default(),
+            }));
+            let after = browser.preview_zoom.scroll.offset();
+            assert!(after.x < before.x, "Middle drag moves the zoomed image horizontally");
+            assert!(!browser.preview_zoom.end_pan(MouseButton::Left), "A different button cannot release this drag");
+            assert!(browser.preview_zoom.end_pan(MouseButton::Middle));
+            assert!(browser.preview_zoom.pan.is_none());
+            assert!(!browser.preview_zoom.move_pan(&MouseMoveEvent {
+                position: start, pressed_button: None, modifiers: Default::default(),
+            }));
+            browser.preview_zoom.scroll.set_offset(point(px(0.), px(0.)));
+            window.refresh();
+            cx.notify();
+        })).unwrap();
     }
     select("compact-document.docx", (800, 800), cx); paint(cx);
     BOUNDS.with(|all| {
@@ -506,7 +526,7 @@ fn check_previews(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
         let child = root.join("unvisited-child");
         let unrelated = root.with_file_name("unrelated-folder");
         let old = folder_views::FolderView::default();
-        browser.folder_views.borrow_mut().remember(child.clone(), old.clone(), false);
+        browser.folder_views.borrow_mut().remember_scoped(folder_views::Scope::Project(browser.projects.active), child.clone(), old.clone(), false);
         browser.folder_views.borrow_mut().remember(unrelated.clone(), old.clone(), false);
         let pane = browser.active_pane;
         browser.tab_mut(pane).sort_key = SortKey::Modified;
@@ -515,13 +535,15 @@ fn check_previews(window: gpui::WindowHandle<Fixture>, cx: &mut App) {
         let shortcuts_before = browser.projects.sidebar().shortcuts.clone();
         let menu = browser.sidebar_menu_nodes(SidebarTarget::Favourite(projects::Shortcut::local(root.clone(), projects::Section::Folders)), cx);
         let apply = menu.into_iter().find_map(|node| match node {
-            MenuNode::Item { label, on, .. } if label == "Apply Current View & Sorting to This Folder & Subfolders" => Some(on), _ => None,
+            MenuNode::Sub { label, items } if label == "Apply Current View & Sorting to This Folder & Subfolders" => items.into_iter().find_map(|item| match item {
+                MenuNode::Item { label, on, .. } if label.starts_with("This project") => Some(on), _ => None,
+            }), _ => None,
         }).expect("Sidebar folder menu offers applying the main view/sort to its tree");
         apply(browser, window, cx);
         let views = browser.folder_views.borrow();
-        assert_eq!(views.resolve(&root).unwrap().sort, "modified");
-        assert!(!views.resolve(&child).unwrap().ascending);
-        assert_eq!(views.resolve(&root), views.resolve(&child));
+        assert_eq!(views.resolve_project(browser.projects.active, &root).unwrap().sort, "modified");
+        assert!(!views.resolve_project(browser.projects.active, &child).unwrap().ascending);
+        assert_eq!(views.resolve_project(browser.projects.active, &root), views.resolve_project(browser.projects.active, &child));
         assert_eq!(views.resolve(&unrelated), Some(&old));
         assert_eq!(browser.active_tab().current_dir, directory_before);
         assert_eq!(browser.projects.sidebar().shortcuts, shortcuts_before);

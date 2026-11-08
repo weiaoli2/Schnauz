@@ -304,13 +304,64 @@ pub(super) fn run(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &
             })).unwrap();
             native_file_drag::ended();
             println!("PASS tracking-mode tab/folder dwell, same-folder cancellation and immediate next selection, actual copy/move, and SSH favourite roundtrip retaining the same terminal/tab/view; no live server, account or user session accessed");
-            super::terminal_selection_checks::run(window,cx,move |cx| super::tab_sidebar_checks::run(window,cx,move |cx| super::project_strip_checks::run(window,cx,move |cx| startup_setup::check(cx,move |cx| quit_guard::check(window,cx,move |cx| {
+            sidebar_drops(window, directory.clone(), cx, move |cx| super::terminal_selection_checks::run(window,cx,move |cx| super::tab_sidebar_checks::run(window,cx,move |cx| super::project_strip_checks::run(window,cx,move |cx| startup_setup::check(cx,move |cx| quit_guard::check(window,cx,move |cx| {
                 window.update(cx,|f,_,cx|f.browser.update(cx,|b,_| {
                     // Drop only this owned fixture session, never a live user PTY.
                     for pane in &mut b.panes { for tab in &mut pane.tabs { tab.terminal.take(); tab.terminal_open=false; } }
                 })).unwrap();
                 fs::remove_dir_all(directory).unwrap(); std::process::exit(0);
-            })))));
+            }))))));
+        }).unwrap();
+    }).detach();
+}
+
+/// Native file/folder drops exercise the root capture and Common geometry.
+fn sidebar_drops(window: gpui::WindowHandle<Fixture>, directory: PathBuf, cx: &mut App, done: impl FnOnce(&mut App) + 'static) {
+    let folder = directory.join("Bookmark Folder");
+    fs::create_dir_all(&folder).unwrap();
+    let file = directory.join("bookmark.txt");
+    fs::write(&file, "bookmark source").unwrap();
+    let original = window.update(cx, |f, _, cx| f.browser.read(cx).projects.clone()).unwrap();
+    cx.spawn(async move |cx| {
+        for common in [false, true] {
+            let position = cx.update(|cx| {
+                window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| {
+                    b.collapsed_sections.remove("COMMON");
+                    cx.notify();
+                })).unwrap();
+                paint(window, cx);
+                let position = window.update(cx, |f, _, cx| {
+                    let b = f.browser.read(cx);
+                    let bounds = b.common_bounds.borrow().unwrap();
+                    if common { bounds.center() } else { point(bounds.center().x, bounds.bottom() + px(12.)) }
+                }).unwrap();
+                prepare_info(&[file.clone(), folder.clone()]);
+                native_file_drag::fixture_feedback(false);
+                event(window, gpui::FileDropEvent::Entered { position, paths: ExternalPaths::default() }, cx);
+                position
+            }).unwrap();
+            cx.background_executor().timer(Duration::from_millis(60)).await;
+            cx.update(|cx| {
+                window.update(cx, |f, _, cx| {
+                    let b = f.browser.read(cx);
+                    assert_eq!(b.common_drop_hover, common);
+                    assert_eq!(native_file_drag::operation(), native_file_drag::Operation::Copy);
+                }).unwrap();
+                event(window, gpui::FileDropEvent::Submit { position }, cx);
+            }).unwrap();
+            cx.background_executor().timer(Duration::from_millis(250)).await;
+            cx.update(|cx| window.update(cx, |f, _, cx| {
+                let b = f.browser.read(cx);
+                let refs = if common { &b.projects.common_shortcuts } else { &b.projects.sidebar().shortcuts };
+                assert!(refs.iter().any(|s| s.path == file && s.kind == projects::Section::Files));
+                assert!(refs.iter().any(|s| s.path == folder && s.kind == projects::Section::Folders));
+                assert_eq!(fs::read_to_string(&file).unwrap(), "bookmark source");
+                assert!(folder.is_dir());
+            }).unwrap()).unwrap();
+        }
+        cx.update(|cx| {
+            window.update(cx, |f, _, cx| f.browser.update(cx, |b, cx| b.persist_library(original, cx).unwrap())).unwrap();
+            done(cx);
         }).unwrap();
     }).detach();
 }

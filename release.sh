@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build both Mac release installers locally; publishing is a separate action.
+# Build one universal Mac installer; legacy names contain identical bytes.
 set -euo pipefail
 cd "$(dirname "$0")"
 source ./dev-env.sh
@@ -18,10 +18,16 @@ for entry in aarch64-apple-darwin:arm64 x86_64-apple-darwin:x86_64; do
     arch="${entry##*:}"
     export SCHNAUZ_TARGET="$target"
     export SCHNAUZ_APP_OUTPUT="$OUTPUT/$arch/Schnauz.app"
-    export SCHNAUZ_DMG_OUTPUT="$OUTPUT/Schnauz-$VERSION-macos-$arch.dmg"
     ./build.sh
-    ./make_dmg.sh
 done
+export SCHNAUZ_APP_OUTPUT="$OUTPUT/universal/Schnauz.app"
+export SCHNAUZ_DMG_OUTPUT="$OUTPUT/Schnauz-$VERSION-macos-universal.dmg"
+./make_universal.sh "$OUTPUT/arm64/Schnauz.app" "$OUTPUT/x86_64/Schnauz.app" "$SCHNAUZ_APP_OUTPUT"
+./make_dmg.sh
+# Pre-V1 update checkers require these exact names. Both are the universal DMG,
+# not architecture-specific packages; retain them while those clients are supported.
+cp "$SCHNAUZ_DMG_OUTPUT" "$OUTPUT/Schnauz-$VERSION-macos-arm64.dmg"
+cp "$SCHNAUZ_DMG_OUTPUT" "$OUTPUT/Schnauz-$VERSION-macos-x86_64.dmg"
 python3 - "$OUTPUT/Schnauz-$VERSION-MPL-sources.zip" <<'PY'
 from pathlib import Path
 import sys,zipfile
@@ -32,7 +38,7 @@ with zipfile.ZipFile(sys.argv[1],'w',compression=zipfile.ZIP_DEFLATED,strict_tim
 PY
 (
     cd "$OUTPUT"
-    shasum -a 256 "Schnauz-$VERSION-macos-arm64.dmg" "Schnauz-$VERSION-macos-x86_64.dmg" "Schnauz-$VERSION-MPL-sources.zip" > SHA256SUMS.txt
+    shasum -a 256 "Schnauz-$VERSION-macos-universal.dmg" "Schnauz-$VERSION-macos-arm64.dmg" "Schnauz-$VERSION-macos-x86_64.dmg" "Schnauz-$VERSION-MPL-sources.zip" > SHA256SUMS.txt
     shasum -a 256 -c SHA256SUMS.txt
 )
 echo "Release artifacts ready in $OUTPUT. Nothing has been published."

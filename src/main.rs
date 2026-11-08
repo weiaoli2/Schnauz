@@ -1430,6 +1430,8 @@ struct Schnauz {
     project_strip_state: RefCell<Option<(Option<u64>, Vec<Option<u64>>)>>,
     project_dialog: Option<String>,
     project_dialog_error: Option<String>,
+    project_rename: Option<(u64, String)>,
+    project_name_selected: bool,
     new_text_file: Option<new_text_file::Form>,
     project_filter_editor: bool,
     /// The open Get Info card, if any.
@@ -1476,6 +1478,7 @@ impl Schnauz {
         }).detach();
         ensure_base_icons(); // real folder/file icons ready before first render
         cx.observe_global::<ProjectLibraryGlobal>(|this, cx| this.observe_project_library(cx)).detach();
+        cx.observe_global::<list_ui::ViewChange>(|this, cx| this.observe_view_change(cx)).detach();
         // Sync + repaint whenever the theme changes (e.g. from Settings).
         cx.observe_global::<ThemeGlobal>(|_, cx| {
             set_active_theme(cx.global::<ThemeGlobal>().0);
@@ -1702,7 +1705,7 @@ impl Schnauz {
             projects, project_load_error, project_sessions: HashMap::new(),
             project_strip_scroll: ScrollHandle::new(),
             project_strip_state: RefCell::new(None),
-            project_dialog: None, project_dialog_error: None, new_text_file: None, project_filter_editor: false,
+            project_dialog: None, project_dialog_error: None, project_rename: None, project_name_selected: false, new_text_file: None, project_filter_editor: false,
             info_panel: None,
             batch_rename: None,
         }
@@ -3844,7 +3847,7 @@ impl Schnauz {
             .or_else(|| on_background.then(|| self.tab(pane).current_dir.clone()));
         if let Some(folder) = inspect {
             let view_folder = folder.clone();
-            nodes.push(mi("Apply Current View & Sorting to This Folder & Subfolders", move |this, _, cx| this.apply_view_to_tree(pane, view_folder.clone(), cx)));
+            nodes.extend(self.view_rule_nodes(pane, view_folder));
             nodes.push(mi("Disk Usage…", move |this,window,cx| this.inspect_folder(pane,folder.clone(),window,cx)));
             push_menu_sep(&mut nodes);
         }
@@ -5183,7 +5186,7 @@ impl Schnauz {
             items.push(MenuNode::Sep);
             let view_folder = folder.clone();
             let view_pane = match &target { SidebarTarget::NavBar(p) | SidebarTarget::Tab(p, _) => *p, _ => self.active_pane };
-            items.push(mi("Apply Current View & Sorting to This Folder & Subfolders", move |this, _, cx| this.apply_view_to_tree(view_pane, view_folder.clone(), cx)));
+            items.extend(self.view_rule_nodes(view_pane, view_folder));
             items.push(mi("Disk Usage…", move|this,window,cx|{
                 this.inspect_folder(this.active_pane,folder.clone(),window,cx);
             }));
@@ -5225,6 +5228,7 @@ impl Schnauz {
                     items.push(mi("Close", move |this, _, cx| this.close_open_project(id, true, cx)));
                 }
                 if let Some(id) = id {
+                    items.push(mi("Rename…", move |this, window, cx| this.open_project_rename(id, window, cx)));
                     items.push(MenuNode::Sep);
                     items.push(mi("Remove project", move |this, _, cx| this.remove_project(id, cx)));
                 }
@@ -7344,20 +7348,22 @@ impl Schnauz {
                     this.zoom_visual_preview(delta, cx);
                     cx.stop_propagation();
                 }))
+                .cursor(if self.preview_zoom.pan.is_some() { gpui::CursorStyle::ClosedHand } else { gpui::CursorStyle::OpenHand })
+                .tooltip(tip("Drag with the middle or left mouse button to pan. Scroll to zoom."))
                 .on_mouse_down(MouseButton::Left, cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                    this.preview_zoom.pan = Some((event.position, this.preview_zoom.scroll.offset()));
+                    this.preview_zoom.begin_pan(event.button, event.position);
+                    this.drag_candidate = None;
+                    this.pending_click_rename = None;
+                    cx.notify();
                     cx.stop_propagation();
                 }))
-                .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                    if event.pressed_button == Some(MouseButton::Left) {
-                        if let Some((start, offset)) = this.preview_zoom.pan {
-                            this.preview_zoom.scroll.set_offset(offset + event.position - start);
-                            cx.notify();
-                        }
-                    } else { this.preview_zoom.pan = None; }
+                .on_mouse_down(MouseButton::Middle, cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    this.preview_zoom.begin_pan(event.button, event.position);
+                    this.drag_candidate = None;
+                    this.pending_click_rename = None;
+                    cx.notify();
+                    cx.stop_propagation();
                 }))
-                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.preview_zoom.pan = None))
-                .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, _| this.preview_zoom.pan = None))
                 .relative()
                 .flex_none()
                 .flex()
@@ -7916,9 +7922,8 @@ impl Schnauz {
                 this.drop_tab_shortcut(drag, false, cx);
                 cx.stop_propagation();
             }))
-            .on_drop(cx.listener(|this, drag: &ExternalPaths, _, cx| {
-                this.favourites_drop_hover = false; this.common_drop_hover = false;
-                this.add_dropped_favourites(this.projects.active, false, drag.paths().to_vec(), cx);
+            .on_drop(cx.listener(|this, drag: &ExternalPaths, window, cx| {
+                this.drop_sidebar_paths(drag, window, cx);
             }))
             .when(hint, |d| d.child(div().absolute().left_2().right_2().bottom_3().h(px(34.)).px_2().flex().items_center().whitespace_nowrap().overflow_hidden().rounded_md().bg(rgb(theme().surface)).border_1().border_color(rgb(theme().accent)).text_size(px(UI_SMALL_FONT_SIZE)).child(if self.common_drop_hover || self.favourite_drag.as_ref().is_some_and(|drag| self.common_bounds.borrow().is_some_and(|bounds| bounds.contains(&drag.position))) { "Drop to add to Common" } else { "Drop to add to Favourites" })))
     }
@@ -9173,7 +9178,11 @@ impl Render for Schnauz {
                 this.track_file_drag(ev, cx);
                 this.track_sidebar_drop(ev.event.position, cx);
             }))
+            .on_drop(cx.listener(|this, drag: &ExternalPaths, window, cx| {
+                this.drop_sidebar_paths(drag, window, cx);
+            }))
             .capture_any_mouse_up(cx.listener(|this, event: &gpui::MouseUpEvent, window, cx| {
+                if this.preview_zoom.end_pan(event.button) { cx.notify(); }
                 this.finish_sidebar_file_drop(event, window, cx);
             }))
             .on_drag_move::<TabDrag>(cx.listener(|this, ev: &gpui::DragMoveEvent<TabDrag>, _, cx| {
@@ -9182,6 +9191,14 @@ impl Render for Schnauz {
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 let x = f64::from(ev.position.x) as f32;
                 let y = f64::from(ev.position.y) as f32;
+                if this.preview_zoom.pan.is_some() {
+                    if !this.native_preview_blocked() && this.preview_zoom.move_pan(ev) {
+                        cx.notify();
+                        return;
+                    }
+                    this.preview_zoom.pan = None;
+                    cx.notify();
+                }
                 this.path_drag(ev.position, cx);
                 if ev.pressed_button == Some(MouseButton::Left) {
                     this.rename_drag(ev.position, cx);

@@ -52,7 +52,33 @@ pub(super) struct Zoom {
     target: Option<(u64, PathBuf)>,
     pub scale: f32,
     pub scroll: ScrollHandle,
-    pub pan: Option<(Point<Pixels>, Point<Pixels>)>,
+    pub pan: Option<Pan>,
+}
+#[derive(Clone, Copy)]
+pub(super) struct Pan {
+    button: MouseButton,
+    start: Point<Pixels>,
+    offset: Point<Pixels>,
+}
+impl Zoom {
+    pub(super) fn begin_pan(&mut self, button: MouseButton, position: Point<Pixels>) {
+        self.pan = Some(Pan { button, start: position, offset: self.scroll.offset() });
+    }
+    pub(super) fn move_pan(&mut self, event: &MouseMoveEvent) -> bool {
+        let Some(pan) = self.pan else { return false; };
+        if event.pressed_button != Some(pan.button) {
+            self.pan = None;
+            return false;
+        }
+        self.scroll.set_offset(pan.offset + event.position - pan.start);
+        true
+    }
+    pub(super) fn end_pan(&mut self, button: MouseButton) -> bool {
+        if self.pan.is_some_and(|pan| pan.button == button) {
+            self.pan = None;
+            true
+        } else { false }
+    }
 }
 impl Default for Zoom {
     fn default() -> Self {
@@ -88,6 +114,7 @@ impl Schnauz {
         cx.notify();
     }
     pub(super) fn sync_preview_zoom(&mut self) {
+        if self.native_preview_blocked() { self.preview_zoom.pan = None; }
         let tab = self.active_tab();
         let target = (prefs().preview && tab.selection.len() == 1)
             .then(|| (tab.id, previews::source_key(tab.selection.iter().next().unwrap(),tab.remote.as_ref())));

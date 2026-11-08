@@ -1,9 +1,13 @@
-Schnauz 0.9.22 — early preview
+Schnauz V1 (1.0.0) — universal Mac package
 
 For an update, first finish any terminal/SSH work and quit Schnauz.
 Then drag Schnauz.app to Applications and open it from there.
 Do not replace an app bundle while its previous version is running.
-Requires macOS 14 Sonoma or later. Download the correct Apple Silicon or Intel build.
+Requires macOS 14 Sonoma or later. The same universal app runs natively on
+Apple Silicon and Intel. It replaces either earlier architecture-specific build.
+Your settings, projects and favourites stay in the existing Schnauz profile.
+The legacy arm64/Intel download names contain the identical universal installer
+so update checks in older versions continue to work.
 
 This preview is signed with Oliver's Apple Development certificate, but is not
 Apple-notarized. macOS may block the first launch. After trying to open the app,
@@ -20,7 +24,7 @@ https://github.com/weiaoli2/Schnauz/releases
 
 Original Shuffle MIT license and third-party notices are included inside the app
 under Contents/Resources/Licenses. Exact unmodified MPL-2.0 component sources are
-available as Schnauz-0.9.22-MPL-sources.zip on the same release page, and from
+available as Schnauz-1.0.0-MPL-sources.zip on the same release page, and from
 the repository's vendor/mpl-sources directory.
 
 Developer, design and product direction: Oliver Weber

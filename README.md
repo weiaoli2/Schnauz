@@ -48,24 +48,24 @@ Folder preferences live in central settings, rather than scattering configuratio
 files through your projects. Todoist and Nextcloud are optional; their credentials
 stay in macOS Keychain.
 
-## Download for Mac — 0.9.30 preview
+## Download for Mac — V1 (1.0.0)
 
-**macOS 14 Sonoma or later.** Choose the build for your Mac:
+**macOS 14 Sonoma or later.** One universal app runs natively on Apple Silicon
+(M1 and newer) and Intel:
 
-| Mac | Download |
-| --- | --- |
-| Apple Silicon — M1 and newer | [Apple Silicon DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.9.30/Schnauz-0.9.30-macos-arm64.dmg) |
-| Intel | [Intel DMG](https://github.com/weiaoli2/Schnauz/releases/download/v0.9.30/Schnauz-0.9.30-macos-x86_64.dmg) |
+**[Download Schnauz for Mac](https://github.com/weiaoli2/Schnauz/releases/download/v1.0.0/Schnauz-1.0.0-macos-universal.dmg)**
 
 For an update, finish any terminal/SSH work and **quit Schnauz before replacing it**.
 Open the disk image and drag **Schnauz.app** to **Applications**. Checksums and
-release notes accompany the [release](https://github.com/weiaoli2/Schnauz/releases/tag/v0.9.30).
+release notes accompany the [release](https://github.com/weiaoli2/Schnauz/releases/tag/v1.0.0).
 Explore the app on [TechGuyZone](https://techguyzone.com/apps/).
 
 This is an **early preview**, signed with an Apple Development certificate and
 **not Apple-notarized**. See [security and verification](SECURITY.md) for signature,
 checksum and first-launch information. The app explains macOS file-access
-permissions; macOS and you control any grants. Optional startup update checks are off by default. Enable them in About Schnauz; checks use GitHub and offer the download for your installed architecture. Installation stays manual.
+permissions; macOS and you control any grants. Optional startup update checks are off by default. Enable them in About Schnauz; checks use GitHub and offer the universal Mac download. Installation stays manual.
+The legacy arm64 and x86_64 release assets contain the exact same universal
+installer so older versions can discover V1 through their existing update checks.
 
 ## Build it yourself
 

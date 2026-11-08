@@ -1,8 +1,29 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Current release: **v0.9.30**, public Apple Silicon + Intel early preview.
-Previous published release: **v0.9.28**.
+Current published release: **v0.9.30**. Authorized next release: **V1 / v1.0.0**.
+
+## Authorized V1 universal release — 2026-11-08
+
+Oliver explicitly requested publishing the current stage as V1 (1.0.0), with
+one universal package and upgrades from both older architecture-specific apps.
+He approved byte-identical legacy-named compatibility downloads after reviewing
+the old update checker's exact-filename requirement. Publish the primary
+Schnauz-1.0.0-macos-universal.dmg plus identical arm64/x86_64 aliases, exact MPL
+source ZIP and checksums. The release/README present one primary Download for Mac.
+Keep the Apple Development / unnotarized prerelease disclosure and current
+compile/sign/package-only QA; V1 does not imply new runtime or Intel hardware QA.
+Include all pending 0.9.31 features. Preserve prior releases and live sessions.
+
+Build both thin apps with ./release.sh. It merges every executable using lipo,
+checks identical resources and identity/version/signer, re-signs helpers then
+bundle, verifies both slices and packages one DMG. Compatibility aliases must
+have exactly the same SHA-256. New update discovery prefers universal and falls
+back to thin assets in older releases; old discovery still finds its exact alias.
+Inspect mounted installer contents read-only, all signatures/slices, exact MPL
+sources, source-tag correspondence and public GitHub asset digests. Do not run
+app/helper/test binaries. Stage a copy of the universal app as the normal local
+update using scripts/install_bundle.py; never move the release app or live app.
 
 ## Published release — 0.9.30
 
@@ -310,7 +331,8 @@ Local branch: schnauz. Public destination: origin/main. Shuffle upstream is refe
 - Python 3 for generating third-party notices and source archives.
 
 `./release.sh` builds both architectures into the ignored `dist/` directory,
-creates verified DMGs and a checksum manifest, and never publishes or replaces
+merges every executable into a universal app, creates one verified DMG plus
+byte-identical legacy update filenames and a checksum manifest, and never publishes or replaces
 the developer's running Schnauz.app. It checks dependency notices before packaging.
 The source version in Cargo.toml and Cargo.lock must match.
 
@@ -405,6 +427,7 @@ git tag -a "$TAG" -m "Schnauz $VERSION release candidate"
 git push origin "$TAG"
 
 gh release create "$TAG" \
+  "$OUT/Schnauz-$VERSION-macos-universal.dmg" \
   "$OUT/Schnauz-$VERSION-macos-arm64.dmg" \
   "$OUT/Schnauz-$VERSION-macos-x86_64.dmg" \
   "$OUT/Schnauz-$VERSION-MPL-sources.zip" \

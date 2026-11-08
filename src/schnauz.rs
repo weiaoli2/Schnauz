@@ -401,12 +401,22 @@ impl Schnauz {
     pub(super) fn open_project_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus);
         self.new_text_file = None;
+        self.project_rename = None;
+        self.project_name_selected = false;
         self.project_dialog = Some(String::new());
         self.project_dialog_error = self.project_load_error.clone();
         self.context_menu = None;
         self.sidebar_menu = None;
         self.close_palette(cx);
         cx.notify();
+    }
+
+    pub(super) fn open_project_rename(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = self.projects.items.iter().find(|p| p.id == id).map(|p| p.name.clone()) else { return; };
+        self.open_project_dialog(window, cx);
+        self.project_dialog = Some(name.clone());
+        self.project_rename = Some((id, name));
+        self.project_name_selected = true;
     }
 
     pub(super) fn persist_library(&mut self, candidate: Library, cx: &mut Context<Self>) -> Result<(), String> {
@@ -426,6 +436,24 @@ impl Schnauz {
         let Some(name) = self.project_dialog.clone() else {
             return;
         };
+        if let Some((id, original)) = self.project_rename.clone() {
+            let mut library = self.projects.clone();
+            let result = if library.items.iter().any(|p| p.id == id && p.name == original) {
+                library.set_name(id, &name).and_then(|_| self.persist_library(library, cx))
+            } else {
+                Err("This project changed or was removed. Reopen Rename to try again.".into())
+            };
+            match result {
+                Ok(()) => {
+                    self.project_dialog = None;
+                    self.project_rename = None;
+                    self.project_dialog_error = None;
+                }
+                Err(error) => self.project_dialog_error = Some(error),
+            }
+            cx.notify();
+            return;
+        }
         let layout = self.capture_layout();
         let mut library = self.projects.clone();
         library.remember_layout(layout.clone());
@@ -604,6 +632,8 @@ impl Schnauz {
         match self.persist_library(library, cx) {
             Ok(()) => {
                 self.project_sessions.remove(&Some(id));
+                self.folder_views.borrow_mut().remove_project(id);
+                self.schedule_view_save(cx);
                 cx.notify();
             }
             Err(error) => self.set_notice(error, cx),
@@ -618,16 +648,32 @@ impl Schnauz {
                 cx.notify();
             }
             "enter" => self.save_project(cx),
-            "backspace" => {
-                if let Some(name) = self.project_dialog.as_mut() {
-                    name.pop();
+            "a" if key.modifiers.platform => {
+                self.project_name_selected = true;
+                cx.notify();
+            }
+            "c" | "x" if key.modifiers.platform => {
+                if self.project_name_selected {
+                    if let Some(name) = self.project_dialog.as_mut() {
+                        cx.write_to_clipboard(ClipboardItem::new_string(name.clone()));
+                        if key.key == "x" { name.clear(); }
+                    }
                 }
+                cx.notify();
+            }
+            "backspace" | "delete" => {
+                if let Some(name) = self.project_dialog.as_mut() {
+                    if self.project_name_selected { name.clear(); } else { name.pop(); }
+                }
+                self.project_name_selected = false;
                 cx.notify();
             }
             "v" if key.modifiers.platform => {
                 if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
                     if let Some(name) = self.project_dialog.as_mut() {
+                        if self.project_name_selected { name.clear(); }
                         name.push_str(text.trim());
+                        self.project_name_selected = false;
                     }
                     cx.notify();
                 }
@@ -636,7 +682,9 @@ impl Schnauz {
                 if let Some(text) = &key.key_char {
                     if !text.chars().any(char::is_control) {
                         if let Some(name) = self.project_dialog.as_mut() {
+                            if self.project_name_selected { name.clear(); }
                             name.push_str(text);
+                            self.project_name_selected = false;
                         }
                         cx.notify();
                     }
@@ -1096,6 +1144,7 @@ impl Schnauz {
     pub(super) fn render_project_dialog(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
         let name = self.project_dialog.clone().unwrap_or_default();
+        let renaming = self.project_rename.is_some();
         div()
             .absolute()
             .top_0()
@@ -1133,10 +1182,11 @@ impl Schnauz {
                         div()
                             .text_size(px(19.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Create a project"),
+                            .child(if renaming { "Rename project" } else { "Create a project" }),
                     )
                     .child(div().text_size(px(UI_FONT_SIZE)).text_color(rgb(t.text_muted)).child(
-                        "Your own favourites, tabs and split panes. Changes are remembered automatically.",
+                        if renaming { "Choose a new name. Your favourites, tabs and linked tasks stay with this project." }
+                        else { "Your own favourites, tabs and split panes. Changes are remembered automatically." },
                     ))
                     .child(
                         div()
@@ -1150,6 +1200,7 @@ impl Schnauz {
                             .border_color(rgb(t.accent))
                             .child(
                                 div()
+                                    .when(self.project_name_selected, |d| d.bg(rgb(t.selected)))
                                     .text_color(rgb(if name.is_empty() {
                                         t.text_dim
                                     } else {
@@ -1178,7 +1229,7 @@ impl Schnauz {
                                 div()
                                     .text_size(px(UI_SMALL_FONT_SIZE))
                                     .text_color(rgb(t.text_muted))
-                                    .child("↵ Create    Esc Cancel"),
+                                    .child(if renaming { "↵ Rename    Esc Cancel" } else { "↵ Create    Esc Cancel" }),
                             )
                             .child(
                                 div()
@@ -1194,7 +1245,7 @@ impl Schnauz {
                                             )),
                                     )
                                     .child(
-                                        schnauz_button("project-confirm", "Create project", true)
+                                        schnauz_button("project-confirm", if renaming { "Rename" } else { "Create project" }, true)
                                             .on_click(cx.listener(
                                                 |this, _: &ClickEvent, _, cx| {
                                                     this.save_project(cx)

@@ -15,7 +15,7 @@ pub(super) fn run(
     done: impl FnOnce(&mut App) + 'static,
 ) {
     let (original, target, terminal_id, pid) = window
-        .update(cx, |f, _, cx| {
+        .update(cx, |f, window, cx| {
             f.browser.update(cx, |b, cx| {
                 let original = b.projects.clone();
                 let terminal = b.active_tab().terminal.as_ref().unwrap();
@@ -28,6 +28,26 @@ pub(super) fn run(
                     .unwrap();
                 let saved = candidate.create("Header Saved Only", layout).unwrap();
                 b.persist_library(candidate, cx).unwrap();
+                let before = b.projects.items.iter().find(|p| p.id == saved).unwrap().clone();
+                let menu = b.sidebar_menu_nodes(SidebarTarget::Project(Some(saved)), cx);
+                assert!(menu.iter().any(|node| matches!(node, MenuNode::Item { label, .. } if label == "Rename…")));
+                b.open_project_rename(saved, window, cx);
+                assert_eq!(b.project_dialog.as_deref(), Some("Header Saved Only"));
+                assert!(b.project_name_selected);
+                b.project_dialog = Some("Header Saved Renamed".into());
+                b.handle_project_key(&KeyDownEvent { keystroke: gpui::Keystroke::parse("enter").unwrap(), is_held: false }, cx);
+                assert!(b.project_dialog.is_none());
+                let renamed = b.projects.items.iter().find(|p| p.id == saved).unwrap();
+                assert_eq!(renamed.name, "Header Saved Renamed");
+                assert_eq!(renamed.layout, before.layout);
+                assert_eq!(renamed.sidebar, before.sidebar);
+                assert_eq!(b.active_tab().terminal.as_ref().unwrap().id, id);
+                b.open_project_rename(saved, window, cx);
+                b.project_dialog = Some("Header Active Project".into());
+                b.handle_project_key(&KeyDownEvent { keystroke: gpui::Keystroke::parse("enter").unwrap(), is_held: false }, cx);
+                assert!(b.project_dialog_error.is_some());
+                b.handle_project_key(&KeyDownEvent { keystroke: gpui::Keystroke::parse("escape").unwrap(), is_held: false }, cx);
+                assert_eq!(b.projects.items.iter().find(|p| p.id == saved).unwrap().name, "Header Saved Renamed");
                 b.project_sessions.insert(
                     Some(target),
                     schnauz::ProjectSession {

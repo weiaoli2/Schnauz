@@ -633,7 +633,7 @@ impl Schnauz {
                                     let style = self
                                         .folder_views
                                         .borrow()
-                                        .resolve(&tab.current_dir)
+                                        .resolve_project(self.projects.active, &tab.current_dir)
                                         .cloned()
                                         .unwrap_or_default();
                                     list_ui::apply_style(tab, &style);
@@ -653,7 +653,7 @@ impl Schnauz {
                                 let style = self
                                     .folder_views
                                     .borrow()
-                                    .resolve(&tab.current_dir)
+                                    .resolve_project(self.projects.active, &tab.current_dir)
                                     .cloned()
                                     .unwrap_or_default();
                                 list_ui::apply_style(tab, &style);
@@ -748,7 +748,7 @@ impl Schnauz {
             let style = self
                 .folder_views
                 .borrow()
-                .resolve(&tab.current_dir)
+                .resolve_project(self.projects.active, &tab.current_dir)
                 .cloned()
                 .unwrap_or_default();
             list_ui::apply_style(tab, &style);

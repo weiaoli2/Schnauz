@@ -97,20 +97,14 @@ fn select(bytes: &[u8], current: &str, architecture: &str) -> Result<Comparison,
             if release.html_url != notes {
                 return None;
             }
-            let name = format!("Schnauz-{version}-macos-{architecture}.dmg");
-            let download = format!("{REPOSITORY}/releases/download/{}/{name}", release.tag_name);
-            release
-                .assets
-                .iter()
-                .any(|a| {
-                    a.name == name && a.state == "uploaded" && a.browser_download_url == download
-                })
-                .then_some(Release {
-                    version,
-                    notes,
-                    download,
-                    prerelease: release.prerelease,
-                })
+            // Prefer one native universal package; older releases still have
+            // architecture-specific assets. Never accept a foreign/mismatched URL.
+            ["universal", architecture].into_iter().find_map(|kind| {
+                let name = format!("Schnauz-{version}-macos-{kind}.dmg");
+                let download = format!("{REPOSITORY}/releases/download/{}/{name}", release.tag_name);
+                release.assets.iter().any(|a| a.name == name && a.state == "uploaded" && a.browser_download_url == download)
+                    .then_some(download)
+            }).map(|download| Release { version, notes, download, prerelease: release.prerelease })
         })
         .max_by(|a, b| a.version.cmp_precedence(&b.version));
     let ahead_of = latest
@@ -273,11 +267,7 @@ pub(super) fn controls<T: 'static>(width: f32, cx: &Context<T>) -> AnyElement {
                 .rounded_md()
                 .cursor_pointer()
                 .text_color(rgb(t.accent))
-                .child(if cfg!(target_arch = "aarch64") {
-                    "Download for Apple Silicon"
-                } else {
-                    "Download for Intel"
-                })
+                .child("Download for Mac")
                 .on_click(move |_, _, cx| cx.open_url(&release.download)),
         );
     }
@@ -362,6 +352,26 @@ mod tests {
             .unwrap()
             .update
     }
+    #[test]
+    fn universal_download_preferred_on_both_architectures_with_legacy_fallback() {
+        let mut combined = release("1.0.0", true, "universal");
+        for arch in ["arm64", "x86_64"] {
+            combined["assets"].as_array_mut().unwrap().push(release("1.0.0", true, arch)["assets"][0].clone());
+        }
+        for arch in ["arm64", "x86_64"] {
+            let selected = choose(vec![combined.clone()], "0.9.30", arch).unwrap();
+            assert!(selected.download.ends_with("macos-universal.dmg"));
+            let legacy = choose(vec![release("0.9.30", true, arch)], "0.9.28", arch).unwrap();
+            assert!(legacy.download.ends_with(&format!("macos-{arch}.dmg")));
+            let mut invalid = combined.clone();
+            invalid["assets"][0]["browser_download_url"] = "https://invalid.example/universal.dmg".into();
+            assert!(choose(vec![invalid], "0.9.30", arch).unwrap().download.ends_with(&format!("macos-{arch}.dmg")));
+            let mut incomplete = release("1.0.0", true, "universal");
+            incomplete["assets"][0]["state"] = "new".into();
+            assert!(choose(vec![incomplete], "0.9.30", arch).is_none());
+        }
+    }
+
     #[test]
     fn semantic_order_includes_public_previews_and_never_downgrades() {
         let result = choose(

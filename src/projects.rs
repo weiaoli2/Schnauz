@@ -599,13 +599,30 @@ impl Library {
                 .iter()
                 .any(|p| p.id != id && p.name.to_lowercase() == name.to_lowercase())
         {
-            return Err("Another Schnauz project already uses this Todoist name.".into());
+            return Err("That project name is reserved or already used. Choose another name.".into());
         }
         self.items
             .iter_mut()
             .find(|p| p.id == id)
             .ok_or("Project no longer exists")?
             .name = name;
+        Ok(())
+    }
+
+    /// Apply actual Todoist renames, while retaining a name explicitly chosen here.
+    /// The stored remote name is the baseline, not the local display name.
+    pub fn observe_todoist_name(&mut self, account: &str, project: &str, name: &str) -> Result<(), String> {
+        let mut candidate = self.clone();
+        let ids: Vec<_> = candidate.items.iter().filter(|p| p.sidebar.todoist.as_ref().is_some_and(|l|
+            l.account_id == account && l.project_id == project && l.project_name != name
+        )).map(|p| p.id).collect();
+        for id in ids { candidate.set_name(id, name)?; }
+        for sidebar in std::iter::once(&mut candidate.personal_sidebar).chain(candidate.items.iter_mut().map(|p| &mut p.sidebar)) {
+            if let Some(link) = sidebar.todoist.as_mut().filter(|l| l.account_id == account && l.project_id == project) {
+                link.project_name = name.into();
+            }
+        }
+        *self = candidate;
         Ok(())
     }
 
@@ -1275,6 +1292,19 @@ mod tests {
         assert!(library.set_name(a, "Personal").is_err());
         assert!(library.set_name(a, "Bad\nName").is_err());
         assert_eq!(library.items[0].name, "DESIGN");
+        let original = library.items[0].clone();
+        library.set_name(a, "Local display name").unwrap();
+        library.observe_todoist_name("account-A", "opaque-project-A", "Design").unwrap();
+        assert_eq!(library.items[0].name, "Local display name", "Refresh must preserve an explicit local rename");
+        assert_eq!(library.items[0].layout, original.layout);
+        assert_eq!(library.items[0].sidebar, original.sidebar);
+        library.observe_todoist_name("account-A", "opaque-project-A", "Renamed remotely").unwrap();
+        assert_eq!(library.items[0].name, "Renamed remotely");
+        let before = library.clone();
+        assert!(library.observe_todoist_name("account-A", "opaque-project-A", "Admin").is_err());
+        assert_eq!(library, before, "Conflicting remote rename must be atomic");
+        library.save(&file).unwrap();
+        assert_eq!(Library::load(&file).unwrap(), library);
         assert_eq!(
             library
                 .sidebar_for(Some(a))

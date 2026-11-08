@@ -131,8 +131,13 @@ impl Schnauz {
             self.file_drag.paths = ev.dragged_item().downcast_ref::<ExternalPaths>()
                 .map_or_else(Vec::new, |p| p.paths().to_vec());
         }
-        self.file_drag.copy_only = false;
-        let op = native_file_drag::destination(false);
+        // A bookmark never authorizes Finder/the source to remove the original.
+        self.file_drag.copy_only = self.sidebar_drop_target(ev.event.position).is_some();
+        if self.file_drag.copy_only {
+            self.file_drag.cancel_hover();
+            self.file_drag.hovered_tab = None;
+        }
+        let op = native_file_drag::destination(self.file_drag.copy_only);
         if self.file_drag.operation != Some(op) {
             self.file_drag.operation = Some(op);
             cx.notify();
