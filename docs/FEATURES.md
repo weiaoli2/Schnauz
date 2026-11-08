@@ -144,8 +144,9 @@ totals, and large files discovered later remain visible. Clicking a grouped area
 analyses its containing folder with finer detail. Unreadable entries and excluded
 volumes are reported explicitly. Snapshots and filesystem overhead are not mapped.
 Closing the panel cancels the scan. The item count appears once, in the footer.
-The map starts below the path and filter bars. Selecting outside it closes it;
-navigation from inside its graphic keeps it open.
+The map starts below the path and filter bars and stays open while selecting
+files/folders, navigating or changing tabs/projects. Close it with its × button;
+explicitly opening Todoist replaces it in the shared tools pane.
 
 **File access:** On first launch, Schnauz shows a skippable guide. **Open System
 Settings** opens macOS **Privacy & Security → Full Disk Access**. Enable Schnauz

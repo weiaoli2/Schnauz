@@ -2941,3 +2941,18 @@ open; cached ancestors still reuse the existing map. At filesystem root the
 arrow is dimmed. Compile-only fixtures cover cached ascent, rebased detail roots,
 loading replacement scans and filesystem-root termination. Rebuild V1 from the
 corrected commit; the first universal candidate remains unpublished/superseded.
+
+
+Before publishing, Oliver also reported that browser file/folder clicks dismiss
+Disk Usage and explicitly changed the requested behavior: keep the map until its
+Close button (or explicit replacement by Todoist). Remove direct/deferred closes
+from selection, right-click selection, marquee, keyboard navigation, folder/tab/
+project changes, tab moves and terminal-follow navigation. Scan identity and
+cancellation stay independent of browser selection. Add hidden fixture coverage
+for these browser actions, unchanged scan identity/cancellation and explicit Close.
+
+The uploaded v1.0.0 candidate remains an unpublished superseded draft/tag; preserve
+it without moving the tag or overwriting its assets. Continue the V1 release as
+1.0.1 / v1.0.1, including both Disk Usage corrections. Rebuild and verify from the
+new commit, retain identical universal compatibility aliases and compile-only QA.
+Cache cleanup remains deferred; no old cache content has been deleted.

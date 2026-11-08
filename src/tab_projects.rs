@@ -412,8 +412,6 @@ impl Schnauz {
         self.terminal_resize = None;
         if activate {
             self.apply_project_switch(old, &destination, cx);
-        } else {
-            self.dismiss_space_map |= self.space_map.is_some();
         }
         self.saved_session = self.session_string();
         cx.notify();

@@ -247,6 +247,46 @@ impl Schnauz {
         self.dismiss_space_map = false;
     }
 
+    #[cfg(feature = "ui-checks")]
+    pub(super) fn check_map_persistence(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let original = self.space_map.take();
+        let pane = self.active_pane;
+        let folder = self.tab(pane).current_dir.clone();
+        let path = folder.join("disk-usage-persistence.txt");
+        fs::write(&path, "Disposable Disk Usage selection fixture").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let id = NEXT_INSPECTION.fetch_add(1, Ordering::Relaxed);
+        self.space_map = Some(State {
+            id, root: folder.clone(), pane, cancel: cancel.clone(),
+            priority: Arc::new(std::sync::Mutex::new(None)), tree: None, view_root: 0,
+            progress: Default::default(), error: None, hovered: None, selected: None,
+            geometry: Default::default(),
+        });
+        self.dismiss_space_map = false;
+        let click = gpui::ClickEvent::Mouse(gpui::MouseClickEvent {
+            down: gpui::MouseDownEvent::default(),
+            up: gpui::MouseUpEvent { click_count: 1, ..Default::default() },
+        });
+        self.click_entry(pane, path.clone(), false, false, &click, window, cx);
+        assert_eq!(self.space_map.as_ref().map(|s| s.id), Some(id), "Selecting a file must keep Disk Usage open");
+        self.tab_mut(pane).selection.clear();
+        self.select_context_entry(pane, path, cx);
+        assert_eq!(self.space_map.as_ref().map(|s| s.id), Some(id), "Right-click selection must keep the map");
+        let active = self.pane(pane).active;
+        self.select_tab(pane, active, cx);
+        self.arrow_move(pane, 0, 1, cx);
+        self.begin_marquee(pane, 0., 0., cx);
+        self.marquee = None;
+        self.load_dir_in(pane, folder, cx);
+        assert!(!self.dismiss_space_map, "Browser navigation/keyboard/marquee must not schedule map closure");
+        assert_eq!(self.space_map.as_ref().map(|s| s.id), Some(id));
+        assert!(!cancel.load(Ordering::Acquire), "Browsing must not cancel the explicit scan");
+        self.close_space_map(cx);
+        assert!(self.space_map.is_none());
+        assert!(cancel.load(Ordering::Acquire), "Explicit Close still cancels the scan");
+        self.space_map = original;
+    }
+
     pub(super) fn render_space_map(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let state = self.space_map.as_ref()?;
         let t = theme();

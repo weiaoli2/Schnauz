@@ -382,7 +382,6 @@ impl Schnauz {
         if self.panes[pane].active != index {
             return;
         }
-        self.dismiss_space_map |= self.space_map.as_ref().is_some_and(|map| map.pane == pane);
         if self.search_in_pane(pane) {
             self.close_palette(cx);
         }

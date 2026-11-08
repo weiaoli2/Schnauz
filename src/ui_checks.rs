@@ -183,6 +183,7 @@ pub(super) fn run() {
         }).unwrap();
         if visible && std::env::var_os("SCHNAUZ_PREVIEW_CHECK_VISIBLE").is_some() {
             check_previews(window, cx);
+            window.update(cx, |fixture, window, cx| fixture.browser.update(cx, |browser, cx| browser.check_map_persistence(window, cx))).unwrap();
             return;
         }
         for phase in 0..3 {

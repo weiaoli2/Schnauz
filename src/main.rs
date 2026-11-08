@@ -2159,7 +2159,6 @@ impl Schnauz {
     fn reveal_in_pane(&mut self, pane: usize, path: PathBuf, cx: &mut Context<Self>) {
         let paths = self.display_paths(pane);
         if let Some(ix) = paths.iter().position(|p| p == &path) {
-            self.dismiss_space_map |= self.space_map.is_some();
             let (view, off) = {
                 let tab = self.tab(pane);
                 let off = usize::from(
@@ -6050,7 +6049,6 @@ impl Schnauz {
     /// current folder, record it as most-recent, and persist. Does
     /// NOT touch back/forward history (callers manage that).
     fn load_dir_in(&mut self, pane: usize, dir: PathBuf, cx: &mut Context<Self>) {
-        self.dismiss_space_map |= self.space_map.is_some();
         if self.search_in_pane(pane) { self.close_palette(cx); }
         self.rename = None;
 
@@ -6537,7 +6535,6 @@ impl Schnauz {
 
     /// Select a tab in a pane.
     fn select_tab(&mut self, pane: usize, tab: usize, cx: &mut Context<Self>) {
-        self.dismiss_space_map |= self.space_map.is_some();
         if self.palette_open { self.close_palette(cx); }
         self.active_pane = pane;
         let p = self.pane_mut(pane);
@@ -6752,7 +6749,6 @@ impl Schnauz {
         self.rename = None;
         self.active_pane = pane;
         if !self.tab(pane).selection.contains(&path) {
-            if self.space_map.is_some() { self.close_space_map(cx); }
             self.select_entry(pane, path, cx);
         } else if self.tab(pane).anchor.as_ref() != Some(&path) {
             self.focus_entry(pane, path, cx);
@@ -6844,7 +6840,6 @@ impl Schnauz {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.space_map.is_some() { self.close_space_map(cx); }
         if self.suppress_entry_click || self.marquee_click_suppressed() {
             return;
         }
@@ -6889,7 +6884,6 @@ impl Schnauz {
     /// would slide with the scroll — moving the box off the rows it had already
     /// swept and re-selecting the wrong ones.
     fn begin_marquee(&mut self, pane: usize, x: f32, y: f32, cx: &mut Context<Self>) {
-        self.dismiss_space_map |= self.space_map.is_some();
         if mq_log() {
             eprintln!("[mq] begin pane={pane} at ({x:.0},{y:.0})");
         }
@@ -7170,7 +7164,6 @@ impl Schnauz {
 
     /// Move the selection with an arrow key. `dx`/`dy` are -1/0/1.
     fn arrow_move(&mut self, pane: usize, dx: i32, dy: i32, cx: &mut Context<Self>) {
-        self.dismiss_space_map |= self.space_map.is_some();
         self.active_pane = pane;
         match self.tab(pane).view {
             ViewMode::Icons => {

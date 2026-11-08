@@ -518,7 +518,6 @@ impl Schnauz {
         let id = self.projects.active;
         self.clear_file_drag(cx);
         self.close_palette(cx);
-        self.space_map = None;
         self.activate_project_sidebar(cx);
         self.server_dialog = None;
         self.ssh_ask = false;
@@ -596,7 +595,6 @@ impl Schnauz {
         } else if active == closed && drop_session {
             self.clear_file_drag(cx);
             self.close_palette(cx);
-            self.space_map = None;
             self.apply_layout(home);
             self.terminal_resize = None;
             self.reload_pane(0, cx);

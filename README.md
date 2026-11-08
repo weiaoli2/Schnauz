@@ -48,16 +48,16 @@ Folder preferences live in central settings, rather than scattering configuratio
 files through your projects. Todoist and Nextcloud are optional; their credentials
 stay in macOS Keychain.
 
-## Download for Mac — V1 (1.0.0)
+## Download for Mac — V1 (1.0.1)
 
 **macOS 14 Sonoma or later.** One universal app runs natively on Apple Silicon
 (M1 and newer) and Intel:
 
-**[Download Schnauz for Mac](https://github.com/weiaoli2/Schnauz/releases/download/v1.0.0/Schnauz-1.0.0-macos-universal.dmg)**
+**[Download Schnauz for Mac](https://github.com/weiaoli2/Schnauz/releases/download/v1.0.1/Schnauz-1.0.1-macos-universal.dmg)**
 
 For an update, finish any terminal/SSH work and **quit Schnauz before replacing it**.
 Open the disk image and drag **Schnauz.app** to **Applications**. Checksums and
-release notes accompany the [release](https://github.com/weiaoli2/Schnauz/releases/tag/v1.0.0).
+release notes accompany the [release](https://github.com/weiaoli2/Schnauz/releases/tag/v1.0.1).
 Explore the app on [TechGuyZone](https://techguyzone.com/apps/).
 
 This is an **early preview**, signed with an Apple Development certificate and

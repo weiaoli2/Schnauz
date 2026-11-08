@@ -1,7 +1,16 @@
 # Building a Schnauz release
 
 Official repository: https://github.com/weiaoli2/Schnauz (public).
-Current published release: **v0.9.30**. Authorized next release: **V1 / v1.0.0**.
+Current published release: **v0.9.30**. Authorized next release: **V1 / v1.0.1**.
+
+## Corrected V1 candidate — 1.0.1
+
+Oliver requested persistent Disk Usage after the v1.0.0 draft upload. Keep that
+candidate unpublished with its tag/assets unchanged. Publish V1 as v1.0.1 with
+both the parent-arrow correction and persistent map during ordinary browsing.
+The explicit Close button and explicit Todoist replacement still dismiss/cancel.
+Retain the same universal/legacy-alias policy and compile/sign/package-only QA.
+Do not perform cache cleanup before the release is finished.
 
 ## Authorized V1 universal release — 2026-11-08
 

@@ -1216,3 +1216,11 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   may rebase the tree and must not strand this arrow. Preserve map-originated
   browser navigation, cancellation and panel visibility; filesystem root stops.
   Include this reported fix before V1 publication; retain compile-only QA.
+
+- V1 preparation update: Oliver explicitly supersedes the old outside-selection
+  dismissal rule. Disk Usage persists during file/folder selection, context
+  selection, marquee, keyboard navigation, local/SSH browsing and tab/project
+  changes. Only explicit Close or explicit Todoist replacement dismisses it;
+  those actions still cancel the scan. Preserve map navigation and the up fix.
+  Uploaded v1.0.0 is superseded before publication; retain its draft/tag/assets
+  unchanged and publish corrected V1 as 1.0.1. Cache cleanup stays deferred.
