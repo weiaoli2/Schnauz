@@ -2930,3 +2930,14 @@ Retain Apple Development signing/unnotarized prerelease and compile/sign/package
 only QA. Do not execute app/helper/test binaries or access live accounts.
 Stage the universal app for the normal local update without replacing live code.
 No website/video/test.csv, live settings, credentials or keys enter source Git.
+
+
+During V1 preparation Oliver reported the Disk Usage up arrow doing nothing.
+Detail-budget rescans rebase the tree on the clicked folder; node zero loses its
+parent index, and the old arrow handled indexed parents only. Resolve the real
+parent of the displayed folder when no cached ancestor exists. The explicit
+click cancels/replaces that scan, navigates the browser and keeps Disk Usage
+open; cached ancestors still reuse the existing map. At filesystem root the
+arrow is dimmed. Compile-only fixtures cover cached ascent, rebased detail roots,
+loading replacement scans and filesystem-root termination. Rebuild V1 from the
+corrected commit; the first universal candidate remains unpublished/superseded.

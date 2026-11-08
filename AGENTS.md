@@ -1210,3 +1210,9 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   QA; no app/helper/test launches or live accounts. Stage normal local universal
   update safely, preserve all existing tags/assets/sessions and exclude untracked
   website/video/test.csv. This supersedes the pending 0.9.31 no-release hold.
+
+- V1 preparation: Disk Usage up uses a cached parent node when available, else
+  explicitly inspects the displayed folder's filesystem parent. Detail rescans
+  may rebase the tree and must not strand this arrow. Preserve map-originated
+  browser navigation, cancellation and panel visibility; filesystem root stops.
+  Include this reported fix before V1 publication; retain compile-only QA.

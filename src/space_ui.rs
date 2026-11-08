@@ -21,6 +21,17 @@ pub(super) struct State {
     selected: Option<usize>,
     geometry: Rc<RefCell<Geometry>>,
 }
+/// The detail scanner may rebase on a clicked folder. Its tree root then has
+/// no parent index, but the displayed folder still has a filesystem parent.
+fn parent_target(root: &Path, tree: Option<&Tree>, view_root: usize) -> Option<(PathBuf, Option<usize>)> {
+    let node = tree.and_then(|tree| tree.nodes.get(view_root));
+    if let Some((tree, parent)) = tree.zip(node.and_then(|node| node.parent)) {
+        if let Some(node) = tree.nodes.get(parent) { return Some((node.path.clone(), Some(parent))); }
+    }
+    let path = node.map_or(root, |node| node.path.as_path());
+    path.parent().filter(|parent| *parent != path).map(|parent| (parent.to_path_buf(), None))
+}
+
 impl Drop for State {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Release);
@@ -216,6 +227,26 @@ impl Schnauz {
         window.focus(&self.focus);
         cx.notify();
     }
+    fn zoom_out_map(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(state) = self.space_map.as_ref() else { return; };
+        let Some((parent, index)) = parent_target(&state.root, state.tree.as_deref(), state.view_root) else { return; };
+        if let Some(index) = index {
+            self.select_map_node(index, window, cx);
+            return;
+        }
+        // A fresh detail/root scan has no ancestor nodes to reuse. This explicit
+        // arrow click cancels the old scan and inspects exactly its parent.
+        let pane = state.pane.min(self.panes.len() - 1);
+        self.active_pane = pane;
+        if self.tab(pane).remote.is_some() {
+            self.panes[pane].tabs.push(Tab::new(parent.clone()));
+            self.panes[pane].active = self.panes[pane].tabs.len() - 1;
+        }
+        self.navigate_in(pane, parent.clone(), cx);
+        self.inspect_folder(pane, parent, window, cx);
+        self.dismiss_space_map = false;
+    }
+
     pub(super) fn render_space_map(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let state = self.space_map.as_ref()?;
         let t = theme();
@@ -287,14 +318,10 @@ impl Schnauz {
                     .gap_2()
                     .child(
                         map_button("inspect-up", "↑")
+                            .when(parent_target(&state.root, state.tree.as_deref(), state.view_root).is_none(), |d| d.opacity(0.4).cursor(gpui::CursorStyle::Arrow))
                             .tooltip(tip("Zoom out one folder"))
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                let parent = this.space_map.as_ref().and_then(|s| {
-                                    s.tree.as_ref().and_then(|t| t.nodes[s.view_root].parent)
-                                });
-                                if let Some(parent) = parent {
-                                    this.select_map_node(parent, window, cx);
-                                }
+                                this.zoom_out_map(window, cx);
                             })),
                     )
                     .child(
@@ -609,4 +636,34 @@ fn paint_label(
     window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
         let _ = line.paint(origin, px(font_size + 3.), window, cx);
     });
+}
+
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+    fn tree(root: &str) -> Tree {
+        Tree {
+            nodes: vec![space_map::Node { path: root.into(), parent: None, directory: true,
+                bytes: 0, children: Vec::new(), grouped_files: 0 }],
+            counts: vec![0], unreadable: 0, grouped_files: 0, skipped_volumes: 0,
+            capacity: None, scanning: false, pending_folders: 0,
+        }
+    }
+    #[test]
+    fn zoom_out_uses_cached_ancestor_or_real_parent_after_detail_rebase() {
+        let root = Path::new("/fixture");
+        let mut original = tree("/fixture");
+        original.nodes.push(space_map::Node { path: "/fixture/child".into(), parent: Some(0),
+            directory: true, bytes: 0, children: Vec::new(), grouped_files: 0 });
+        original.nodes[0].children.push(1); original.counts.push(0);
+        assert_eq!(parent_target(root, Some(&original), 1), Some((root.into(), Some(0))));
+        let rebased = tree("/fixture/child");
+        assert_eq!(parent_target(Path::new("/fixture/child"), Some(&rebased), 0), Some((root.into(), None)),
+            "Detail rescanning must not strand the up arrow at the new scan root");
+        assert_eq!(parent_target(Path::new("/fixture/child"), None, 0), Some((root.into(), None)),
+            "Up also works while the replacement scan is loading");
+        let filesystem_root = tree("/");
+        assert!(parent_target(Path::new("/"), Some(&filesystem_root), 0).is_none());
+    }
 }
