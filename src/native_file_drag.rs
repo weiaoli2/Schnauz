@@ -1,7 +1,9 @@
-//! Per-browser AppKit window drop operations. GPUI 0.2 always reports Copy; override
-//! only these owned window instances, forwarding every event to GPUI unchanged.
+//! Per-browser AppKit drop destination. GPUI 0.2 always reports Copy; a dedicated
+//! view advertises Move/Copy and forwards events to the unchanged GPUI window.
 use super::*;
-use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel};
+use objc2::runtime::AnyObject;
+use objc2::ClassType;
+use objc2_app_kit::{NSAutoresizingMaskOptions, NSView};
 use objc2_app_kit::{NSEvent, NSEventModifierFlags};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,7 +35,6 @@ struct Feedback {
 }
 thread_local! {
     static FEEDBACK: RefCell<Feedback> = const { RefCell::new(Feedback { view: 0, allowed: NSDragOperation::Copy, operation: Operation::Copy, active: false }) };
-    static CLASSES: RefCell<HashMap<usize, &'static AnyClass>> = RefCell::new(HashMap::new());
 }
 #[cfg(feature = "ui-checks")]
 thread_local! { static TEST_COMMAND: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) }; }
@@ -119,126 +120,95 @@ fn advertised(accepted: NSDragOperation) -> NSDragOperation {
         }
     })
 }
-extern "C-unwind" fn entered(this: &AnyObject, _: Sel, info: &AnyObject) -> NSDragOperation {
-    prepare(this, info);
-    let parent = this
-        .class()
-        .superclass()
-        .expect("owned drop view superclass");
-    // SAFETY: same NSDraggingDestination ABI; forward to original GPUI method.
-    let accepted = unsafe { objc2::msg_send![super(this, parent), draggingEntered: info] };
-    advertised(accepted)
-}
-extern "C-unwind" fn updated(this: &AnyObject, _: Sel, info: &AnyObject) -> NSDragOperation {
-    prepare(this, info);
-    let parent = this
-        .class()
-        .superclass()
-        .expect("owned drop view superclass");
-    let accepted = unsafe { objc2::msg_send![super(this, parent), draggingUpdated: info] };
-    advertised(accepted)
-}
-extern "C-unwind" fn exited(this: &AnyObject, _: Sel, info: &AnyObject) {
-    FEEDBACK.with(|s| {
-        let mut s = s.borrow_mut();
-        if s.view == this as *const _ as usize {
-            s.active = false;
+// Allocate the destination with its final class. Changing an initialized
+// NSWindow's isa loses AppKit's KVO bookkeeping: full-screen titlebar reparenting
+// then throws from NSTitlebarView::viewWillMoveToWindow, leaving a broken transition.
+// A normal autoresizing container keeps both NSWindow and GPUIView unchanged.
+define_class!(
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "SchnauzFileDropDestination"]
+    struct DropDestination;
+    unsafe impl NSObjectProtocol for DropDestination {}
+    impl DropDestination {
+        #[unsafe(method(draggingEntered:))]
+        fn entered(&self, info: &AnyObject) -> NSDragOperation {
+            prepare(self, info);
+            let Some(window) = self.window() else { return NSDragOperation::None; };
+            let accepted = unsafe { msg_send![&*window, draggingEntered: info] };
+            advertised(accepted)
         }
-    });
-    let parent = this
-        .class()
-        .superclass()
-        .expect("owned drop view superclass");
-    unsafe {
-        let _: () = objc2::msg_send![super(this, parent), draggingExited: info];
+        #[unsafe(method(draggingUpdated:))]
+        fn updated(&self, info: &AnyObject) -> NSDragOperation {
+            prepare(self, info);
+            let Some(window) = self.window() else { return NSDragOperation::None; };
+            let accepted = unsafe { msg_send![&*window, draggingUpdated: info] };
+            advertised(accepted)
+        }
+        #[unsafe(method(draggingExited:))]
+        fn exited(&self, info: &AnyObject) {
+            FEEDBACK.with(|s| {
+                let mut s = s.borrow_mut();
+                if s.view == self as *const _ as usize { s.active = false; }
+            });
+            if let Some(window) = self.window() {
+                unsafe { let _: () = msg_send![&*window, draggingExited: info]; }
+            }
+        }
+        #[unsafe(method(performDragOperation:))]
+        fn submit(&self, info: &AnyObject) -> objc2::runtime::Bool {
+            prepare(self, info); // Read Command at release, even without movement.
+            let Some(window) = self.window() else {
+                ended();
+                return objc2::runtime::Bool::NO;
+            };
+            let result = unsafe { msg_send![&*window, performDragOperation: info] };
+            // GPUI's conclude callback alone leaves external_files_dragged set.
+            unsafe { let _: () = msg_send![&*window, draggingExited: info]; }
+            ended();
+            result
+        }
+        #[unsafe(method(concludeDragOperation:))]
+        fn conclude(&self, info: &AnyObject) {
+            unsafe { let _: () = msg_send![self, draggingExited: info]; }
+        }
     }
+);
+pub(super) fn install(window: &Window, cx: &mut App) {
+    let Some(ptr) = ns_view_ptr(window) else { return; };
+    // Retain across reparenting: the original parent may own the last reference.
+    let Some(content) = (unsafe { Retained::retain(ptr.cast::<NSView>()) }) else { return; };
+    let Some(parent) = (unsafe { content.superview() }) else { return; };
+    if parent.isKindOfClass(DropDestination::class()) { return; }
+    // Reparenting can dispatch native focus/appearance/resize callbacks. Do it
+    // outside render's GPUI App/Window/entity borrows, just like native menus.
+    cx.spawn(async move |_| { install_content(&content); }).detach();
 }
-extern "C-unwind" fn submit(this: &AnyObject, _: Sel, info: &AnyObject) -> objc2::runtime::Bool {
-    prepare(this, info); // Read Command again at release, even without movement.
-    let parent = this
-        .class()
-        .superclass()
-        .expect("owned drop view superclass");
-    let result = unsafe { objc2::msg_send![super(this, parent), performDragOperation: info] };
-    // GPUI does not clear external_files_dragged from its conclude callback.
-    // Retire only this destination's native tracking after the delivered drop.
-    unsafe {
-        let _: () = objc2::msg_send![super(this, parent), draggingExited: info];
-    }
-    ended();
-    result
-}
-// AppKit registers internal KVO forwarding before our per-window subclass is
-// installed. Restore its original class before NSWindow tears those observers
-// down; otherwise closing a browser can throw an unregistered-observer exception.
-extern "C-unwind" fn dealloc_owned_window(this: &AnyObject, _: Sel) {
-    let parent=this.class().superclass().expect("owned drop window superclass");
-    unsafe {
-        AnyObject::set_class(this,parent);
-        let _:()=objc2::msg_send![super(this,parent),dealloc];
-    }
-}
-pub(super) fn install(window: &Window) {
-    let Some(ptr) = ns_view_ptr(window) else {
-        return;
+fn install_content(content: &NSView) {
+    let Some(parent) = (unsafe { content.superview() }) else { return; };
+    if parent.isKindOfClass(DropDestination::class()) { return; }
+    let Some(native_window) = content.window() else { return; };
+    let responder = native_window.firstResponder();
+    let mtm = objc2::MainThreadMarker::new().expect("browser drop destination on main thread");
+    let destination: Retained<DropDestination> = unsafe {
+        msg_send![super(DropDestination::alloc(mtm).set_ivars(())), initWithFrame: content.frame()]
     };
-    // GPUI registers NSDraggingDestination on its NSWindow, not its content
-    // NSView. Leave the content/preview/terminal views and global classes alone.
-    let content = unsafe { &*(ptr as *const objc2_app_kit::NSView) };
-    let Some(native_window) = content.window() else {
-        return;
-    };
-    // SAFETY: owned main-thread NSWindow; subclass adds no ivars and preserves
-    // GPUI's exact superclass layout and all non-dragging behavior.
-    let view: &AnyObject = &native_window;
-    let parent = view.class();
-    if parent
-        .name()
-        .to_string_lossy()
-        .starts_with("SchnauzFileDrop_")
-    {
-        return;
-    }
-    let class = CLASSES.with(|classes| {
-        *classes
-            .borrow_mut()
-            .entry(parent as *const _ as usize)
-            .or_insert_with(|| {
-                let name = std::ffi::CString::new(format!(
-                    "SchnauzFileDrop_{}",
-                    parent.name().to_string_lossy()
-                ))
-                .unwrap();
-                let mut builder =
-                    ClassBuilder::new(&name, parent).expect("unique browser drop class");
-                unsafe {
-                    builder.add_method(
-                        objc2::sel!(dealloc),
-                        dealloc_owned_window as extern "C-unwind" fn(_, _),
-                    );
-                    builder.add_method(
-                        objc2::sel!(draggingEntered:),
-                        entered as extern "C-unwind" fn(_, _, _) -> _,
-                    );
-                    builder.add_method(
-                        objc2::sel!(draggingUpdated:),
-                        updated as extern "C-unwind" fn(_, _, _) -> _,
-                    );
-                    builder.add_method(
-                        objc2::sel!(draggingExited:),
-                        exited as extern "C-unwind" fn(_, _, _),
-                    );
-                    builder.add_method(
-                        objc2::sel!(performDragOperation:),
-                        submit as extern "C-unwind" fn(_, _, _) -> _,
-                    );
-                }
-                builder.register()
-            })
-    });
-    unsafe {
-        AnyObject::set_class(view, class);
-    }
+    destination.setAutoresizingMask(
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
+    );
+    // Match GPUI 0.2's single registered file-list type.
+    #[allow(deprecated)]
+    destination.registerForDraggedTypes(&objc2_foundation::NSArray::from_slice(&[
+        unsafe { objc2_app_kit::NSFilenamesPboardType },
+    ]));
+    parent.addSubview(&destination);
+    content.removeFromSuperview();
+    content.setFrameOrigin(objc2_foundation::NSPoint::new(0., 0.));
+    destination.addSubview(content);
+    if let Some(responder) = responder { native_window.makeFirstResponder(Some(&responder)); }
+    // The registered ancestor view receives drops over GPUI and native previews;
+    // forwarding explicitly to GPUI's original NSWindow avoids double delivery.
+    native_window.unregisterDraggedTypes();
 }
 #[cfg(test)]
 mod tests {

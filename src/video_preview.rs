@@ -338,7 +338,7 @@ impl Schnauz {
         let session = self.video_preview.clone()?;
         let state = session.state.get();
         let t = theme();
-        let width = preview_panel::preview_width(self, self.panes.len() - 1).max(1.);
+        let width = preview_panel::preview_width(self, self.panes.len() - 1, cx).max(1.);
         let content_width = (width - 1.).max(1.);
         let audio = is_audio(&session.path);
         let height = if audio {

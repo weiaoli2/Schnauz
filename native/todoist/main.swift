@@ -23,6 +23,7 @@ struct TDResult: Encodable {
   var snapshot: TDSnapshot? = nil
   var task: TDTask? = nil
   var retry_after: Int? = nil
+  var completion_unverified: Bool? = nil
 }
 @MainActor func finish(_ result: TDResult) -> Never {
   if let data = try? JSONEncoder().encode(result) { FileHandle.standardOutput.write(data) }
@@ -196,11 +197,23 @@ struct TDResult: Encodable {
           guard let task = request.task_id, let id = request.request_id else {
             throw TDProblem(text: "No Todoist task was selected.")
           }
-          try await client.complete(
+          switch try await client.complete(
             projectID: project, taskID: task, requestID: id,
-            expectedUpdated: request.expected_updated)
-          finish(TDResult(message: "Task completed in Todoist."))
+            expectedUpdated: request.expected_updated) {
+          case .archived:
+            finish(TDResult(message: "Task completed in Todoist."))
+          case .next(let task):
+            finish(TDResult(message: "Task completed in Todoist.", task: task))
+          case .unverified(let retryAfter):
+            finish(TDResult(
+              message: "Task completed in Todoist. Use Refresh to check the next occurrence.",
+              retry_after: retryAfter, completion_unverified: true))
+          }
         case "add": await addTask(client: client, project: project)
+        case "edit":
+          guard let taskID = request.task_id else { throw TDProblem(text: "No Todoist task was selected.") }
+          let task = try await client.task(projectID: project, taskID: taskID)
+          await addTask(client: client, project: project, original: task)
         default: throw TDProblem(text: "Unknown Todoist action.")
         }
       } catch { fail(error) }
@@ -237,10 +250,11 @@ struct TDResult: Encodable {
       }
     }
   }
-  func addTask(client: TDClient, project: String) async -> Never {
+  func addTask(client: TDClient, project: String, original: TDTask? = nil) async -> Never {
     // Show immediately using the captured name; network validation happens on Save.
     let destination = TDProject(id: project, name: request.project_name ?? "Todoist project", parent_id: nil)
-    var draft = TDDraft()
+    var draft = original.map(TDDraft.init(task:)) ?? TDDraft()
+    let originalDue = draft.due
     let creationID = request.request_id ?? UUID().uuidString
     let reminderID = UUID().uuidString, locationID = UUID().uuidString
     var previous = ""
@@ -250,7 +264,7 @@ struct TDResult: Encodable {
     var message = ""
     while true {
       let composer = TDComposer(project: destination.name, draft: draft, palette: request.palette,
-        message: message, saved: savedTask != nil)
+        message: message, saved: savedTask != nil, editing: original != nil)
       guard let entered = composer.present() else {
         if let task = savedTask {
           finish(TDResult(message: "Task saved in \(destination.name). Optional reminders were not completed.", task: task))
@@ -267,8 +281,15 @@ struct TDResult: Encodable {
         if savedTask == nil {
           _ = try await client.project(project)
           if let date = draft.reminder, date <= Date() { throw TDProblem(text: "Choose a reminder time in the future.") }
-          savedTask = try await client.add(projectID: project, content: draft.content,
-            due: draft.due, section: nil, requestID: currentID, options: draft.options)
+          if let original {
+            var options=draft.options
+            if draft.labels == (original.labels ?? []).joined(separator: ", ") {options.labels=original.labels ?? []}
+            savedTask = try await client.update(original: original, content: draft.content,
+              due: draft.due, originalDue: originalDue, options: options, requestID: currentID)
+          } else {
+            savedTask = try await client.add(projectID: project, content: draft.content,
+              due: draft.due, section: nil, requestID: currentID, options: draft.options)
+          }
         }
         let task = savedTask!
         if let date = draft.reminder, !reminderSaved {
@@ -279,7 +300,7 @@ struct TDResult: Encodable {
           try await client.locationReminder(taskID: task.id, projectID: project, location: location, requestID: locationID)
           locationSaved = true
         }
-        finish(TDResult(message: "Task added to \(destination.name).", task: task))
+        finish(TDResult(message: original == nil ? "Task added to \(destination.name)." : "Task updated in \(destination.name).", task: task))
       } catch {
         window?.orderOut(nil); window = nil
         let problem = error as? TDProblem

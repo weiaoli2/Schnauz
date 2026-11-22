@@ -36,6 +36,7 @@ pub(super) fn apply_style(tab: &mut Tab, style: &folder_views::FolderView) {
 }
 impl Schnauz {
     pub(super) fn apply_folder_view(&mut self, pane: usize, only_saved: bool) {
+        self.load_sticky(pane);
         let tab = self.tab(pane);
         if tab.remote.is_some() {
             return;
@@ -55,6 +56,12 @@ impl Schnauz {
         for (project, panes) in std::iter::once((self.projects.active, &mut self.panes))
             .chain(self.project_sessions.iter_mut().map(|(id, session)| (*id, &mut session.panes))) {
             for pane in panes { for tab in &mut pane.tabs {
+                let sticky = views.sticky(project, &sticky::folder_key(tab));
+                if tab.sticky_order != sticky {
+                    tab.sticky_order = sticky;
+                    sort_entries(&mut tab.entries, tab.sort_key, tab.sort_asc);
+                    tab.recompute_results();
+                }
                 if tab.remote.is_none() {
                     if let Some(style) = views.resolve_project(project, &tab.current_dir) { apply_style(tab, style); }
                 }
@@ -79,7 +86,7 @@ impl Schnauz {
         for pane in 0..self.panes.len() { self.scroll_selected_in_pane(pane); }
         cx.notify();
     }
-    fn publish_view_change(&mut self, scope: Scope, root: PathBuf, reset: bool, cx: &mut Context<Self>) {
+    pub(super) fn publish_view_change(&mut self, scope: Scope, root: PathBuf, reset: bool, cx: &mut Context<Self>) {
         cx.set_global(ViewChange { scope, root, reset });
         self.observe_view_change(cx);
         self.schedule_view_save(cx);
@@ -166,7 +173,7 @@ impl Schnauz {
             return;
         };
         let row = match tab.view {
-            ViewMode::Icons => index / self.icon_cols(pane),
+            ViewMode::Icons => tab.sticky_icon_row(index, self.icon_cols(pane)),
             ViewMode::List => {
                 index
                     + usize::from(
@@ -322,7 +329,7 @@ impl Schnauz {
             .items_center()
             .flex_none()
             .px_3()
-            .h(px(28.))
+            .h(px(COLUMN_HEADER_H))
             .text_size(px(UI_SMALL_FONT_SIZE))
             .text_color(rgb(theme().text_muted))
             .bg(rgb(theme().sidebar))
@@ -475,10 +482,16 @@ pub(super) fn column_text(entry: &Entry, column: Column, location: &Path) -> Str
     }
     match column {
         Column::Name => entry.name.clone(),
-        Column::Kind => kind_label(&entry.name, entry.is_dir),
+        Column::Kind => match entry.link {
+            Some(remote_links::Target::Folder) => "Folder Link".into(),
+            Some(remote_links::Target::File) => "File Link".into(),
+            Some(remote_links::Target::Unavailable) => "Unresolved Link".into(),
+            None => kind_label(&entry.name, entry.is_dir),
+        },
         Column::Modified => {
             if entry.loaded {
-                format_date(entry.modified)
+                if entry.modified_date_only { system_dates::date_only(entry.modified) }
+                else { format_date(entry.modified) }
             } else {
                 "—".into()
             }

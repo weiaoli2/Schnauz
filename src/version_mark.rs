@@ -737,8 +737,10 @@ mod tests {
         let entry = |name: &str, folder: bool| Entry {
             name: name.into(),
             is_dir: folder,
+            link: None,
             size: 0,
             modified: None,
+                modified_date_only: false,
             created: None,
             mode: None,
             loaded: true,

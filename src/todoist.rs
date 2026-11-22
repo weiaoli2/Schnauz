@@ -198,7 +198,7 @@ impl Request {
             request_id: None,
             expected_updated: None,
             allow_create: false,
-            interactive: matches!(operation, "connect" | "disconnect" | "add"),
+            interactive: matches!(operation, "connect" | "disconnect" | "add" | "edit"),
             palette: [
                 ("bg", theme().bg),
                 ("sidebar", theme().sidebar),
@@ -230,6 +230,7 @@ pub(super) struct Response {
     pub project: Option<Project>,
     pub snapshot: Option<Snapshot>,
     pub task: Option<TaskItem>,
+    completion_unverified: Option<bool>,
     #[serde(skip)]
     rows: Option<Vec<Row>>,
     pub retry_after: Option<u64>,
@@ -343,9 +344,9 @@ pub(super) struct Cache {
     pub rows: Vec<Row>,
     pub busy: bool,
     pub error: Option<String>,
-    pub good_at: Option<Instant>,
     pub retry_at: Option<Instant>,
-    pub refresh_after: bool,
+    pub(super) discard_read: bool,
+    pub(super) refresh_after: bool,
 }
 impl Cache {
     fn record_created(&mut self, task: TaskItem, link: &projects::TodoistLink) {
@@ -360,20 +361,50 @@ impl Cache {
             tasks: Vec::new(),
             sections: Vec::new(),
         });
-        data.tasks.retain(|old| old.id != task.id);
-        data.tasks.push(task);
+        if let Some(old) = data.tasks.iter_mut().find(|old|old.id == task.id) { *old=task; }
+        else { data.tasks.push(task); }
         self.rows = outline(data);
         self.error = None;
     }
-    /// A write may finish while an older read is in flight. Discard that read
-    /// and request a fresh snapshot rather than making old tasks look current.
+    fn record_updated(&mut self, task: TaskItem, link: &projects::TodoistLink) {
+        if task.project_id != link.project_id {
+            return;
+        }
+        if let Some(data) = &mut self.data {
+            if let Some(old) = data.tasks.iter_mut().find(|old| old.id == task.id) {
+                *old = task;
+                self.rows = outline(data);
+            }
+        }
+    }
+
+    fn record_completed(&mut self, task_id: String) {
+        let Some(data) = &mut self.data else {
+            return;
+        };
+        let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
+        for task in &data.tasks {
+            if let Some(parent) = &task.parent_id {
+                children.entry(parent.as_str()).or_default().push(&task.id);
+            }
+        }
+        let mut completed = HashSet::new();
+        let mut pending = vec![task_id.as_str()];
+        while let Some(id) = pending.pop() {
+            if completed.insert(id.to_owned()) {
+                pending.extend(children.get(id).into_iter().flatten().copied());
+            }
+        }
+        data.tasks.retain(|task| !completed.contains(&task.id));
+        self.rows = outline(data);
+    }
+
+    /// A read started before a confirmed write cannot replace the updated cache.
     pub(super) fn finish_read(&mut self, response: Response, project_id: &str) -> bool {
         self.busy = false;
-        if std::mem::take(&mut self.refresh_after) {
-            self.good_at = None;
-            if response.success {
-                return true;
-            }
+        let refresh_after = std::mem::take(&mut self.refresh_after);
+        if std::mem::take(&mut self.discard_read) && response.success {
+            return refresh_after;
         }
         if response.success {
             if let Some(data) = response.snapshot.filter(|s| {
@@ -381,7 +412,6 @@ impl Cache {
             }) {
                 self.rows = response.rows.unwrap_or_else(|| outline(&data));
                 self.data = Some(data);
-                self.good_at = Some(Instant::now());
                 self.error = None;
                 self.retry_at = None;
             } else {
@@ -488,27 +518,31 @@ impl crate::todoist_window::Tasks {
             link
         })
     }
-    pub(super) fn ensure_todoist(&mut self, force: bool, cx: &mut Context<Self>) {
-        self.projects = cx.global::<ProjectLibraryGlobal>().0.clone();
-        if !self.todoist.open || cx.global::<Global>().busy {
+    pub(super) fn load_todoist_project(&mut self, cx: &mut Context<Self>) {
+        if self.todoist_link(cx).is_some_and(|link| {
+            self.todoist.caches.contains_key(&(link.account_id, link.project_id))
+        }) {
             return;
         }
-        let Some(account) = cx.global::<Global>().account.as_ref().cloned() else {
+        self.refresh_todoist(cx);
+    }
+
+    pub(super) fn refresh_todoist(&mut self, cx: &mut Context<Self>) {
+        self.projects = cx.global::<ProjectLibraryGlobal>().0.clone();
+        if !self.todoist.open || cx.global::<Global>().busy || cx.global::<Global>().account.is_none() {
             return;
-        };
-        let Some(link) = self.todoist_link(cx) else {
+        }
+        if let Some(link) = self.todoist_link(cx) {
+            self.refresh_link(link, cx);
+        } else {
             self.link_todoist(false, cx);
-            return;
-        };
-        let key = (account.id.clone(), link.project_id.clone());
+        }
+    }
+
+    fn refresh_link(&mut self, link: projects::TodoistLink, cx: &mut Context<Self>) {
+        let key = (link.account_id.clone(), link.project_id.clone());
         let entry = self.todoist.caches.entry(key.clone()).or_default();
-        if entry.busy
-            || entry.retry_at.is_some_and(|t| t > Instant::now())
-            || (!force
-                && entry
-                    .good_at
-                    .is_some_and(|t| t.elapsed() < Duration::from_secs(30)))
-        {
+        if entry.busy || entry.retry_at.is_some_and(|t| t > Instant::now()) {
             return;
         }
         entry.busy = true;
@@ -523,7 +557,7 @@ impl crate::todoist_window::Tasks {
                 }
                 let cache = this.todoist.caches.entry(key).or_default();
                 if cache.finish_read(response, &link.project_id) {
-                    this.ensure_todoist(true, cx);
+                    this.refresh_link(link, cx);
                 } else if let Some(remote_name) =
                     cache.data.as_ref().map(|d| d.project.name.clone())
                 {
@@ -616,7 +650,7 @@ impl crate::todoist_window::Tasks {
                         if let Err(error) = this.persist_library(candidate, cx) {
                             this.set_notice(error, cx);
                         } else if this.projects.active == origin {
-                            this.ensure_todoist(true, cx);
+                            this.refresh_todoist(cx);
                         }
                     } else {
                         this.todoist.link_errors.insert(origin, response.message);
@@ -654,20 +688,20 @@ impl crate::todoist_window::Tasks {
         }
         let busy = task.as_ref().map_or_else(
             || format!("add:{}", link.project_id),
-            |id| format!("complete:{id}"),
+            |id| format!("{operation}:{id}"),
         );
+        if task.as_ref().is_some_and(|id|["complete", "edit"].iter().any(|op|self.todoist.pending.contains(&format!("{op}:{id}")))) {return;}
         if !self.todoist.pending.insert(busy.clone()) {
             return;
         }
-        let completion = task.as_ref().map(|task| {
-            (
-                link.account_id.clone(),
-                link.project_id.clone(),
-                task.clone(),
-            )
-        });
+        let adding = operation == "add";
+        let completion = task
+            .as_ref()
+            .filter(|_| operation == "complete")
+            .map(|task| (key.0.clone(), key.1.clone(), task.clone()));
         let request = if let Some(task) = task {
-            self.todoist.completion_request(&link, task)
+            if operation == "complete" { self.todoist.completion_request(&link, task) }
+            else { let mut request=Request::linked(operation,&link);request.task_id=Some(task);request }
         } else {
             Request::linked(operation, &link)
         };
@@ -681,27 +715,37 @@ impl crate::todoist_window::Tasks {
                 }
                 this.todoist.pending.remove(&busy);
                 if response.success && !response.cancelled {
-                    if let Some(completion) = completion {
-                        this.todoist.completions.remove(&completion);
-                    }
                     let cache = this.todoist.caches.entry(key.clone()).or_default();
-                    // A confirmed creation is visible immediately, before refresh.
-                    if let Some(task) = response.task {
-                        cache.record_created(task, &link);
+                    cache.discard_read = cache.busy;
+                    if adding {
+                        if let Some(task) = response.task {
+                            cache.record_created(task, &link);
+                        }
+                        cache.refresh_after = cache.busy;
+                        if !cache.busy {
+                            this.refresh_link(link, cx);
+                        }
+                    } else if let Some(completion) = completion {
+                        if response.completion_unverified != Some(true) {
+                            this.todoist.completions.remove(&completion);
+                            let (_, _, task_id) = completion;
+                            if let Some(task) = response.task {
+                                cache.record_updated(task, &link);
+                            } else {
+                                cache.record_completed(task_id);
+                            }
+                        }
+                    } else if let Some(task) = response.task {
+                        cache.record_updated(task, &link);
                     }
-                    cache.refresh_after = cache.busy;
-                    cache.good_at = None;
-                    cache.retry_at = None;
-                    this.ensure_todoist(true, cx);
-                    this.set_notice(response.message, cx);
-                } else if !response.cancelled {
-                    let cache = this.todoist.caches.entry(key.clone()).or_default();
-                    cache.good_at = None;
-                    cache.refresh_after = cache.busy;
                     if let Some(delay) = response.retry_after {
                         self::set_backoff(&mut this.todoist, key, delay, response.message.clone());
                     }
-                    this.ensure_todoist(true, cx);
+                    this.set_notice(response.message, cx);
+                } else if !response.cancelled {
+                    if let Some(delay) = response.retry_after {
+                        self::set_backoff(&mut this.todoist, key, delay, response.message.clone());
+                    }
                     this.set_notice(response.message, cx);
                 }
                 cx.notify();
@@ -711,15 +755,6 @@ impl crate::todoist_window::Tasks {
     }
 }
 impl Schnauz {
-    pub(super) fn ensure_todoist(&mut self, force: bool, cx: &mut Context<Self>) {
-        if !self.todoist.open {
-            return;
-        }
-        crate::todoist_window::shared(cx).update(cx, |tasks, cx| {
-            tasks.todoist.open = true;
-            tasks.ensure_todoist(force, cx);
-        });
-    }
     pub(super) fn open_todoist(&mut self, cx: &mut Context<Self>) {
         if cx.global::<Global>().account.is_none() {
             return;
@@ -730,7 +765,15 @@ impl Schnauz {
         }
         self.dismiss_space_map |= self.space_map.is_some();
         self.todoist.open = true;
-        self.ensure_todoist(false, cx);
+        let browser = cx.weak_entity();
+        cx.defer(move |cx| {
+            if browser.upgrade().is_some_and(|b| b.read(cx).todoist.open) {
+                crate::todoist_window::shared(cx).update(cx, |tasks, cx| {
+                    tasks.todoist.open = true;
+                    tasks.refresh_todoist(cx);
+                });
+            }
+        });
         cx.notify();
     }
 }
@@ -782,6 +825,7 @@ mod tests {
             data: Some(old.clone()),
             rows: outline(&old),
             busy: true,
+            discard_read: true,
             refresh_after: true,
             ..Cache::default()
         };
@@ -793,7 +837,7 @@ mod tests {
             },
             "A"
         ));
-        assert!(!cache.busy && cache.good_at.is_none());
+        assert!(!cache.busy && !cache.discard_read && !cache.refresh_after);
         let fresh = snapshot("A", serde_json::json!([]));
         assert!(!cache.finish_read(
             Response {
@@ -804,7 +848,6 @@ mod tests {
             "A"
         ));
         assert!(cache.data.as_ref().unwrap().tasks.is_empty());
-        assert!(cache.good_at.is_some());
         cache.finish_read(
             Response {
                 message: "Rate limited".into(),

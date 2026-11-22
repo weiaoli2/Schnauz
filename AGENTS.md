@@ -1,5 +1,94 @@
 # Schnauz
 
+- Oliver requested a local test build on 2026-11-22 for the Todoist header,
+  minimum-width and refresh changes. Signed universal 1.0.11 is verified
+  and staged for `./update.sh` after deliberate quit. The installed bundle
+  and live sessions were preserved, and 1.0.10 was retained for rollback.
+  No app/helper/test launches, live accounts, commits or publication.
+  Receipt: .build-cache/1.0.11-todoist-verification.json. Runtime QA is Oliver's.
+  The Linux port is deferred in docs/FUTURE_FEATURES.md.
+
+- Oliver requested a deployable combined test update on 2026-11-18, then added
+  delayed local modification-date refresh. Deliver both that fix and the green
+  button fix as universal 1.0.10 through the existing ./update.sh pending slot.
+  Retain the verified 1.0.9 candidate and all older staged artifacts. Compile,
+  sign and stage only; no app/helper/test launches, live accounts, installed-app
+  replacement, session restarts, commits or publication. The source-only hold
+  below is superseded by this explicit combined-update request.
+  Local file-level FSEvents complement directory vnode notifications, scoped to
+  displayed roots with immediate-child filtering and bounded dirty-root storage.
+  No recursive scans/per-file polling; preserve selected-preview vnode guards.
+  Coalesce saves during an in-flight local listing into one follow-up refresh.
+  1.0.10 is now built, universally merged, signature/allowlist/slice verified and
+  staged for ./update.sh after deliberate quit. Installed bundle fingerprints
+  and live sessions remain unchanged; no apps/helpers/tests were executed.
+  Receipt: .build-cache/1.0.10-local-refresh-verification.json. Runtime QA is Oliver's.
+
+- Oliver's question preference (2026-11-18): write every question directly in
+  chat. He cannot see questions shown only through the structured question tool.
+
+- Pending green-window-button fix (2026-11-18): macOS logs confirm the old
+  post-init NSWindow drag subclass breaks titlebar KVO during full-screen entry,
+  leaving a distorted transition; quit dialogs then interrupt it and SIGABRT.
+  Replace that adapter with a dedicated, normally allocated drop-destination
+  NSView wrapping GPUI's unchanged native view. Forward drops to the unchanged
+  GPUI NSWindow, retaining Command-copy/move, sidebar copy-only and drag cleanup.
+  Install outside GPUI borrows; retain the rendering view across reparenting,
+  preserve first responder and normal width/height autoresizing. Never change
+  initialized window/view classes, global classes or dependency caches for drops.
+  This supersedes the old per-window subclass/dealloc workaround below. Source
+  checks only; no new build/staging, app/helper/test launches or live sessions.
+  Manual full-screen/zoom, resize and drag QA waits for the next requested build.
+
+- Oliver requested a personal combined 1.0.8 build on 2026-11-14, without Git
+  commits/publication. Include the pending fixes and time tracking, plus task
+  editing: click a Todoist task's details to edit it in Schnauz's task form;
+  right-click offers Edit in Schnauz / Open in Todoist. Updates retain task ID
+  and captured account/project, preserve untouched fields/recurrence/reminders,
+  recheck changed/moved/completed tasks and keep drafts on failure. Never create
+  another task while editing or retrying saved-task options. Keep the completion
+  circle separate and native menus outside GPUI borrows. Compile/sign/stage only;
+  no app/helper/test launches, live accounts, session restarts or installed-app
+  replacement while running. Retain earlier staged artifacts for rollback.
+  1.0.8 is now built, universally merged, signature/allowlist/slice verified and
+  staged (2026-11-15). Installed bundle fingerprints are unchanged. No tests,
+  app/helper execution, live account QA, commits or publication were performed.
+  Receipt: .build-cache/1.0.8-local-verification.json. Apply with ./update.sh
+  after a deliberate quit; runtime verification remains Oliver's workflow.
+
+- Oliver removed the inherited floating bottom-right Filter on 2026-11-14.
+  Do not restore its button, custom editor, / shortcut, keybinding action,
+  Settings toggle or Spotlight filtering worker. Keep project Filter On/Off/
+  Modify, All/Folders/Files, top search and quick filename highlighting.
+
+- Time tracking (Oliver, 2026-11-13): optional per project, with personal/Codex
+  counters and union total (no double count within a project). Separate projects
+  may accrue concurrently. Add Time Tracking is in the project context menu;
+  the stopwatch beside Disk Usage is GREEN when tracking is ENABLED, even while
+  paused, and grey when disabled. Show running/paused status separately. Disabling
+  retains time. Dock the compact display below Todoist/Disk Usage or detach it
+  above other windows. Personal time continues outside Schnauz until paused;
+  manual pause requires Resume, hover never resumes it. Project changes transfer
+  personal tracking; preserve each project's explicit pause. Lock/sleep pause
+  personal time, and prolonged system inactivity prompts a confirmation.
+  Bind Codex status to the terminal's captured project, including parked sessions.
+  Use session-specific lifecycle hooks and preserve Codex trust review, existing
+  launchers/config/hooks and live sessions. Never infer work from output/spinners,
+  inspect transcripts/reasoning, bypass hook trust or inject terminal input.
+  Initial local integration requires a new instrumented Codex session and /hooks
+  trust; don't claim SSH-hosted or uninstrumented sessions are connected. Persist
+  centrally/atomically off-thread, never in project folders. Retain totals when
+  disabled; retire removed project IDs so reused IDs cannot inherit old time.
+  Continue source-only/manual-QA workflow until a combined update is requested.
+
+- Current workflow (Oliver, 2026-11-09): collect and fix reported bugs together.
+  Do not automatically build/package/stage a new app after each fix. Wait for
+  Oliver to request the next combined build/update. Preserve already staged
+  artifacts and live sessions; manual feedback drives the next fixes.
+  Oliver clarified on 2026-11-12: prepare requested combined local test updates
+  so he can verify fixes himself. Local releases come first; Git commits and
+  public GitHub releases require his later explicit agreement.
+
 Read [PROJECT.md](PROJECT.md) first for the working location, build commands,
 current stage and the Todoist integration. This file records detailed working rules.
 
@@ -116,6 +205,12 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Lists have configurable, reorderable, independently resizable columns and a
   horizontal scrollbar when needed. Keep header, row and folder-drop coordinates
   aligned even when Name is moved. Use native vector toolbar icons, not emoji.
+  File-area vertical scrollbars remain visible (subdued when content fits), with
+  no fade timers. Their rails consume pointer events and occlude file rows;
+  scrollbar gestures must never select/open/rename files or start file/marquee
+  drags. Preserve selection and own movement until release/button loss. Align
+  List rails below headers and above horizontal bars. Icons and loaded search
+  results use their actual viewports and the same interactive scrollbar.
 - Folder views (mode, columns, order, widths, preview width and sorting) autosave centrally in
   `folder-views.json`. Load once, resolve ancestor rules in memory, and write
   atomically in the background after changes, never per resize frame. Applying a
@@ -142,6 +237,13 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   sync via OSC 7 and prompt hooks. Browser changes must be ignored while a foreground
   program runs, including Codex; never queue them to apply later. Preserve unfinished
   shell input and never execute paths as code.
+  Hover over terminal content to focus that existing terminal for typing, and
+  over the file area to return browser focus, within the active Schnauz window.
+  Never raise inactive windows or steal focus from editors/modals/menus, IME
+  composition or active drags. Hover never writes to/restarts a PTY. Terminal
+  printable text uses native macOS input handling for Chinese and other IMEs;
+  retain marked text locally, anchor candidates at the cursor and send only
+  committed UTF-8 once. Keep control/Option sequences and application shortcuts.
 - Unsynced is an explicit recovery button. Restart only at a ready shell prompt
   with the shell owning the PTY and no child jobs. Keep the panel open and file
   browser focused. Never restart automatically after a foreground app exits.
@@ -169,6 +271,11 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Successful project switching, creation and removal are silent: the toolbar
   project name, dialog and sidebar already show the result. Do not allocate
   success notices or their dismissal timers for these actions; retain errors.
+  Create/Rename project name fields support measured mouse caret placement and
+  selection, Shift/word/Command navigation, selected clipboard edits and true
+  backward/forward deletion. Keep long-name caret scrolling and Unicode-safe
+  character boundaries. Rename starts selected-all; retain existing validation,
+  project IDs, Todoist links and live tabs/PTYs, with no project switch on rename.
   The expanded sidebar is Devices → Projects → Common → Favourites, with compact 24 pt
   rows and Folders / Files subsections shown only when they contain favourites.
   Remove empty-section drop messages and the Favourites + button/picker code.
@@ -262,6 +369,14 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Search recursively on demand, cancel stale work and show progressive results.
   Content mode must validate text rather than matching binary bytes or filenames.
   Do not restore startup home indexing.
+- Plain typing in a focused browser pane opens quick filename highlighting in
+  the existing lower-left copy-feedback box. Accumulate a case-insensitive literal
+  substring (no AND syntax); highlight all matching visible names without filtering,
+  sorting or changing selection. Scroll the first match to the top using actual
+  sticky/list/icon/search row geometry. Backspace edits, Escape/× clears; an empty
+  query still owns Backspace until dismissed. Respect terminals, native preview
+  text, dialogs, editors and modified shortcuts. Clear on browsing-context/editor
+  changes; no scan/network work, persistence, timeout or content-layout changes.
 - Show search results in the main file pane, with single-click selection/preview,
   double-click opening and explicit Show in Folder. Keep type/hidden filters,
   keyboard selection and copying consistent with the displayed search results.
@@ -344,8 +459,11 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   completion and Add task. native/todoist/ implements fixed-host HTTPS API v1,
   Keychain and native dialogs via todoistctl. Follow all pagination cursors,
   scope every page to the captured project, keep cached tasks on failure, honour
-  rate-limit backoff, refresh every 30 seconds only with Tasks open and the app
-  active. Discard responses after account changes and stale reads after writes.
+  rate-limit backoff and fetch once on opening Tasks, on manual Refresh, or
+  after a confirmed add. Load uncached projects when first displayed or linked.
+  Edits and completions update affected cached rows, with a single-task read
+  for the next recurring occurrence. Discard responses after account changes
+  and stale reads after writes.
   Add/complete actions retain their original project across project switches.
   Failed add forms retain text and the write request ID for explicit retry.
   Opening a pane or listing projects never writes tasks. Only new-project creation
@@ -358,6 +476,12 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Store immediate child basenames only; drop dot/parent entries even when a client
   prints full paths, and preserve whitespace inside filenames. Path breadcrumbs
   follow terminal cwd reports; listing prefixes must never become child paths.
+  Preserve symbolic-link identity and show the compact vector arrow badge in
+  List and Icons for both file and folder links. Resolve SSH link target types
+  with read-only SFTP STAT over the existing authenticated mux; no shell commands,
+  reconnect fallback, content reads or terminal input. Folder links navigate;
+  file links use normal remote-file opening. Unresolved links must never trigger
+  preview/open downloads. Preserve the link path for rename/delete operations.
 
 - All current branding, implementation types, modules, shell hooks and build flags
   use Schnauz. Original attribution/licenses stay unchanged. `src/legacy.rs`
@@ -424,7 +548,9 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   app filename Schnauz.app and bump the ordinary version for delivered test stands;
   no per-build app copies or releases. The published release is 0.8.9; the normal local 0.8.13 update includes project filters, the seamless active tab and finer toolbar icons and is staged while the old app runs.
 - Todoist task rows use completion circles, thin separators and dates below the
-  title. The indigo + Add task row is last in the virtual list, even when empty.
+  title. Use Add task (+), Refresh and Relink icons with hover labels in the
+  docked and expanded floating headers, including when the linked list is empty.
+  Todoist's minimum is 286 pt docked where space permits and 416 pt floating.
   Named sections/subtasks stay supported; no redundant Tasks heading. Test actual
   task-title/status-text bounds, not merely the enclosing panel width.
 
@@ -622,8 +748,8 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   Compact shows the first open task; Expand restores the previous full size.
   Native floating level, no hide-on-deactivate, all Spaces and eligible other-app
   full-screen/Stage Manager participation are explicit AppKit configuration.
-  Refresh while the floater is open even if another app is active. Account
-  disconnect closes it; writes retain their captured account/project guards.
+  The floater uses the same event-driven refresh as the docked pane. Account
+  disconnect closes it, and writes retain their captured account/project guards.
   Keep per-window scroll handles and show errors without hiding the compact task.
   Native pin/collapse/close QA uses hidden, disposable windows and synthetic tasks.
 - The per-window native file-drop subclass restores its original GPUI class before
@@ -1234,3 +1360,72 @@ Independent personal macOS app based on WizenPainter/shuffle, starting at
   installed live bundle identities/hashes and sessions unchanged. Old v1.0.0
   draft/tag remains unpublished and superseded. Receipts dist/1.0.1. Release
   request complete; preserve all tags/assets. Cache cleanup remains deferred.
+
+
+- Local 1.0.2: Oliver authorized Size on disk as the Disk Usage default with a
+  Total file size option after confirming cloud-only Nextcloud logical sizes were
+  counted as local usage. Use metadata allocation (st_blocks × 512), never file
+  reads/downloads; deduplicate hard-linked allocation by device/inode. Logical
+  mode retains pathname sizes and labels dataless file tiles cloud-only. Preserve
+  mode across refresh/detail/parent navigation and default on a fresh panel.
+  Zero-allocation files count but have no map area; explain the alternative view.
+  Retain separate filesystem capacity and APFS/snapshot/overhead caveats. Compile/
+  sign/stage only, no app/helper/test launches, live account QA, commit or release.
+
+- During 1.0.2 Oliver reported selected-name click rename failing. The delayed
+  rename guard must permit the persistent Disk Usage panel; preserve every other
+  focus, selection, double-click/cancellation and Nextcloud upload safeguard.
+
+- Local 1.0.3: right-click file/folder selections → Stick to Top / Unstick from
+  Top. Sticky items precede every normal sort in a saved manual order. Drag only
+  the small blue pin to reorder, with an insertion indicator; private payloads
+  never transfer files, enter folders, switch tabs or feed terminals. Escape or
+  dropping elsewhere cancels. A thin Home/Schnauz-blue line separates the visible
+  sticky group from ordinary items in List and Icons; ordinary icons start on a
+  fresh row. Hidden/type/text filters still apply, selection stays path-based,
+  and icon keyboard/scroll coordinates account for the separate rows. Save exact
+  folder/project orders in the existing atomic central folder-views.json, never
+  in browsed folders or inherited descendants. Distinguish SSH host/user/port
+  from local identities. Schnauz rename/batch/undo successes remap pinned names;
+  failed renames do not. Keep ordinary view/tree/reset operations independent.
+  Compile/sign/stage-only QA persists; no app/helper/test launches, live settings
+  or accounts, commit or public release. Preserve all live windows/PTYs/SSH.
+
+- Local 1.0.4 fixes missing SSH Date Modified values. Parse dates from numeric
+  client-rendered SFTP ls -lan with LC_TIME=C and UTF-8 LC_CTYPE on its owned
+  SFTP subprocess only (remove its inherited LC_ALL override);
+  retain its inherited timezone and never change the terminal/server locale.
+  Recent month/day/time entries resolve within OpenSSH's half-year window across
+  New Year/DST; explicit-year entries show a localized date only, without an
+  invented time. Keep Date Created unknown rather than substituting mtime. No
+  extra remote commands, downloads, connections or file reads for timestamps.
+  Preserve filename whitespace, numeric-listing symlink names and path guards.
+  Oliver explicitly requested no tests and will do manual QA. Build/sign/stage
+  only; preserve live app/windows/PTYs/SSH and all earlier pending features.
+  No commit/public release is requested.
+
+- Local 1.0.5 fixes horizontal/diagonal dragging of zoomed visual previews.
+  The existing pan handler already updates both axes; the clipped immediate
+  preview wrapper kept GPUI's horizontal scroll range at zero. Give that wrapper
+  the full zoomed image width plus document insets, retaining minimum viewport
+  width, bounded scrolling and existing left/middle-button tracking. Do not
+  grow the preview pane or app window to fit the zoomed image. Keep selection
+  reset, modal/button-release cancellation and native text/video interactions.
+  Continue build/sign/stage-only delivery with manual QA; preserve all live
+  windows/PTYs/SSH and earlier features. No commit/public release requested.
+
+- Local 1.0.6 anchors sticky divider and reorder canvases at explicit top/left
+  zero. Without insets, block layout positioned the overlay after row content,
+  drawing the group separator one row too low despite correct last-item indexing.
+  Preserve sticky order/filter/drag behavior. Build/sign/stage only, manual UI
+  confirmation by Oliver; no tests, app/helper launches, commit or public release.
+
+- Local 1.0.7 combined test update was explicitly requested on 2026-11-12.
+  Apple Silicon/Intel builds, universal merge, all nine executable signatures/
+  slices, bundle allowlist and installed-certificate match passed. The signed
+  universal update is in the normal pending slot for ./update.sh after deliberate
+  quit; installed device/inode/hash values and all live sessions are unchanged.
+  Includes collected SSH links, quick filename highlighting, persistent file
+  scrollbars, terminal hover/Chinese input and project-name editing fixes.
+  Runtime testing is Oliver's workflow; no tests/app/helper launches, commit or
+  public release. Per-project Undo is undecided in docs/FUTURE_FEATURES.md.

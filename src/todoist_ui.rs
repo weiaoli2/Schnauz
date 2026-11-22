@@ -16,6 +16,41 @@ fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> gpui::Sta
         .hover(|s| s.bg(rgb(theme().hover)))
         .child(label.into())
 }
+pub(super) fn task_actions(model: gpui::Entity<crate::todoist_window::Tasks>) -> AnyElement {
+    let add = model.clone();
+    let relink = model.clone();
+    let action = |id: &'static str, label, icon| {
+        div()
+            .id(id)
+            .relative()
+            .size(px(26.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .cursor_pointer()
+            .hover(|d| d.bg(rgb(theme().hover)))
+            .children(ui_checks::probe(id))
+            .child(ui_icon(icon, 16., rgb(theme().accent)))
+            .tooltip(tip(label))
+    };
+    div()
+        .flex_none()
+        .flex()
+        .gap_1()
+        .child(action("todoist-add", "Add task", Icon::Plus).on_click(move |_, _, cx| {
+            add.update(cx, |tasks, cx| tasks.todoist_mutation("add", None, cx));
+        }))
+        .child(action("todoist-refresh", "Refresh", Icon::Reload).on_click(move |_, _, cx| {
+            model.update(cx, |tasks, cx| tasks.refresh_todoist(cx));
+        }))
+        .child(action("todoist-relink", "Relink", Icon::Link).on_click(move |_, _, cx| {
+            relink.update(cx, |tasks, cx| tasks.link_todoist(true, cx));
+        }))
+        .into_any_element()
+}
+
 pub(super) fn settings_rows<T: 'static>(cx: &Context<T>) -> Vec<AnyElement> {
     let state = cx.global::<Global>();
     let mut row = div()
@@ -74,6 +109,26 @@ impl Schnauz {
     }
 }
 impl crate::todoist_window::Tasks {
+    fn task_context_menu(&mut self, task: String, event: &MouseDownEvent, window: &Window, cx: &mut Context<Self>) {
+        if self.task_menu_open {return;}
+        let Some(ptr)=ns_view_ptr(window) else{return;};
+        let Some(view)=(unsafe{objc2::rc::Retained::retain(ptr.cast::<objc2_app_kit::NSView>())}) else{return;};
+        let x=f32::from(event.position.x);let y=f32::from(event.position.y);
+        self.task_menu_open=true;
+        cx.spawn(async move|this,cx| {
+            cx.background_executor().timer(Duration::from_millis(1)).await;
+            let selected=native_menus::choose_labels(&view,x,y,&["Edit in Schnauz…","Open in Todoist"]);
+            let _=this.update(cx,|this,cx| {
+                this.task_menu_open=false;
+                match selected {
+                    Some(0)=>this.todoist_mutation("edit",Some(task.clone()),cx),
+                    Some(1)=>if let Err(error)=open_target("task",&task){this.set_notice(error,cx);},
+                    _=>{}
+                }
+                cx.notify();
+            });
+        }).detach();
+    }
     pub(super) fn render_todoist(&self, width: f32, cx: &Context<Self>) -> AnyElement {
         let t = theme();
         let link = self.todoist_link(cx);
@@ -108,31 +163,12 @@ impl crate::todoist_window::Tasks {
                 div()
                     .flex_1()
                     .min_w_0()
+                    .truncate()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Todoist"),
             );
-        if link.is_some() && !self.compact {
-            header = header
-                .child(
-                    button("todoist-relink", "Relink…")
-                        .tooltip(tip("Find or create the matching Todoist project"))
-                        .on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| this.link_todoist(true, cx)),
-                        ),
-                )
-                .child(
-                    button(
-                        "todoist-refresh",
-                        if cache.is_some_and(|c| c.busy) {
-                            "Loading…"
-                        } else {
-                            "Refresh"
-                        },
-                    )
-                    .on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| this.ensure_todoist(true, cx)),
-                    ),
-                );
+        if link.is_some() && !self.floating {
+            header = header.child(task_actions(cx.entity()));
         }
         let detach_host = self.host.clone();
         let close_host = self.host.clone();
@@ -263,14 +299,12 @@ impl crate::todoist_window::Tasks {
         );
         let key = (link.account_id.clone(), link.project_id.clone());
         let Some(cache) = self.todoist.caches.get(&key) else {
-            if self.compact {
-                return panel
-                    .child(compact_status(width, "Loading tasks…"))
-                    .into_any_element();
-            }
             return panel
-                .child(status(width, "Loading tasks…"))
-                .child(self.todoist_add_row(width, cx))
+                .child(if self.compact {
+                    compact_status(width, "Expand and click Refresh to load tasks.")
+                } else {
+                    status(width, "Click Refresh to load tasks.")
+                })
                 .into_any_element();
         };
         if let Some(error) = self.notice.as_ref().or(cache.error.as_ref()) {
@@ -299,17 +333,7 @@ impl crate::todoist_window::Tasks {
             );
         }
         if cache.data.is_none() {
-            if self.compact {
-                return panel
-                    .child(compact_status(
-                        width,
-                        "No tasks loaded yet. Expand to retry.",
-                    ))
-                    .into_any_element();
-            }
-            return panel
-                .child(self.todoist_add_row(width, cx))
-                .into_any_element();
+            return panel.into_any_element();
         }
         if self.compact {
             if let Some(row) = cache
@@ -325,10 +349,9 @@ impl crate::todoist_window::Tasks {
                 .child(status(width, "No open tasks."))
                 .into_any_element();
         }
-        // The add row is part of the list: directly below tasks, also when empty.
         let scroll = self.todoist.scroll.clone();
         let base = scroll.0.borrow().base_handle.clone();
-        let count = cache.rows.len() + 1;
+        let count = cache.rows.len();
         panel
             .child(
                 div()
@@ -341,52 +364,22 @@ impl crate::todoist_window::Tasks {
                     .min_h_0()
                     .overflow_hidden()
                     .children(ui_checks::probe("todoist-list"))
-                    .child(
-                        uniform_list(
-                            "todoist-tasks",
-                            count,
-                            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                                this.todoist_rows(&key, range, width, cx)
-                            }),
+                    .when(count == 0, |list| list.child(status(width, "No open tasks.")))
+                    .when(count > 0, |list| {
+                        list.child(
+                            uniform_list(
+                                "todoist-tasks",
+                                count,
+                                cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                                    this.todoist_rows(&key, range, width, cx)
+                                }),
+                            )
+                            .size_full()
+                            .w(px(width))
+                            .track_scroll(scroll),
                         )
-                        .size_full()
-                        .w(px(width))
-                        .track_scroll(scroll),
-                    )
-                    .children(static_scrollbar_thumb(&base)),
-            )
-            .into_any_element()
-    }
-
-    fn todoist_add_row(&self, width: f32, cx: &Context<Self>) -> AnyElement {
-        let pending = self.todoist_link(cx).is_some_and(|link| {
-            self.todoist
-                .pending
-                .contains(&format!("add:{}", link.project_id))
-        });
-        div()
-            .id("todoist-add")
-            .relative()
-            .w(px(width))
-            .h(px(60.))
-            .flex_none()
-            .min_w_0()
-            .flex()
-            .items_center()
-            .gap_3()
-            .px_4()
-            .cursor_pointer()
-            .text_color(rgb(theme().accent))
-            .hover(|s| s.bg(rgb(theme().hover)))
-            .children(ui_checks::probe("todoist-add"))
-            .child(ui_icon(Icon::Plus, 18., rgb(theme().accent)))
-            .child(if pending {
-                "Adding task…"
-            } else {
-                "Add task"
-            })
-            .on_click(
-                cx.listener(|this, _: &ClickEvent, _, cx| this.todoist_mutation("add", None, cx)),
+                        .children(static_scrollbar_thumb(&base))
+                    }),
             )
             .into_any_element()
     }
@@ -407,9 +400,6 @@ impl crate::todoist_window::Tasks {
         let t = theme();
         range
             .filter_map(|row| {
-                if row == cache.rows.len() {
-                    return Some(self.todoist_add_row(width, cx));
-                }
                 Some(match cache.rows.get(row)? {
                     Row::Section(name) => div()
                         .id(("todoist-section", row))
@@ -431,6 +421,7 @@ impl crate::todoist_window::Tasks {
                             .contains(&format!("complete:{}", task.id));
                         let task_id = task.id.clone();
                         let open_id = task.id.clone();
+                        let menu_id = task.id.clone();
                         let color = match task.priority.unwrap_or(1) {
                             4 => 0xe25555,
                             3 => 0xdf9417,
@@ -459,6 +450,9 @@ impl crate::todoist_window::Tasks {
                             .py_2()
                             .children(ui_checks::probe("todoist-task"))
                             .hover(|s| s.bg(rgb(t.hover)))
+                            .on_mouse_down(MouseButton::Right,cx.listener(move|this,event:&MouseDownEvent,window,cx| {
+                                cx.stop_propagation();this.task_context_menu(menu_id.clone(),event,window,cx);
+                            }))
                             .child(
                                 div()
                                     .id("complete-task")
@@ -525,11 +519,9 @@ impl crate::todoist_window::Tasks {
                                         .as_ref()
                                         .filter(|s| !s.is_empty())
                                         .cloned()
-                                        .unwrap_or_else(|| "Open task in Todoist".into())))
+                                        .unwrap_or_else(|| "Edit task in Schnauz".into())))
                                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                        if let Err(error) = open_target("task", &open_id) {
-                                            this.set_notice(error, cx);
-                                        }
+                                        this.todoist_mutation("edit",Some(open_id.clone()),cx);
                                     })),
                             )
                             .into_any_element()

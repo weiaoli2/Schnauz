@@ -114,7 +114,6 @@ impl Schnauz {
         }
         let old = self.projects.active;
         let changed_project = old != shared.active;
-        let changed_link = self.projects.sidebar().todoist != shared.sidebar().todoist;
         self.projects = shared;
         if changed_project {
             let layout = self
@@ -138,8 +137,6 @@ impl Schnauz {
                     cx,
                 );
             }
-        } else if changed_link {
-            self.ensure_todoist(false, cx);
         }
         if self.apply_project_file_filters() && self.palette_open { self.refresh_file_search(cx); }
         cx.notify();

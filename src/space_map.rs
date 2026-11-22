@@ -1,4 +1,5 @@
 //! Explicit, cancellable folder-size scans and a squarified treemap.
+use std::os::macos::fs::MetadataExt as _;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -11,12 +12,32 @@ use std::{
 // Bound retained detail, never the number of filesystem entries counted.
 // At most one additional aggregate tile is retained per detailed directory.
 const DETAIL_NODES: usize = 50_000;
+/// Allocated file-data blocks are read without opening or materializing files.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SizeMode {
+    #[default]
+    OnDisk,
+    Total,
+}
+impl SizeMode {
+    pub fn label(self) -> &'static str {
+        match self { Self::OnDisk => "Size on disk", Self::Total => "Total file size" }
+    }
+    fn bytes(self, logical: u64, blocks: u64, duplicate: bool) -> u64 {
+        match self {
+            Self::OnDisk if duplicate => 0,
+            Self::OnDisk => blocks.saturating_mul(512),
+            Self::Total => logical,
+        }
+    }
+}
 #[derive(Clone)]
 pub struct Node {
     pub path: PathBuf,
     pub parent: Option<usize>,
     pub directory: bool,
     pub bytes: u64,
+    pub cloud_only: bool,
     pub children: Vec<usize>,
     /// A synthetic tile representing counted files omitted from individual detail.
     pub grouped_files: usize,
@@ -89,6 +110,8 @@ struct Scan {
     boot_data: Option<u64>,
     detail_budget: usize,
     checked: usize,
+    mode: SizeMode,
+    file_identities: HashSet<(u64, u64)>,
     files: HashMap<usize, std::collections::BinaryHeap<std::cmp::Reverse<(u64, usize)>>>,
 }
 impl Scan {
@@ -116,7 +139,15 @@ impl Scan {
         if !directory && !md.is_file() && !md.file_type().is_symlink() {
             return None;
         }
-        let bytes = if directory { 0 } else { md.len() };
+        // Never infer allocation from logical size or read file contents. A dataless
+        // placeholder can retain metadata blocks; a sparse local file can also
+        // have zero data blocks. Only hard links share a deduplicable identity.
+        let duplicate = !directory && md.nlink() > 1
+            && !self.file_identities.insert((md.dev(), md.ino()));
+        let bytes = if directory { 0 } else {
+            self.mode.bytes(md.len(), md.blocks(), duplicate)
+        };
+        let cloud_only = !directory && md.st_flags() & 0x4000_0000 != 0; // SF_DATALESS
         let child = if self.tree.nodes.len() < self.detail_budget.max(1) {
             let index = self.tree.nodes.len();
             self.tree.nodes.push(Node {
@@ -124,6 +155,7 @@ impl Scan {
                 parent: Some(parent),
                 directory,
                 bytes,
+                cloud_only,
                 children: Vec::new(),
                 grouped_files: 0,
             });
@@ -152,6 +184,7 @@ impl Scan {
                     files.push(std::cmp::Reverse((bytes, index)));
                     self.tree.nodes[index].path = path.clone();
                     self.tree.nodes[index].bytes = bytes;
+                    self.tree.nodes[index].cloud_only = cloud_only;
                     old_bytes
                 } else {
                     bytes
@@ -189,6 +222,7 @@ pub fn scan(root: &Path, cancel: &AtomicBool, report: impl FnMut(Progress)) -> O
         DETAIL_NODES,
         false,
         50_000,
+        SizeMode::Total,
     )
 }
 
@@ -198,6 +232,7 @@ pub fn scan_progressive(
     report: impl FnMut(Progress),
     snapshot: impl FnMut(Tree, Progress),
     priority: &std::sync::Mutex<Option<PathBuf>>,
+    mode: SizeMode,
 ) -> Option<Tree> {
     scan_core(
         root,
@@ -208,6 +243,7 @@ pub fn scan_progressive(
         DETAIL_NODES,
         true,
         50_000,
+        mode,
     )
 }
 
@@ -227,6 +263,7 @@ fn scan_with_detail_budget(
         detail_budget,
         false,
         50_000,
+        SizeMode::Total,
     )
 }
 
@@ -239,6 +276,7 @@ fn scan_core(
     detail_budget: usize,
     progressive: bool,
     snapshot_every: usize,
+    mode: SizeMode,
 ) -> Option<Tree> {
     let resolved = fs::canonicalize(root).ok()?;
     let root = resolved.as_path();
@@ -259,6 +297,7 @@ fn scan_core(
                 parent: None,
                 directory: true,
                 bytes: 0,
+                cloud_only: false,
                 children: Vec::new(),
                 grouped_files: 0,
             }],
@@ -277,6 +316,8 @@ fn scan_core(
         boot_data,
         detail_budget,
         checked: 0,
+        mode,
+        file_identities: HashSet::new(),
         files: HashMap::new(),
     };
     let mut branches = Vec::new();
@@ -457,6 +498,7 @@ fn finish_tree(mut tree: Tree, grouped: &[(u64, usize)], cancel: &AtomicBool) ->
             parent: Some(parent),
             directory: false,
             bytes,
+            cloud_only: false,
             children: Vec::new(),
             grouped_files: count,
         });
@@ -660,6 +702,39 @@ pub fn hit(tiles: &[Tile], x: f32, y: f32) -> Option<usize> {
 mod tests {
     use super::*;
     #[test]
+    fn allocation_does_not_treat_cloud_or_sparse_sizes_as_local_data() {
+        assert_eq!(SizeMode::default(), SizeMode::OnDisk);
+        assert_eq!(SizeMode::OnDisk.bytes(8_000_000, 0, false), 0);
+        assert_eq!(SizeMode::OnDisk.bytes(8_000_000, 8, false), 4096);
+        assert_eq!(SizeMode::Total.bytes(8_000_000, 0, false), 8_000_000);
+        assert_eq!(SizeMode::OnDisk.bytes(100, 8, true), 0);
+        assert_eq!(SizeMode::Total.bytes(100, 8, true), 100);
+    }
+    #[test]
+    fn allocated_scans_deduplicate_hard_links_and_keep_sparse_files() {
+        let root = crate::tests::scratch("space-map-allocated");
+        fs::write(root.join("data"), vec![1; 8192]).unwrap();
+        fs::hard_link(root.join("data"), root.join("alias")).unwrap();
+        let sparse = fs::File::create(root.join("sparse")).unwrap();
+        sparse.set_len(8_000_000).unwrap();
+        drop(sparse);
+        let expected = (fs::symlink_metadata(root.join("data")).unwrap().blocks()
+            + fs::symlink_metadata(root.join("sparse")).unwrap().blocks()) * 512;
+        for budget in [1, 100] {
+            let mut snapshots = 0;
+            let tree = scan_core(&root, &AtomicBool::new(false), |_| {}, |tree, p| {
+                snapshots += 1;
+                assert_eq!(tree.nodes[0].bytes, p.bytes);
+            }, &std::sync::Mutex::new(None), budget, true, 1, SizeMode::OnDisk).unwrap();
+            assert_eq!(tree.nodes[0].bytes, expected);
+            assert_eq!(tree.counts[0], 3);
+            assert!(snapshots > 0);
+        }
+        let logical = scan(&root, &AtomicBool::new(false), |_| {}).unwrap();
+        assert_eq!(logical.nodes[0].bytes, 8_000_000 + 8192 * 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn early_map_and_clicked_branch_priority_precede_other_descendants() {
         let root =
             fs::canonicalize(crate::tests::scratch("space-map-progressive-priority")).unwrap();
@@ -705,6 +780,7 @@ mod tests {
             100,
             true,
             1,
+            SizeMode::Total,
         )
         .unwrap();
         assert!(snapshots >= 3);
@@ -854,6 +930,7 @@ mod tests {
                 parent: None,
                 directory: true,
                 bytes: 100,
+                cloud_only: false,
                 children: vec![1, 2, 3],
                 grouped_files: 0,
             },
@@ -862,6 +939,7 @@ mod tests {
                 parent: Some(0),
                 directory: false,
                 bytes: 50,
+                cloud_only: false,
                 children: vec![],
                 grouped_files: 0,
             },
@@ -870,6 +948,7 @@ mod tests {
                 parent: Some(0),
                 directory: false,
                 bytes: 30,
+                cloud_only: false,
                 children: vec![],
                 grouped_files: 0,
             },
@@ -878,6 +957,7 @@ mod tests {
                 parent: Some(0),
                 directory: true,
                 bytes: 20,
+                cloud_only: false,
                 children: vec![],
                 grouped_files: 0,
             },

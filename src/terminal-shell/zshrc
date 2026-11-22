@@ -51,6 +51,9 @@ if [[ "$SCHNAUZ_TEST_SHELL" == 1 ]]; then
 fi
 
 source "$SCHNAUZ_INTEGRATION_DIR/ssh.zsh"
+if [[ "$SCHNAUZ_TEST_SHELL" != 1 ]]; then
+  source "$SCHNAUZ_INTEGRATION_DIR/codex.zsh"
+fi
 
 # The opt-in website fixture owns a fresh test shell; show real sample-folder
 # command output without using the user's dotfiles, history or terminal input.

@@ -52,6 +52,7 @@ fn needs_refresh(previous: &Option<FileState>, current: &Option<FileState>, flag
 pub struct Watcher {
     queue: Option<File>,
     folders: HashMap<PathBuf, Watched>,
+    file_events: crate::local_file_events::Watcher,
 }
 impl Watcher {
     pub fn new() -> Self {
@@ -59,7 +60,15 @@ impl Watcher {
         Self {
             queue: (fd >= 0).then(|| unsafe { File::from_raw_fd(fd) }),
             folders: HashMap::new(),
+            file_events: crate::local_file_events::Watcher::new(),
         }
+    }
+    /// Keep selected-preview vnode semantics, adding file-level events only for
+    /// displayed folders. All registration and reconciliation stays off-thread.
+    pub fn browser_changes(&mut self, folders: Vec<PathBuf>, previews: HashSet<PathBuf>) -> HashSet<PathBuf> {
+        let mut changed = self.changes(folders.iter().cloned().chain(previews).collect());
+        changed.extend(self.file_events.changes(folders));
+        changed
     }
     fn attach(&self, path: &Path) -> io::Result<File> {
         let queue = self

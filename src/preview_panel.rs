@@ -1,6 +1,9 @@
 //! Preview takes browser space; auxiliary tools extend the window to the right.
 use super::*;
 
+const MIN_TOOLS_WIDTH: f32 = 220.;
+const MIN_TODOIST_WIDTH: f32 = 286.;
+
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Kind {
     Preview,
@@ -83,7 +86,7 @@ fn bounded_width(requested: f32, available: f32, minimum: f32) -> f32 {
 
 fn allocate(preview: Option<f32>, tools: Option<f32>, pane_width: f32) -> Layout {
     let available = (pane_width - 220.).max(0.);
-    let tools = tools.map(|w| w.clamp(220., 720.)).unwrap_or(0.);
+    let tools = tools.map(|w| w.clamp(MIN_TOOLS_WIDTH, 720.)).unwrap_or(0.);
     if let Some(preview) = preview {
         let preview = preview.clamp(folder_views::MIN_PREVIEW_WIDTH as f32, 1200.);
         if tools > 0. && available <= tools {
@@ -108,6 +111,14 @@ fn allocate(preview: Option<f32>, tools: Option<f32>, pane_width: f32) -> Layout
     }
 }
 
+fn minimum_tools_width(this: &Schnauz) -> f32 {
+    if this.todoist.open {
+        MIN_TODOIST_WIDTH
+    } else {
+        MIN_TOOLS_WIDTH
+    }
+}
+
 pub(super) fn tools_width(this: &Schnauz) -> f32 {
     if this.space_map.is_none() && !this.todoist.open {
         return 0.;
@@ -116,7 +127,7 @@ pub(super) fn tools_width(this: &Schnauz) -> f32 {
         .as_ref()
         .filter(|d| d.kind == Kind::Tools)
         .map(|d| d.width)
-        .unwrap_or(prefs().tools_width as f32)
+        .unwrap_or_else(|| (prefs().tools_width as f32).max(minimum_tools_width(this)))
 }
 
 fn layout(this: &Schnauz, pane: usize, preview: bool, tools: bool) -> Layout {
@@ -141,19 +152,19 @@ pub(super) fn tools_content_width(this: &Schnauz, pane: usize, preview: bool) ->
     (layout(this, pane, preview, true).tools - 14.).max(1.)
 }
 
-pub(super) fn preview_width(this: &Schnauz, pane: usize) -> f32 {
+pub(super) fn preview_width(this: &Schnauz, pane: usize, cx: &App) -> f32 {
     layout(
         this,
         pane,
         true,
-        this.space_map.is_some() || this.todoist.open,
+        this.space_map.is_some() || this.todoist.open || time_tracking_ui::docked(this.projects.active, cx),
     )
     .preview
 }
 
 impl Schnauz {
     pub(super) fn sync_tools_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let visible = self.space_map.is_some() || self.todoist.open;
+        let visible = self.space_map.is_some() || self.todoist.open || time_tracking_ui::docked(self.projects.active, cx);
         let requested = tools_width(self);
         let width = f32::from(window.viewport_size().width);
         let room = window
@@ -174,6 +185,7 @@ impl Schnauz {
             .as_ref()
             .map(|d| self.pane_width(d.pane))
             .unwrap_or(0.);
+        let minimum_tools = minimum_tools_width(self);
         if let Some(drag) = &mut self.preview_resize {
             drag.width = match drag.kind {
                 Kind::Preview => bounded_width(
@@ -183,8 +195,8 @@ impl Schnauz {
                 ),
                 Kind::Tools => bounded_width(
                     drag.start.tools + drag.start_x - x,
-                    (pane_width - 220. - drag.start.preview).max(drag.start.tools.min(220.)),
-                    220.,
+                    (pane_width - 220. - drag.start.preview).max(drag.start.tools.min(minimum_tools)),
+                    minimum_tools,
                 )
                 .min(720.),
             };
@@ -203,7 +215,7 @@ impl Schnauz {
                 }
                 Kind::Tools => {
                     let mut next = prefs();
-                    next.tools_width = width.clamp(220, 720);
+                    next.tools_width = width.clamp(minimum_tools_width(self) as u16, 720);
                     apply_prefs(next, cx);
                 }
             }

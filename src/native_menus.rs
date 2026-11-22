@@ -186,6 +186,25 @@ fn show(nodes: &[MenuNode], view: &NSView, x: f32, y: f32) -> Option<MenuOp> {
         .and_then(|i| actions.get(i).cloned())
 }
 
+/// A small native menu for controllers other than the file browser. Call only
+/// after yielding out of GPUI entity/window updates, as with `show` above.
+pub(super) fn choose_labels(view: &NSView, x: f32, y: f32, labels: &[&str]) -> Option<usize> {
+    let mtm=objc2::MainThreadMarker::new()?;
+    let allocated=Target::alloc(mtm).set_ivars(TargetState::default());
+    let target:Retained<Target>=unsafe{objc2::msg_send![super(allocated),init]};
+    let menu=NSMenu::initWithTitle(NSMenu::alloc(mtm),&NSString::from_str(""));
+    menu.setAutoenablesItems(false);
+    for (index,label) in labels.iter().enumerate() {
+        let item=unsafe{NSMenuItem::initWithTitle_action_keyEquivalent(NSMenuItem::alloc(mtm),&NSString::from_str(label),None,&NSString::from_str(""))};
+        item.setTag(index as isize);item.setEnabled(true);
+        unsafe {item.setTarget(Some(&*target));item.setAction(Some(objc2::sel!(choose:)));}
+        menu.addItem(&item);
+    }
+    let y=if view.isFlipped(){y as f64}else{view.bounds().size.height-y as f64};
+    menu.popUpMenuPositioningItem_atLocation_inView(None,NSPoint::new(x as f64,y),Some(view));
+    target.ivars().selected.get()
+}
+
 impl Schnauz {
     pub(super) fn schedule_native_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.native_menu_pending {

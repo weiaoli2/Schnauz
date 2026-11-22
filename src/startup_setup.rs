@@ -191,7 +191,7 @@ impl SavedWindow {
         if self.tasks && cx.global::<todoist::Global>().account.is_some() {
             b.open_todoist(cx);
         }
-        b.tools_expansion = preview_panel::Expansion::restored(b.todoist.open, self.tools_added);
+        b.tools_expansion = preview_panel::Expansion::restored(b.todoist.open || time_tracking_ui::docked(b.projects.active,cx), self.tools_added);
         b.saved_session = b.session_string();
     }
     pub(super) fn bounds(&self, cx: &App) -> Bounds<gpui::Pixels> {

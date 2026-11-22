@@ -127,7 +127,6 @@ impl Schnauz {
                     || this.rename.is_some()
                     || this.context_menu.is_some()
                     || this.native_menu_pending
-                    || this.space_map.is_some()
                     || !window.is_window_active()
                     || !this.focus.is_focused(window)
                     || this.tab(pane).selection.len() != 1

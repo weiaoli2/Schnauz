@@ -609,19 +609,6 @@ impl Settings {
                         }),
                     )
                     .into_any_element(),
-                    toggle_row(
-                        "tg-filter-button",
-                        "Filter button",
-                        "Show the always-on \u{201c}Filter\u{201d} button in the bottom-right corner. Pressing / still opens the filter either way.",
-                        p.show_filter_button,
-                        cx.listener(|_, _: &ClickEvent, _, cx| {
-                            let mut np = prefs();
-                            np.show_filter_button = !np.show_filter_button;
-                            apply_prefs(np, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .into_any_element(),
                 ],
             ),
             settings_section(

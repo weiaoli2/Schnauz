@@ -196,6 +196,9 @@ struct Data {
     folders: HashMap<PathBuf, Rule>,
     #[serde(default)]
     projects: HashMap<String, HashMap<PathBuf, Rule>>,
+    /// Exact folder identities only; sticky children never inherit down a tree.
+    #[serde(default)]
+    sticky: HashMap<String, HashMap<String, Vec<String>>>,
 }
 impl Default for Data {
     fn default() -> Self {
@@ -203,6 +206,7 @@ impl Default for Data {
             version: 1,
             folders: HashMap::new(),
             projects: HashMap::new(),
+            sticky: HashMap::new(),
         }
     }
 }
@@ -329,8 +333,37 @@ impl Library {
         }
         self.revision.fetch_add(1, Ordering::AcqRel);
     }
+    pub fn sticky(&self, project: Option<u64>, folder: &str) -> Vec<String> {
+        self.data.sticky.get(&project_key(project)).and_then(|folders| folders.get(folder)).cloned().unwrap_or_default()
+    }
+    pub fn set_sticky(&mut self, project: Option<u64>, folder: String, names: Vec<String>) {
+        let mut seen = HashSet::new();
+        let names: Vec<_> = names.into_iter().filter(|name| !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\0') && seen.insert(name.clone())).collect();
+        if self.sticky(project, &folder) == names { return; }
+        let folders = self.data.sticky.entry(project_key(project)).or_default();
+        if names.is_empty() { folders.remove(&folder); }
+        else { folders.insert(folder, names); }
+        self.revision.fetch_add(1, Ordering::AcqRel);
+    }
+    pub fn rename_sticky(&mut self, folder: &str, names: &[(String, String)]) -> bool {
+        let mut changed = false;
+        for folders in self.data.sticky.values_mut() {
+            if let Some(order) = folders.get_mut(folder) {
+                let old = order.clone();
+                for name in order.iter_mut() {
+                    if let Some((_, new)) = names.iter().find(|(from, _)| from == name) { *name = new.clone(); }
+                }
+                let mut seen = HashSet::new();
+                order.retain(|name| seen.insert(name.clone()));
+                changed |= old != *order;
+            }
+        }
+        if changed { self.revision.fetch_add(1, Ordering::AcqRel); }
+        changed
+    }
     pub fn remove_project(&mut self, project: u64) {
-        if self.data.projects.remove(&project_key(Some(project))).is_some() {
+        let sticky = self.data.sticky.remove(&project_key(Some(project))).is_some();
+        if self.data.projects.remove(&project_key(Some(project))).is_some() || sticky {
             self.revision.fetch_add(1, Ordering::AcqRel);
         }
     }
@@ -371,6 +404,30 @@ impl WriteJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sticky_order_roundtrips_without_inheritance_or_view_reset() {
+        let mut lib = Library::open(None);
+        let folder = "local:/work";
+        lib.set_sticky(Some(7), folder.into(), vec!["b".into(), "a".into(), "b".into(), "..".into(), "sub/file".into()]);
+        assert_eq!(lib.sticky(Some(7), folder), ["b", "a"]);
+        assert!(lib.sticky(None, folder).is_empty());
+        assert!(lib.sticky(Some(8), folder).is_empty());
+        assert!(lib.sticky(Some(7), "local:/work/child").is_empty());
+        assert!(lib.sticky(Some(7), "ssh:/work").is_empty());
+        lib.remember_scoped(Scope::AllProjects, "/work".into(), FolderView::default(), true);
+        lib.reset_scoped(Scope::AllProjects, Path::new("/work"));
+        assert_eq!(lib.sticky(Some(7), folder), ["b", "a"]);
+        let data: Data = serde_json::from_slice(&serde_json::to_vec(&lib.data).unwrap()).unwrap();
+        lib.data = data;
+        assert_eq!(lib.sticky(Some(7), folder), ["b", "a"]);
+        lib.set_sticky(Some(8), folder.into(), vec!["a".into()]);
+        assert!(lib.rename_sticky(folder, &[("a".into(), "b".into()), ("b".into(), "a".into())]));
+        assert_eq!(lib.sticky(Some(7), folder), ["a", "b"]);
+        assert_eq!(lib.sticky(Some(8), folder), ["b"]);
+        lib.remove_project(7);
+        assert!(lib.sticky(Some(7), folder).is_empty());
+    }
+
     #[test]
     fn project_views_shared_fallback_resets_and_tree_scope_roundtrip() {
         let mut lib = Library::open(None);

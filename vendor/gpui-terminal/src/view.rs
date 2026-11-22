@@ -376,6 +376,9 @@ pub type ExitCallback = Box<dyn Fn(&mut Window, &mut Context<TerminalView>)>;
 /// `TerminalView` is not `Send` as it contains GPUI handles. The stdin writer
 /// is internally wrapped in `Arc<parking_lot::Mutex<>>` for safe concurrent access.
 pub struct TerminalView {
+    composition: ime::Composition,
+    shell_at_prompt: bool,
+    composition_focus: Option<Subscription>,
     /// The terminal state managing the grid and VTE parser
     state: TerminalState,
     selection_snapshot: Option<TerminalState>,
@@ -557,6 +560,9 @@ impl TerminalView {
         });
 
         Self {
+            composition: Default::default(),
+            composition_focus: None,
+            shell_at_prompt: false,
             state,
             selection_snapshot: None,
             renderer,
@@ -819,6 +825,13 @@ impl TerminalView {
             return;
         }
         let key = &event.keystroke;
+        // Leave printable text to macOS's input context (including Chinese IME).
+        // Sending these key bytes here would leak pinyin and bypass candidates.
+        if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt
+            && (key.key == "space" || key.key_char.as_ref().is_some_and(|text|
+                !text.is_empty() && !text.chars().any(char::is_control))) {
+            return;
+        }
         if self.text_selection_active() && key.key == "escape" {
             self.resume_live(cx);
             cx.stop_propagation();
@@ -1128,10 +1141,24 @@ impl TerminalView {
                     self.write_input(reply.as_bytes());
                 }
                 TerminalEvent::Wakeup => {}
-                event => self.pending_ui_events.push_back(event),
+                event => {
+                    // Track prompt boundaries even for parked/unpainted tabs.
+                    // UI callbacks remain deferred until their normal render.
+                    if let TerminalEvent::Shell(ref shell) = event {
+                        match shell {
+                            crate::shell::ShellEvent::PromptReady => self.shell_at_prompt = true,
+                            crate::shell::ShellEvent::CommandStarted => self.shell_at_prompt = false,
+                            _ => {}
+                        }
+                    }
+                    self.pending_ui_events.push_back(event);
+                }
             }
         }
     }
+
+    /// Latest parsed prompt boundary, also current while this tab is hidden.
+    pub fn shell_is_at_prompt(&self) -> bool { self.shell_at_prompt }
 
     /// UI callbacks still run with the owning window during rendering.
     fn process_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1270,6 +1297,12 @@ impl TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.composition_focus.is_none() {
+            self.composition_focus = Some(cx.on_blur(&self.focus_handle, window, |view, _, cx| {
+                view.composition = Default::default();
+                cx.notify();
+            }));
+        }
         // Process any pending events
         self.process_events(window, cx);
 
@@ -1281,6 +1314,8 @@ impl Render for TerminalView {
         let mut padding = self.config.padding;
         padding.right += px(12.); // Keep the scrollbar clear of terminal glyphs.
         let owner = cx.entity().downgrade();
+
+        let input_entity = cx.entity();
 
         div()
             .relative()
@@ -1332,10 +1367,14 @@ impl Render for TerminalView {
                         bounds
                     },
                     move |bounds, _, window, cx| {
+                        let focus = input_entity.read(cx).focus_handle.clone();
+                        window.handle_input(&focus, ElementInputHandler::new(bounds, input_entity.clone()), cx);
                         let term = state_arc.lock();
                         let measured_renderer = &renderer;
                         // Paint the terminal with measured dimensions
                         measured_renderer.paint(bounds, padding, &term, window, cx);
+                        drop(term);
+                        input_entity.update(cx, |view, cx| view.paint_composition(bounds, window, cx));
                     },
                 )
                 .size_full(),
@@ -1349,3 +1388,5 @@ impl Render for TerminalView {
 pub mod clipboard_checks;
 #[path = "scrollbar.rs"]
 mod scrollbar;
+#[path = "ime.rs"]
+mod ime;

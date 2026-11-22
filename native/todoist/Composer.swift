@@ -47,6 +47,17 @@ struct TDDraft {
   var reminder: Date? = nil
   var location: TDLocation? = nil
 
+  init() {}
+  init(task: TDTask) {
+    content = task.content; description = task.description ?? ""
+    due = task.due?.string ?? task.due?.datetime ?? task.due?.date ?? ""
+    priority = task.priority ?? 1
+    labels = (task.labels ?? []).joined(separator: ", ")
+    let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian); formatter.dateFormat = "yyyy-MM-dd"
+    deadline = task.deadline.flatMap { formatter.date(from: $0.date) }
+  }
+
   var options: TDTaskOptions {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -58,6 +69,24 @@ struct TDDraft {
   }
 }
 
+// Keep AppKit's editing, selection and blink timing, but make the actual caret
+// stroke independent of attributes it applies to the shared field editor.
+@MainActor final class TDCaretTextView: NSTextView {
+  var caretColor: NSColor = .textColor
+
+  override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+    var caret = rect
+    caret.size.width = max(2, caret.width)
+    super.drawInsertionPoint(in: caret, color: caretColor, turnedOn: flag)
+  }
+
+  override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
+    // AppKit's ordinary invalidation may cover only its original one-point
+    // stroke. Include our wider stroke when blinking or moving the caret.
+    super.setNeedsDisplay(rect.insetBy(dx: -2, dy: 0), avoidAdditionalLayout: flag)
+  }
+}
+
 @MainActor final class TDComposer: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate {
   static func color(_ value: UInt32) -> NSColor {
     NSColor(srgbRed: CGFloat((value >> 16) & 255)/255,
@@ -66,10 +95,10 @@ struct TDDraft {
   let window: NSWindow
   var draft: TDDraft
   let name = NSTextField()
-  let details = NSTextView()
+  let details = TDCaretTextView()
   // NSTextField draws typed text through the window's shared NSTextView.
   // Keep our own editor so its caret follows this form's actual theme ink.
-  let inputEditor = NSTextView()
+  let inputEditor = TDCaretTextView()
   let date = NSTextField()
   let labels = NSTextField()
   let priority = NSPopUpButton()
@@ -81,9 +110,10 @@ struct TDDraft {
   var accepted = false
   let bg: NSColor, surface: NSColor, ink: NSColor, accent: NSColor, border: NSColor
   let saved: Bool
+  let editing: Bool
 
-  init(project: String, draft: TDDraft, palette: [String: UInt32]?, message: String, saved: Bool) {
-    self.draft = draft; self.saved = saved
+  init(project: String, draft: TDDraft, palette: [String: UInt32]?, message: String, saved: Bool, editing: Bool = false) {
+    self.draft = draft; self.saved = saved; self.editing = editing
     bg = Self.color(palette?["bg"] ?? 0xf8f9fc)
     surface = Self.color(palette?["sidebar"] ?? 0xf0f0f6)
     ink = Self.color(palette?["text"] ?? 0)
@@ -92,12 +122,14 @@ struct TDDraft {
     window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 380),
       styleMask: [.titled, .closable], backing: .buffered, defer: false)
     super.init()
-    window.title = "New task · Schnauz"
+    window.title = editing ? "Edit task · Schnauz" : "New task · Schnauz"
     window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
     window.backgroundColor = bg; window.isReleasedWhenClosed = false; window.delegate = self
     let rgb = (palette?["bg"] ?? 0xf8f9fc)
     let luminance = ((rgb >> 16) & 255)*299 + ((rgb >> 8) & 255)*587 + (rgb & 255)*114
     window.appearance = NSAppearance(named: luminance < 128000 ? .darkAqua : .aqua)
+    let caret: NSColor = luminance < 128000 ? .white : .black
+    inputEditor.caretColor = caret; details.caretColor = caret
     inputEditor.isFieldEditor = true; inputEditor.isRichText = false
     inputEditor.drawsBackground = false; inputEditor.backgroundColor = bg
     inputEditor.textColor = ink; inputEditor.insertionPointColor = ink
@@ -124,6 +156,18 @@ struct TDDraft {
     guard let editor = notification.object as? NSTextView, editor === details else { return }
     editor.insertionPointColor = ink
     editor.updateInsertionPointStateAndRestartTimer(true)
+  }
+
+  func refreshFocusedCaret() {
+    guard window.isKeyWindow, let editor = window.firstResponder as? NSTextView,
+          editor === inputEditor || editor === details, editor.isEditable else { return }
+    editor.insertionPointColor = (editor as? TDCaretTextView)?.caretColor ?? ink
+    editor.updateInsertionPointStateAndRestartTimer(true)
+    editor.needsDisplay = true
+  }
+
+  func windowDidBecomeKey(_ notification: Notification) {
+    refreshFocusedCaret()
   }
 
   func label(_ value: String, size: CGFloat = 12, bold: Bool = false) -> NSTextField {
@@ -157,7 +201,7 @@ struct TDDraft {
     let root = window.contentView!
     let dog = TDDogView(frame: .zero)
     constrain(dog, in: root, top: 6, left: 18, right: 750, height: 32)
-    constrain(label("New task", size: 14, bold: true), in: root, top: 10, left: 60, right: 300, height: 24)
+    constrain(label(editing ? "Edit task" : "New task", size: 14, bold: true), in: root, top: 10, left: 60, right: 300, height: 24)
     let rule = NSBox(); rule.boxType = .separator
     constrain(rule, in: root, top: 44, left: 0, right: 0, height: 1)
     let left = NSView(); constrain(left, in: root, top: 45, left: 0, right: 264, height: 277)
@@ -202,13 +246,13 @@ struct TDDraft {
     }
     let footerRule = NSBox(); footerRule.boxType = .separator
     constrain(footerRule, in: root, top: 322, left: 0, right: 0, height: 1)
-    status.stringValue = message.isEmpty ? "Project is fixed · ⌘Return to add" : message
+    status.stringValue = message.isEmpty ? (editing ? "Project is fixed · ⌘Return to save" : "Project is fixed · ⌘Return to add") : message
     status.font = .systemFont(ofSize: 11); status.textColor = ink
     constrain(status, in: root, top: 333, left: 20, right: 225, height: 35)
     let cancel = NSButton(title: saved ? "Close" : "Cancel", target: self, action: #selector(cancel))
     cancel.bezelStyle = .rounded; cancel.keyEquivalent = "\u{1b}"
     constrain(cancel, in: root, top: 335, left: 584, right: 122, height: 30)
-    submit.title = saved ? "Retry options" : "Add task"; submit.target = self; submit.action = #selector(save)
+    submit.title = saved ? "Retry options" : (editing ? "Save changes" : "Add task"); submit.target = self; submit.action = #selector(save)
     submit.bezelStyle = .rounded; submit.bezelColor = accent; submit.contentTintColor = .white
     submit.keyEquivalent = "\r"; submit.keyEquivalentModifierMask = [.command]
     constrain(submit, in: root, top: 335, left: 686, right: 16, height: 30)
@@ -219,8 +263,9 @@ struct TDDraft {
     let fmt = DateFormatter(); fmt.dateStyle = .medium; fmt.timeStyle = .none
     deadline.title = draft.deadline.map(fmt.string(from:)) ?? "No deadline"
     fmt.dateStyle = .short; fmt.timeStyle = .short
-    reminder.title = draft.reminder.map(fmt.string(from:)) ?? "No reminder"
-    location.title = draft.location?.name ?? "No location"
+    reminder.title = draft.reminder.map(fmt.string(from:)) ?? (editing ? "Add reminder…" : "No reminder")
+    location.title = draft.location?.name ?? (editing ? "Add location…" : "No location")
+    if editing { reminder.toolTip = "Add a new reminder. Existing Todoist reminders are kept." }
     location.toolTip = draft.location.map { "\($0.latitude), \($0.longitude) · \($0.trigger == "on_enter" ? "On arrival" : "On leaving")" }
   }
   func chooseDate(_ title: String, current: Date?, time: Bool) -> Date?? {
@@ -292,6 +337,9 @@ struct TDDraft {
   func present() -> TDDraft? {
     window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     if !saved { window.makeFirstResponder(name) }
+    // Application activation can complete after first-responder assignment.
+    // Refresh once in the modal loop without resetting selection or focus.
+    DispatchQueue.main.async { [weak self] in self?.refreshFocusedCaret() }
     NSApp.runModal(for: window)
     return accepted ? draft : nil
   }

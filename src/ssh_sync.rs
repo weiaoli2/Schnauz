@@ -236,7 +236,6 @@ fn clear_contents(tab: &mut Tab) {
     tab.find_results.clear();
     tab.content_hits = None;
     tab.content_for = None;
-    tab.content_gen += 1;
     tab.load_gen = 0; // Discard listings started before a mode change.
     tab.scroll_handle = UniformListScrollHandle::new();
     tab.h_scroll = ScrollHandle::new();

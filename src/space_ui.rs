@@ -1,6 +1,6 @@
 //! Inspect is explicit and independent of ordinary folder browsing.
 use super::*;
-use crate::space_map::{self, Rect, Tile, Tree};
+use crate::space_map::{self, Rect, SizeMode, Tile, Tree};
 static NEXT_INSPECTION: AtomicU64 = AtomicU64::new(1);
 #[derive(Default)]
 struct Geometry {
@@ -15,6 +15,7 @@ pub(super) struct State {
     priority: Arc<std::sync::Mutex<Option<PathBuf>>>,
     tree: Option<Arc<Tree>>,
     view_root: usize,
+    mode: SizeMode,
     progress: space_map::Progress,
     error: Option<String>,
     hovered: Option<usize>,
@@ -51,6 +52,13 @@ impl Schnauz {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mode = self.space_map.as_ref().map_or(SizeMode::default(), |s| s.mode);
+        self.inspect_folder_with_mode(pane, root, mode, window, cx);
+    }
+    fn inspect_folder_with_mode(
+        &mut self, pane: usize, root: PathBuf, mode: SizeMode,
+        window: &mut Window, cx: &mut Context<Self>,
+    ) {
         self.close_context_menu(cx);
         self.close_sidebar_menu(cx);
         self.close_palette(cx);
@@ -72,6 +80,7 @@ impl Schnauz {
             priority:priority.clone(),
             tree: None,
             view_root: 0,
+            mode,
             progress: Default::default(),
             error: None,
             hovered: None,
@@ -86,7 +95,7 @@ impl Schnauz {
             let _=std::thread::Builder::new().name("schnauz-disk-usage".into()).spawn(move || {
                 let tree = space_map::scan_progressive(&root, &worker_cancel, |p| {
                     let _ = tx.try_send(Update::Progress(p));
-                },|tree,p| {let _=tx.try_send(Update::Snapshot(tree,p));},&priority);
+                },|tree,p| {let _=tx.try_send(Update::Snapshot(tree,p));},&priority,mode);
                 let _ = tx.send(Update::Done(tree));
             });
             loop {
@@ -258,7 +267,7 @@ impl Schnauz {
         let id = NEXT_INSPECTION.fetch_add(1, Ordering::Relaxed);
         self.space_map = Some(State {
             id, root: folder.clone(), pane, cancel: cancel.clone(),
-            priority: Arc::new(std::sync::Mutex::new(None)), tree: None, view_root: 0,
+            priority: Arc::new(std::sync::Mutex::new(None)), tree: None, view_root: 0, mode: SizeMode::default(),
             progress: Default::default(), error: None, hovered: None, selected: None,
             geometry: Default::default(),
         });
@@ -381,6 +390,21 @@ impl Schnauz {
                             })),
                     ),
             );
+        panel = panel.child(div().flex_none().px_3().pb_2().flex().flex_wrap().gap_1()
+            .children([(SizeMode::OnDisk, "inspect-on-disk"), (SizeMode::Total, "inspect-total-size")]
+                .into_iter().map(|(mode, id)| {
+                    map_button(id, mode.label())
+                        .when(state.mode == mode, |d| d.bg(rgb(t.hover)).font_weight(FontWeight::SEMIBOLD))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            let Some(state) = this.space_map.as_ref() else { return; };
+                            if state.mode == mode { return; }
+                            let root = state.tree.as_ref()
+                                .map(|tree| tree.nodes[state.view_root].path.clone())
+                                .unwrap_or_else(|| state.root.clone());
+                            let pane = state.pane;
+                            this.inspect_folder_with_mode(pane, root, mode, window, cx);
+                        }))
+                })));
         if let Some(tree) = &state.tree {
             let root = state.view_root;
             panel = panel.child(
@@ -390,7 +414,8 @@ impl Schnauz {
                     .text_size(px(11.))
                     .text_color(rgb(t.text_muted))
                     .child(format!(
-                        "{}: {} · {} {}",
+                        "{} · {}: {} · {} {}",
+                        state.mode.label(),
                         if tree.scanning {"Counted so far"} else {"Scanned files"},
                         format_size(false, tree.nodes[root].bytes),
                         tree.counts[root],
@@ -432,7 +457,8 @@ impl Schnauz {
             }
             if tree.nodes[root].bytes == 0 {
                 panel = panel.child(div().flex_1().p_4().text_color(rgb(t.text_muted)).child(
-                    if tree.scanning {"Discovering folder sizes… the map will appear as file data is counted."}
+                    if tree.scanning {"Scanning… the map appears when nonzero sizes are counted."}
+                    else if state.mode == SizeMode::OnDisk {"No allocated file data found. Cloud-only and empty files have no map area. Choose Total file size to see their content sizes."}
                     else {"No readable file data found. Check the scan details above for exclusions or read errors."},
                 ));
             } else {
@@ -617,13 +643,17 @@ impl Schnauz {
                 .py_2()
                 .text_size(px(10.))
                 .text_color(rgb(t.text_dim))
-                .child("Area = logical file size, not disk capacity · includes hidden items; snapshots and filesystem overhead are not mapped"),
+                .child(match state.mode {
+                    SizeMode::OnDisk => "Area = allocated file data · includes hidden files. Cloud-only files may have no area; use Total file size to see them. Hard links count once. APFS sharing, snapshots and overhead are not fully represented.",
+                    SizeMode::Total => "Area = total file size, including cloud-only files · includes hidden files; this is not local disk usage.",
+                }),
         );
         Some(panel.into_any_element())
     }
 }
 fn map_node_label(node: &space_map::Node) -> String {
     if node.grouped_files > 0 { format!("{} additional files",node.grouped_files) }
+    else if node.cloud_only { format!("{} · cloud-only", path_label(&node.path)) }
     else { path_label(&node.path) }
 }
 fn map_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
@@ -685,7 +715,7 @@ mod navigation_tests {
     fn tree(root: &str) -> Tree {
         Tree {
             nodes: vec![space_map::Node { path: root.into(), parent: None, directory: true,
-                bytes: 0, children: Vec::new(), grouped_files: 0 }],
+                bytes: 0, cloud_only: false, children: Vec::new(), grouped_files: 0 }],
             counts: vec![0], unreadable: 0, grouped_files: 0, skipped_volumes: 0,
             capacity: None, scanning: false, pending_folders: 0,
         }
@@ -695,7 +725,7 @@ mod navigation_tests {
         let root = Path::new("/fixture");
         let mut original = tree("/fixture");
         original.nodes.push(space_map::Node { path: "/fixture/child".into(), parent: Some(0),
-            directory: true, bytes: 0, children: Vec::new(), grouped_files: 0 });
+            directory: true, bytes: 0, cloud_only: false, children: Vec::new(), grouped_files: 0 });
         original.nodes[0].children.push(1); original.counts.push(0);
         assert_eq!(parent_target(root, Some(&original), 1), Some((root.into(), Some(0))));
         let rebased = tree("/fixture/child");

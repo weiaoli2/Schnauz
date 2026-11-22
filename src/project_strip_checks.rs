@@ -33,7 +33,7 @@ pub(super) fn run(
                 assert!(menu.iter().any(|node| matches!(node, MenuNode::Item { label, .. } if label == "Rename…")));
                 b.open_project_rename(saved, window, cx);
                 assert_eq!(b.project_dialog.as_deref(), Some("Header Saved Only"));
-                assert!(b.project_name_selected);
+                assert!(b.project_name_editor.selection(b.project_dialog.as_deref().unwrap()).is_some());
                 b.project_dialog = Some("Header Saved Renamed".into());
                 b.handle_project_key(&KeyDownEvent { keystroke: gpui::Keystroke::parse("enter").unwrap(), is_held: false }, cx);
                 assert!(b.project_dialog.is_none());

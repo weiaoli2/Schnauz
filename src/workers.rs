@@ -60,11 +60,38 @@ pub(super) fn command(
 }
 
 pub(super) fn command_guarded(
+    cmd: Command,
+    input: Vec<u8>,
+    timeout: Duration,
+    cancel: Arc<AtomicBool>,
+    file_limit: Option<(std::path::PathBuf, u64)>,
+) -> Result<Output, String> {
+    command_io(cmd, input, timeout, cancel, file_limit, None)
+}
+
+type Exchange = Box<
+    dyn FnOnce(std::process::ChildStdin, std::process::ChildStdout) -> std::io::Result<Vec<u8>>
+        + Send,
+>;
+
+/// A bounded protocol conversation. The callback owns only this new child's
+/// pipes; cancellation/deadline handling remains on the supervising thread.
+pub(super) fn command_exchange(
+    cmd: Command,
+    timeout: Duration,
+    cancel: Arc<AtomicBool>,
+    exchange: Exchange,
+) -> Result<Output, String> {
+    command_io(cmd, Vec::new(), timeout, cancel, None, Some(exchange))
+}
+
+fn command_io(
     mut cmd: Command,
     input: Vec<u8>,
     timeout: Duration,
     cancel: Arc<AtomicBool>,
     file_limit: Option<(std::path::PathBuf, u64)>,
+    exchange: Option<Exchange>,
 ) -> Result<Output, String> {
     if cancel.load(Ordering::Acquire) {
         return Err("Operation cancelled.".into());
@@ -87,19 +114,36 @@ pub(super) fn command_guarded(
     let spawn = |name: &str, work: Box<dyn FnOnce() + Send>| {
         std::thread::Builder::new().name(name.into()).spawn(work)
     };
-    let writers = spawn(
-        "schnauz-command-input",
-        Box::new(move || {
-            let mut stdin = stdin;
-            let _ = stdin.write_all(&input);
-        }),
-    );
-    let readers = spawn(
-        "schnauz-command-output",
-        Box::new(move || {
-            let _ = out.send((false, capture(stdout, 32 * 1024 * 1024)));
-        }),
-    );
+    let (writers, readers) = if let Some(exchange) = exchange {
+        (
+            spawn(
+                "schnauz-command-exchange",
+                Box::new(move || {
+                    let result = exchange(stdin, stdout);
+                    let _ = out.send((false, result));
+                }),
+            )
+            .map(|_| ()),
+            Ok(()),
+        )
+    } else {
+        let writers = spawn(
+            "schnauz-command-input",
+            Box::new(move || {
+                let mut stdin = stdin;
+                let _ = stdin.write_all(&input);
+            }),
+        )
+        .map(|_| ());
+        let readers = spawn(
+            "schnauz-command-output",
+            Box::new(move || {
+                let _ = out.send((false, capture(stdout, 32 * 1024 * 1024)));
+            }),
+        )
+        .map(|_| ());
+        (writers, readers)
+    };
     let errors = spawn(
         "schnauz-command-errors",
         Box::new(move || {

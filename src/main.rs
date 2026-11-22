@@ -103,6 +103,13 @@ mod schnauz_terminal;
 mod ssh_sync;
 mod ssh_connection;
 mod remote_listing;
+mod remote_links;
+mod quick_find;
+mod project_name_editor;
+mod time_tracking;
+mod time_tracking_bridge;
+mod time_tracking_ui;
+mod file_scrollbar;
 use remote_listing::parse as parse_sftp_ls;
 mod file_search;
 mod search_ui;
@@ -113,7 +120,9 @@ mod workers;
 mod persistence;
 mod file_transfer;
 mod folder_watch;
+mod local_file_events;
 mod folder_views;
+mod sticky;
 mod list_ui;
 mod native_menus;
 mod cloud_status;
@@ -187,8 +196,6 @@ struct Prefs {
     search_history: bool,
     /// Enable custom sidebar "groups" of files/folders.
     groups_enabled: bool,
-    /// Show the always-on "Filter" pill in the bottom-right (/ still works).
-    show_filter_button: bool,
     /// Show a live frame-rate meter in the top-right (debug; costs some CPU).
     show_fps: bool,
     /// Run user shell-script actions from the Scripts folder in menus.
@@ -219,7 +226,6 @@ impl Default for Prefs {
             file_access_intro_seen: false,
             search_history: true,
             groups_enabled: false,
-            show_filter_button: true,
             show_fps: false,
             script_actions: false,
             ssh_use_system: true,
@@ -250,7 +256,6 @@ thread_local! {
         file_access_intro_seen: false,
         search_history: true,
         groups_enabled: false,
-        show_filter_button: true,
         show_fps: false,
         script_actions: false,
         ssh_use_system: true,
@@ -283,7 +288,6 @@ enum KeyAction {
     CommandPalette,
     NewTab,
     CloseTab,
-    Find,
     SelectAll,
     NewFile,
     NewFolder,
@@ -318,7 +322,6 @@ impl KeyAction {
         KeyAction::CommandPalette,
         KeyAction::NewTab,
         KeyAction::CloseTab,
-        KeyAction::Find,
         KeyAction::SelectAll,
         KeyAction::NewFile,
         KeyAction::NewFolder,
@@ -370,7 +373,6 @@ impl KeyAction {
             KeyAction::CommandPalette => "command_palette",
             KeyAction::NewTab => "new_tab",
             KeyAction::CloseTab => "close_tab",
-            KeyAction::Find => "find",
             KeyAction::SelectAll => "select_all",
             KeyAction::NewFile => "new_file",
             KeyAction::NewFolder => "new_folder",
@@ -405,7 +407,6 @@ impl KeyAction {
             KeyAction::CommandPalette => "File search",
             KeyAction::NewTab => "New tab",
             KeyAction::CloseTab => "Close tab",
-            KeyAction::Find => "Filter current folder",
             KeyAction::SelectAll => "Select all",
             KeyAction::NewFile => "New file",
             KeyAction::NewFolder => "New folder",
@@ -440,7 +441,6 @@ impl KeyAction {
             KeyAction::CommandPalette => Some("cmd-p"),
             KeyAction::NewTab => Some("cmd-t"),
             KeyAction::CloseTab => Some("cmd-w"),
-            KeyAction::Find => Some("/"),
             KeyAction::SelectAll => Some("cmd-a"),
             KeyAction::Refresh => Some("cmd-r"),
             KeyAction::SwitchPane => Some("ctrl-tab"),
@@ -634,10 +634,8 @@ const CHROME_HIGHLIGHT_HOVER: u32 = 0x2867ae;
 const TAB_H: f32 = 34.0;
 /// Fixed list-row height (so marquee selection can map y-coordinates to rows).
 const ROW_H: f32 = 26.0;
-/// Overlay scrollbar: stays solid this long after the last scroll…
-const SCROLLBAR_LINGER: f32 = 1.0;
-/// …then fades out over this long (seconds).
-const SCROLLBAR_FADE: f32 = 0.35;
+/// Shared list-header height; the vertical scrollbar starts below it.
+const COLUMN_HEADER_H: f32 = 28.;
 /// Duration of the pane split open/close animation.
 const SPLIT_ANIM_MS: u64 = 220;
 /// Red used for an invalid rename (field border/text + the reason pill).
@@ -652,9 +650,12 @@ static TAB_DRAG_LIVE: AtomicBool = AtomicBool::new(false);
 struct Resize { pane: usize, col: Column, start_x: f32, start_w: f32 }
 
 /// An in-progress scrollbar-thumb drag (which pane's list is being scrolled).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ScrollDrag {
     pane: usize,
+    tab: u64,
+    search: Option<u64>,
+    handle: UniformListScrollHandle,
     start_y: f32,
     start_scrolled: f32,
 }
@@ -831,8 +832,11 @@ struct PaletteItem {
 struct Entry {
     name: String,
     is_dir: bool,
+    link: Option<remote_links::Target>,
     size: u64,
     modified: Option<SystemTime>,
+    /// Remote long listings can provide a date without a time of day.
+    modified_date_only: bool,
     created: Option<SystemTime>,
     mode: Option<u32>,
     /// Whether size/dates have been read (the fast first pass leaves them empty).
@@ -948,7 +952,8 @@ struct Tab {
     path_anchor: Option<usize>,
     path_dragging: bool,
     path_layout: Rc<RefCell<Option<path_editor::Layout>>>,
-    /// When `Some`, an in-directory "find" filter is active (opened by `/`).
+    /// Internal query state retained for existing listing/selection fixtures.
+    /// The former floating filter UI and its shortcut have been removed.
     /// `find_results` holds the matching `entries` indices, best match first.
     find_query: Option<String>,
     entry_filter: EntryFilter,
@@ -959,19 +964,11 @@ struct Tab {
     hidden_count: usize,
     copy_feedback: Option<(String, Instant)>,
     find_results: Vec<usize>,
-    /// Text cursor (char index) within `find_query`.
-    find_cursor: usize,
-    /// Selection anchor (char index) within `find_query`; `Some` and different
-    /// from `find_cursor` means a range is selected (Option+Shift+Arrow, Cmd+A).
-    find_anchor: Option<usize>,
     /// Result set of the active `content:` Spotlight search (absolute paths in
     /// this folder), and the term it corresponds to. `None` = no content
     /// search resolved yet.
     content_hits: Option<HashSet<PathBuf>>,
     content_for: Option<String>,
-    /// Bumps each time a content search is kicked off, so a stale mdfind result
-    /// is discarded.
-    content_gen: u64,
     scroll_handle: UniformListScrollHandle,
     /// Horizontal scroll of the columns (when they're wider than the pane).
     h_scroll: ScrollHandle,
@@ -982,6 +979,7 @@ struct Tab {
     /// Sort criterion and direction for this tab's listing.
     sort_key: SortKey,
     sort_asc: bool,
+    sticky_order: Vec<String>,
     /// How items are displayed.
     view: ViewMode,
     list_layout: ListLayout,
@@ -990,10 +988,6 @@ struct Tab {
     /// discarded if the user navigated away.
     load_gen: u64,
     ssh_progress: Option<ssh_connection::Progress>,
-    /// Last time this tab's list scrolled; drives the scrollbar's fade-out.
-    last_scroll: Instant,
-    /// Bumped per scroll so the fade-out animation restarts from opaque.
-    scroll_epoch: u64,
     /// When `Some`, this tab browses a remote SFTP server; `current_dir` is a
     /// remote absolute path on that host. `None` = a normal local tab.
     remote: Option<SftpServer>,
@@ -1069,6 +1063,7 @@ impl Tab {
 
     /// Combine the type switch with the text query, preserving the current sort.
     fn recompute_results(&mut self) {
+        sticky::prioritize(&mut self.entries, &self.sticky_order);
         self.refresh_version_marks();
         self.hidden_count = self.entries.iter().filter(|entry| entry.is_hidden()).count();
         let tab = self;
@@ -1083,7 +1078,7 @@ impl Tab {
         let has_text = !fq.text.is_empty();
         // Content search resolves asynchronously; until its hits for THIS term
         // land, a content: query matches nothing (the spinner-free "searching"
-        // state). update_content_search() recomputes when mdfind returns.
+        // state). The former interactive Spotlight filter has been removed.
         let content_ready = match &fq.content {
             None => None,
             Some(term) => {
@@ -1130,7 +1125,8 @@ impl Tab {
             // Best score first; ties → dirs first, then alphabetical.
             let entries = &tab.entries;
             scored.sort_by(|a, b| {
-                b.0.cmp(&a.0)
+                sticky::rank(&tab.sticky_order, &entries[a.1].name).cmp(&sticky::rank(&tab.sticky_order, &entries[b.1].name))
+                    .then_with(|| b.0.cmp(&a.0))
                     .then_with(|| entries[b.1].is_folder().cmp(&entries[a.1].is_folder()))
                     .then_with(|| {
                         entries[a.1].name.to_lowercase().cmp(&entries[b.1].name.to_lowercase())
@@ -1183,25 +1179,21 @@ impl Tab {
             hidden_count: 0,
             copy_feedback: None,
             find_results: Vec::new(),
-            find_cursor: 0,
-            find_anchor: None,
             content_hits: None,
             content_for: None,
-            content_gen: 0,
             scroll_handle: UniformListScrollHandle::new(),
             h_scroll: ScrollHandle::new(),
             selection: HashSet::new(),
             anchor: None,
             sort_key: SortKey::None,
             sort_asc: true,
+            sticky_order: Vec::new(),
             view: ViewMode::List,
             list_layout: ListLayout::default(),
             preview_width: prefs().preview_width,
 
             load_gen: 0,
             ssh_progress: None,
-            last_scroll: Instant::now(),
-            scroll_epoch: 0,
             remote,
             network, network_connected:false, network_loading:false,
         };
@@ -1311,8 +1303,6 @@ struct Schnauz {
     /// starting width fraction and whether it's anchored to the right edge
     /// (i.e. the *left* pane was the one removed). Drives the grow animation.
     collapse_anim: Option<(f32, bool)>,
-    /// True while the scrollbar-fade repaint ticker task is alive.
-    fade_ticker: bool,
     /// User-defined sidebar groups (when the feature is enabled).
     groups: Vec<Group>,
     /// Open sidebar context menu: (x, y, what was clicked).
@@ -1411,6 +1401,7 @@ struct Schnauz {
     /// banner; the generation lets a stale auto-dismiss leave a newer one be.
     notice: Option<String>,
     notice_gen: u64,
+    quick_find: Option<quick_find::State>,
     /// Bumped per Sync Now; the running sync watch stops when it's stale.
     cloud_sync_gen: u64,
     /// Background copies/moves in flight (the progress panel).
@@ -1431,7 +1422,7 @@ struct Schnauz {
     project_dialog: Option<String>,
     project_dialog_error: Option<String>,
     project_rename: Option<(u64, String)>,
-    project_name_selected: bool,
+    project_name_editor: project_name_editor::Editor,
     new_text_file: Option<new_text_file::Form>,
     project_filter_editor: bool,
     /// The open Get Info card, if any.
@@ -1505,8 +1496,6 @@ impl Schnauz {
             let (changed, requested) = this.todoist.observe_account(&state);
             if requested || (changed && state.account.is_some() && this.projects.sidebar().todoist_create_request.is_some()) {
                 this.open_todoist(cx);
-            } else if changed {
-                this.ensure_todoist(false, cx);
             }
             if let Some(message) = state.notice { this.set_notice(message, cx); }
             cx.notify();
@@ -1545,17 +1534,23 @@ impl Schnauz {
                     let previews = this.watched_preview_paths();
                     (dirs, previews)
                 }) { Ok(paths) => paths, Err(_) => break };
-                let wanted = dirs.iter().flatten().cloned().chain(previews.iter().cloned()).collect();
-                let result=workers::run("schnauz-folder-watch",move||{let changed=watcher.changes(wanted);(watcher,changed)}).await;
+                let folders = dirs.iter().flatten().cloned().collect();
+                let result=workers::run("schnauz-folder-watch",move||{let changed=watcher.browser_changes(folders,previews);(watcher,changed)}).await;
                 let Ok((returned,changed))=result else{break;};
                 watcher=returned;
                 if this.update(cx, |this,cx| {
                     this.refresh_changed_previews(&changed, cx);
                     for (pane,dir) in dirs.into_iter().enumerate() {
                         let Some(root) = dir else {continue;};
-                        if pane >= this.panes.len() || this.tab(pane).current_dir != root {continue;}
+                        if pane >= this.panes.len() || this.tab(pane).current_dir != root || this.tab(pane).remote.is_some() {continue;}
                         if changed.contains(&root) {
-                            this.reload_pane(pane,cx);
+                            // Finish an in-flight metadata pass before one queued
+                            // refresh; repeated saves must not starve large listings.
+                            if this.tab(pane).local_loading && this.tab(pane).network.is_none() {
+                                this.tab_mut(pane).listing_dirty = true;
+                            } else {
+                                this.reload_pane(pane,cx);
+                            }
                         }
 
                     }
@@ -1616,6 +1611,7 @@ impl Schnauz {
             .detach();
         }
         browser_windows::initialize_project_library(cx);
+        time_tracking_ui::initialize(cx);
         let shared=cx.global::<ProjectLibraryGlobal>();
         let (projects,project_load_error)=(shared.0.clone(),shared.1.clone());
         todoist_window::initialize(cx);
@@ -1630,7 +1626,6 @@ impl Schnauz {
             divider_drag: None,
             split_epoch: 0,
             collapse_anim: None,
-            fade_ticker: false,
             groups: load_groups(),
             sidebar_menu: None,
             group_dialog: None,
@@ -1694,6 +1689,7 @@ impl Schnauz {
             cloud_rename_check: false,
             notice: None,
             notice_gen: 0,
+            quick_find: None,
             cloud_sync_gen: 0,
             jobs: Vec::new(),
             next_job_id: 0,
@@ -1705,7 +1701,7 @@ impl Schnauz {
             projects, project_load_error, project_sessions: HashMap::new(),
             project_strip_scroll: ScrollHandle::new(),
             project_strip_state: RefCell::new(None),
-            project_dialog: None, project_dialog_error: None, project_rename: None, project_name_selected: false, new_text_file: None, project_filter_editor: false,
+            project_dialog: None, project_dialog_error: None, project_rename: None, project_name_editor: Default::default(), new_text_file: None, project_filter_editor: false,
             info_panel: None,
             batch_rename: None,
         }
@@ -1759,11 +1755,17 @@ impl Schnauz {
         // Remote (SFTP) tabs get a reduced menu — the local-only actions
         // (Quick Actions, Compress, Tags, aliases, Reveal in Finder…) don't
         // apply to a remote path.
-        let nodes = if self.tab(pane).remote.is_some() {
+        let mut nodes = if self.tab(pane).remote.is_some() {
             self.menu_nodes_remote(pane, target.clone())
         } else {
             self.menu_nodes_root(pane, target.clone(), cx)
         };
+        if let Some((path, _)) = &target {
+            if let Some(node) = self.sticky_menu_node(pane, path) {
+                nodes.insert(0, MenuNode::Sep);
+                nodes.insert(0, node);
+            }
+        }
         self.context_menu = Some(ContextMenu {
             x,
             y,
@@ -1824,6 +1826,7 @@ impl Schnauz {
             .enumerate()
             .filter(|(_, p)| {
                 p.active_tab().listing_dirty
+                    && !p.active_tab().local_loading
                     && p.active_tab().remote.is_none()
                     && p.active_tab().network.is_none()
             })
@@ -1836,6 +1839,7 @@ impl Schnauz {
 
     /// Both the names-only pass and metadata fill run away from the UI/pool.
     fn reload_pane(&mut self, pane: usize, cx: &mut Context<Self>) {
+        self.load_sticky(pane);
         let rule = self.projects.sidebar().file_filter.clone();
         self.tab_mut(pane).apply_project_file_filter(&rule);
         if self.tab(pane).remote.is_some() {
@@ -1883,7 +1887,9 @@ impl Schnauz {
                         }) else {
                             return false;
                         };
+                        let pending_refresh = tab.listing_dirty;
                         tab.install_listing(result);
+                        tab.listing_dirty = pending_refresh;
                         tab.local_loading = success && !full;
                         if !success || full {
                             tab.listing_cancel = None;
@@ -1927,7 +1933,13 @@ impl Schnauz {
             let p = path.clone();
             let stop=cancel.clone();
             let result = workers::run("schnauz-sftp-listing",move || {
-                let result=sftp_batch_cancellable(&s,&remote_listing::list_command(&p)?,use_system,Some(&progress),stop,None).map(|text|parse_sftp_ls(&text));
+                let result=sftp_batch_cancellable(&s,&remote_listing::list_command(&p)?,use_system,Some(&progress),stop.clone(),None).map(|text| {
+                    let mut entries = parse_sftp_ls(&text);
+                    progress.set("Checking link targets…");
+                    remote_links::resolve(&s, &p, &mut entries, use_system, stop);
+                    sort_default(&mut entries);
+                    entries
+                });
                 progress.finish();result
             }).await.and_then(|r|r);
             let _ = this.update(cx, |this, cx| {
@@ -1988,12 +2000,19 @@ impl Schnauz {
     where
         F: FnOnce() -> Result<(), String> + Send + 'static,
     {
+        self.run_remote_then(pane, op, |_, _| {}, cx);
+    }
+    fn run_remote_then<F, G>(&mut self, pane: usize, op: F, success: G, cx: &mut Context<Self>)
+    where F: FnOnce() -> Result<(), String> + Send + 'static,
+          G: FnOnce(&mut Self, &mut Context<Self>) + 'static,
+    {
         let tab_id=self.tab(pane).id;
         cx.spawn(async move |this, cx| {
             let result = workers::result("schnauz-sftp-operation",op).await;
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(()) => {
+                        success(this, cx);
                         this.remote_error = None;
                         if pane < this.panes.len() && this.tab(pane).id==tab_id {
                             this.reload_pane(pane, cx);
@@ -2102,6 +2121,7 @@ impl Schnauz {
     fn sort_tab(&mut self, pane: usize) {
         let (key, asc) = (self.tab(pane).sort_key, self.tab(pane).sort_asc);
         sort_entries(&mut self.tab_mut(pane).entries, key, asc);
+        self.tab_mut(pane).recompute_results();
         let hidden = self.tab(pane).entries.iter().filter(|entry| entry.is_hidden()).count();
         self.tab_mut(pane).hidden_count = hidden;
     }
@@ -2169,7 +2189,7 @@ impl Schnauz {
                 (tab.view, off)
             };
             let item = match view {
-                ViewMode::Icons => ix / self.icon_cols(pane),
+                ViewMode::Icons => self.tab(pane).sticky_icon_row(ix, self.icon_cols(pane)),
                 _ => ix + off,
             };
             self.tab(pane).scroll_handle.scroll_to_item(item, ScrollStrategy::Center);
@@ -2194,6 +2214,15 @@ impl Schnauz {
     }
 
     fn open_path(&mut self, pane: usize, path: PathBuf, is_dir: bool, cx: &mut Context<Self>) {
+        let is_dir = if self.tab(pane).remote.is_some() {
+            let entry = self.tab(pane).entries.iter().find(|entry|
+                self.tab(pane).current_dir.join(&entry.name) == path);
+            if entry.is_some_and(|entry| entry.link == Some(remote_links::Target::Unavailable)) {
+                self.set_notice("Cannot open this link: its target is missing, inaccessible or could not be resolved.".into(), cx);
+                return;
+            }
+            entry.map_or(is_dir, |entry| entry.is_dir)
+        } else { is_dir };
         // App bundles are directories, but double-clicking one should *launch*
         // it like Finder — browse inside via right-click → Show Package Contents.
         let is_app = self.tab(pane).remote.is_none() && is_app_bundle(&path, is_dir);
@@ -2220,6 +2249,12 @@ impl Schnauz {
         let Some(server) = self.tab(pane).remote.clone() else {
             return;
         };
+        if self.tab(pane).entries.iter().any(|entry|
+            self.tab(pane).current_dir.join(&entry.name) == remote_path
+                && entry.link == Some(remote_links::Target::Unavailable)) {
+            self.set_notice("Cannot download this link: its target could not be resolved.".into(), cx);
+            return;
+        }
         let name = remote_path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -2811,6 +2846,7 @@ impl Schnauz {
                 }
             }
             let n = done.len();
+            self.rename_sticky(sticky::folder_key(self.tab(pane)), &done, cx);
             self.push_undo(UndoOp::Renamed(done));
             self.set_notice(format!("Renamed {}", items_label(n)), cx);
         }
@@ -3086,10 +3122,17 @@ impl Schnauz {
                     self.set_notice(format!("Couldn't undo {what}"), cx);
                     return;
                 }
+                let mut renamed = HashMap::<PathBuf, Vec<(PathBuf, PathBuf)>>::new();
                 for (tmp, from, to) in staged {
                     if fs::rename(&tmp, &from).is_err() {
                         let _ = fs::rename(&tmp, &to);
+                    } else if let Some(parent) = from.parent() {
+                        renamed.entry(parent.into()).or_default().push((to, from));
                     }
+                }
+                for (parent, pairs) in renamed {
+                    let key = serde_json::to_string(&(None::<(&str, &str, u16)>, parent)).unwrap_or_default();
+                    self.rename_sticky(key, &pairs, cx);
                 }
             }
         }
@@ -3206,9 +3249,12 @@ impl Schnauz {
                         let from = r.path.to_string_lossy().into_owned();
                         let to = dest.to_string_lossy().into_owned();
                         let pane = r.pane;
-                        self.run_remote(
+                        let folder = sticky::folder_key(self.tab(pane));
+                        let pairs = vec![(r.path.clone(), dest.clone())];
+                        self.run_remote_then(
                             pane,
                             move || sftp_rename(&server, &from, &to, use_system),
+                            move |this, cx| this.rename_sticky(folder, &pairs, cx),
                             cx,
                         );
                         cx.notify();
@@ -3221,6 +3267,7 @@ impl Schnauz {
                         .file_name()
                         .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(new));
                     if (case_only || !dest.exists()) && fs::rename(&r.path, &dest).is_ok() {
+                        self.rename_sticky(sticky::folder_key(self.tab(r.pane)), &[(r.path.clone(), dest.clone())], cx);
                         self.push_undo(UndoOp::Renamed(vec![(r.path.clone(), dest.clone())]));
                         let tab = self.tab_mut(r.pane);
                         if tab.selection.remove(&r.path) {
@@ -5219,6 +5266,11 @@ impl Schnauz {
                 }
             },
             SidebarTarget::Project(id) => {
+                let tracked = time_tracking_ui::enabled(id, cx);
+                items.push(mi(if tracked { "Disable Time Tracking" } else { "Add Time Tracking" }, move |this, _, cx| {
+                    if let Err(e)=time_tracking_ui::set_enabled(id, !tracked, cx) {this.set_notice(e,cx);}
+                }));
+                items.push(MenuNode::Sep);
                 items.push(mi("Open project", move |this, window, cx| {
                     window.focus(&this.focus);
                     if let Err(error) = this.switch_project(id, cx) { this.set_notice(error, cx); }
@@ -5352,49 +5404,6 @@ impl Schnauz {
         (-(f64::from(state.base_handle.offset().y) as f32)).max(0.0)
     }
 
-    fn begin_scroll_drag(&mut self, pane: usize, y: f32) {
-        self.scroll_drag = Some(ScrollDrag {
-            pane,
-            start_y: y,
-            start_scrolled: self.current_scrolled(pane),
-        });
-    }
-
-    fn update_scroll_drag(&mut self, y: f32, cx: &mut Context<Self>) {
-        let Some(drag) = self.scroll_drag else {
-            return;
-        };
-        if drag.pane >= self.panes.len() {
-            return;
-        }
-        let state = self.tab(drag.pane).scroll_handle.0.borrow();
-        let base = &state.base_handle;
-        let viewport = f64::from(base.bounds().size.height) as f32;
-        let max = f64::from(base.max_offset().height) as f32;
-        if viewport <= 1.0 || max <= 1.0 {
-            return;
-        }
-        let content = viewport + max;
-        let thumb_h = (viewport * viewport / content).clamp(28.0_f32.min(viewport), viewport);
-        let travel = (viewport - thumb_h).max(1.0);
-        // Thumb moves `delta` px; scale that to content-scroll distance.
-        let delta = y - drag.start_y;
-        let new_scrolled = (drag.start_scrolled + delta * (max / travel)).clamp(0.0, max);
-        let x = base.offset().x;
-        base.set_offset(point(x, px(-new_scrolled)));
-        drop(state);
-        cx.notify();
-    }
-
-    fn end_scroll_drag(&mut self, cx: &mut Context<Self>) {
-        // Releasing the thumb counts as the last scroll: starts the fade timer.
-        if let Some(drag) = self.scroll_drag.take() {
-            if drag.pane < self.panes.len() {
-                self.mark_scrolled(drag.pane, cx);
-            }
-        }
-    }
-
     // ----- file search (Cmd+P) and folder actions -----
 
     fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5492,7 +5501,6 @@ impl Schnauz {
                 let a = self.panes[pane].active;
                 self.close_tab(pane, a, cx);
             }
-            KeyAction::Find => self.open_find(pane, cx),
             KeyAction::SelectAll => {
                 let all: HashSet<PathBuf> = self.display_paths(pane).into_iter().collect();
                 self.tab_mut(pane).selection = all;
@@ -5533,7 +5541,11 @@ impl Schnauz {
             }
             KeyAction::Open => {
                 if let Some(p) = anchor {
-                    let is_dir = p.is_dir();
+                    let is_dir = if self.tab(pane).remote.is_some() {
+                        self.tab(pane).entries.iter().find(|entry|
+                            self.tab(pane).current_dir.join(&entry.name) == p)
+                            .is_some_and(|entry| entry.is_dir)
+                    } else { p.is_dir() };
                     self.open_path(pane, p, is_dir, cx);
                 }
             }
@@ -5593,6 +5605,12 @@ impl Schnauz {
         let ks = &ev.keystroke;
         let cmd = ks.modifiers.platform;
         let key = ks.key.as_str();
+        if key == "escape" && cx.stop_active_drag(window) {
+            self.drag_candidate = None;
+            self.pending_click_rename = None;
+            cx.stop_propagation();
+            return;
+        }
         if self.tab_project_move.is_some() {
             self.handle_tab_project_key(ev, window, cx);
             cx.stop_propagation();
@@ -5672,6 +5690,10 @@ impl Schnauz {
             return;
         }
 
+        // Let terminal text reach the native input context after bubbling,
+        // without feeding browser fields or quick filename matching.
+        if !cmd && self.terminal_input_focused(window, cx) { return; }
+
         // While an inline rename is active, keys feed the rename field.
         if self.rename.is_some() {
             self.handle_rename_key(ev, cx);
@@ -5690,16 +5712,12 @@ impl Schnauz {
             return;
         }
 
-        // While the in-directory find bar is open, keys feed the filter.
-        if self.active_tab().find_query.is_some() {
-            self.handle_find_key(ev, cx);
-            return;
-        }
-
         // An open context menu is modal: arrows navigate, → / ← open and close
         // flyouts, Enter invokes, Esc closes — and every other key is swallowed
         // so keybindings can't fire underneath it.
         if self.native_menu_pending { return; }
+
+        if self.quick_find_key(ev, window, cx) { return; }
 
         // Text editing owns the clipboard while the search field has focus,
         // independent of file-operation shortcuts and installed Quick Actions.
@@ -5976,75 +5994,6 @@ impl Schnauz {
     fn palette_history_prev(&mut self,cx:&mut Context<Self>) {self.recall_search_history(true,cx);}
     fn palette_history_next(&mut self,cx:&mut Context<Self>) {self.recall_search_history(false,cx);}
 
-    /// A floating, draggable scrollbar thumb sized/positioned from the list's
-    /// scroll state. Returns `None` when the content fits (or isn't measured yet).
-    fn scrollbar_thumb(&self, pane: usize, cx: &Context<Self>) -> Option<AnyElement> {
-        let state = self.tab(pane).scroll_handle.0.borrow();
-        let base = &state.base_handle;
-        let viewport = f64::from(base.bounds().size.height) as f32;
-        let max = f64::from(base.max_offset().height) as f32;
-        if viewport <= 1.0 || max <= 1.0 {
-            return None;
-        }
-        let scrolled = (-(f64::from(base.offset().y) as f32)).clamp(0.0, max);
-        let content = viewport + max;
-        let min_thumb = 28.0_f32;
-        let thumb_h = (viewport * viewport / content).clamp(min_thumb.min(viewport), viewport);
-        let thumb_top = (viewport - thumb_h) * (scrolled / max);
-
-        // macOS-style overlay bar: solid while scrolling or dragging, fades out
-        // shortly after the last scroll, and disappears entirely once faded.
-        let dragging = self.scroll_drag.is_some_and(|d| d.pane == pane);
-        let tab = self.tab(pane);
-        let idle = tab.last_scroll.elapsed().as_secs_f32();
-        if !dragging && idle > SCROLLBAR_LINGER + SCROLLBAR_FADE {
-            return None;
-        }
-        // Derive the thumb from the theme's text color so it stays visible on
-        // light themes (a hardcoded white thumb vanished on light backgrounds).
-        let color = if dragging {
-            Theme::alpha(theme().text, 0x66)
-        } else {
-            Theme::alpha(theme().text, 0x33)
-        };
-
-        let thumb = div()
-            .id(("scrollbar-thumb", pane))
-            .absolute()
-            .top(px(thumb_top))
-            .right(px(2.0))
-            .w(px(8.0))
-            .h(px(thumb_h))
-            .rounded_full()
-            .bg(color)
-            .cursor(CursorStyle::PointingHand)
-            .hover(|s| s.bg(Theme::alpha(theme().text, 0x55)))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                    this.begin_scroll_drag(pane, f64::from(ev.position.y) as f32);
-                    cx.notify();
-                }),
-            );
-
-        if dragging || idle < SCROLLBAR_LINGER {
-            Some(thumb.into_any_element())
-        } else {
-            // Idle: ease the thumb's opacity out. The epoch keys the animation
-            // so each scroll burst restarts the fade from opaque.
-            Some(
-                thumb
-                    .with_animation(
-                        SharedString::from(format!("sb-fade-{pane}-{}", tab.scroll_epoch)),
-                        Animation::new(Duration::from_millis((SCROLLBAR_FADE * 1000.0) as u64))
-                            .with_easing(ease_out_quint()),
-                        move |el, t| el.opacity(1.0 - t),
-                    )
-                    .into_any_element(),
-            )
-        }
-    }
-
     /// Load `dir` as a pane's current directory: re-read contents, update the
     /// current folder, record it as most-recent, and persist. Does
     /// NOT touch back/forward history (callers manage that).
@@ -6114,287 +6063,9 @@ impl Schnauz {
         self.load_dir_in(pane, dir, cx);
     }
 
-    // ----- in-directory find (the "/" filter) -----
-
-    /// Open the find bar for a pane, filtering only its current directory.
-    fn open_find(&mut self, pane: usize, cx: &mut Context<Self>) {
-        self.active_pane = pane;
-        let tab = self.tab_mut(pane);
-        tab.find_query = Some(String::new());
-        tab.find_cursor = 0;
-        tab.find_anchor = None;
-        self.recompute_find(pane);
-        cx.notify();
-    }
-
-    /// The find query's selected range (char indices), if any.
-    fn find_sel(&self, pane: usize) -> Option<(usize, usize)> {
-        let tab = self.tab(pane);
-        match tab.find_anchor {
-            Some(a) if a != tab.find_cursor => {
-                Some((a.min(tab.find_cursor), a.max(tab.find_cursor)))
-            }
-            _ => None,
-        }
-    }
-
-    /// Delete the find query's selected range (if any); cursor goes to its start.
-    fn find_delete_sel(&mut self, pane: usize) -> bool {
-        if let Some((lo, hi)) = self.find_sel(pane) {
-            let tab = self.tab_mut(pane);
-            if let Some(s) = tab.find_query.as_mut() {
-                let (bl, bh) = (char_byte(s, lo), char_byte(s, hi));
-                s.replace_range(bl..bh, "");
-            }
-            tab.find_cursor = lo;
-            tab.find_anchor = None;
-            true
-        } else {
-            self.tab_mut(pane).find_anchor = None;
-            false
-        }
-    }
-
-    /// Insert `s` at the find cursor, replacing any selection first.
-    fn find_insert(&mut self, pane: usize, s: &str) {
-        self.find_delete_sel(pane);
-        let tab = self.tab_mut(pane);
-        if let Some(buf) = tab.find_query.as_mut() {
-            let b = char_byte(buf, tab.find_cursor);
-            buf.insert_str(b, s);
-            tab.find_cursor += s.chars().count();
-        }
-    }
-
-    /// Move (or extend) the find text cursor. `word` jumps by word, `select`
-    /// extends the selection (Option+Shift selects a word at a time).
-    fn find_move_h(&mut self, pane: usize, left: bool, word: bool, select: bool) {
-        let tab = self.tab(pane);
-        let Some(s) = tab.find_query.clone() else {
-            return;
-        };
-        let end = s.chars().count();
-        let cursor = tab.find_cursor.min(end);
-        let target = match (left, word) {
-            (true, true) => prev_word_boundary(&s, cursor),
-            (true, false) => cursor.saturating_sub(1),
-            (false, true) => next_word_boundary(&s, cursor),
-            (false, false) => (cursor + 1).min(end),
-        };
-        let sel = self.find_sel(pane);
-        let tab = self.tab_mut(pane);
-        if select {
-            if tab.find_anchor.is_none() {
-                tab.find_anchor = Some(cursor);
-            }
-            tab.find_cursor = target;
-            if tab.find_anchor == Some(target) {
-                tab.find_anchor = None;
-            }
-        } else if let Some((lo, hi)) = sel {
-            tab.find_cursor = if word {
-                target
-            } else if left {
-                lo
-            } else {
-                hi
-            };
-            tab.find_anchor = None;
-        } else {
-            tab.find_cursor = target;
-            tab.find_anchor = None;
-        }
-    }
-
-    /// Rebuild the visible results after a query, type, sort or directory change.
+    /// Rebuild visible results after type, sort or directory changes.
     fn recompute_find(&mut self, pane: usize) {
         self.tab_mut(pane).recompute_results();
-    }
-
-    /// Kick off (or clear) the Spotlight content search for a pane's filter.
-    /// Called whenever the filter text changes. Runs `mdfind` scoped to the
-    /// folder off-thread, then recomputes the filtered list.
-    fn update_content_search(&mut self, pane: usize, cx: &mut Context<Self>) {
-        let term = self
-            .tab(pane)
-            .find_query
-            .as_deref()
-            .map(|q| FilterQuery::parse(q).content)
-            .unwrap_or(None);
-
-        let Some(term) = term else {
-            // No content: operator — drop any stale hits.
-            let tab = self.tab_mut(pane);
-            if tab.content_for.is_some() {
-                tab.content_hits = None;
-                tab.content_for = None;
-            }
-            return;
-        };
-        // Already resolved for this exact term → nothing to do.
-        if self.tab(pane).content_for.as_deref() == Some(term.as_str()) {
-            return;
-        }
-        let dir = self.tab(pane).current_dir.clone();
-        let gen = {
-            let tab = self.tab_mut(pane);
-            tab.content_gen += 1;
-            tab.content_gen
-        };
-        cx.spawn(async move |this, cx| {
-            let d = dir.clone();
-            let t = term.clone();
-            let hits=workers::run("schnauz-content-filter",move||mdfind_content(&d,&t)).await.unwrap_or_default();
-            let _ = this.update(cx, |this, cx| {
-                if pane >= this.panes.len() || this.tab(pane).content_gen != gen {
-                    return;
-                }
-                let tab = this.tab_mut(pane);
-                tab.content_hits = Some(hits);
-                tab.content_for = Some(term);
-                this.recompute_find(pane);
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// Keystrokes while the find bar is open (acts on the active pane).
-    fn handle_find_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
-        let ks = &ev.keystroke;
-        let cmd = ks.modifiers.platform;
-        let alt = ks.modifiers.alt;
-        let shift = ks.modifiers.shift;
-        let pane = self.active_pane;
-        match ks.key.as_str() {
-            "escape" => {
-                let tab = self.tab_mut(pane);
-                tab.find_query = None;
-                tab.find_results.clear();
-                tab.content_hits = None;
-                tab.content_for = None;
-                self.recompute_find(pane);
-                cx.notify();
-            }
-            "enter" => {
-                // Open the top match: navigate into dirs, open files.
-                let tab = self.tab(pane);
-                if let Some(&i) = tab.find_results.first() {
-                    let entry = &tab.entries[i];
-                    let target = tab.current_dir.join(&entry.name);
-                    let is_dir = entry.is_dir;
-                    let t = self.tab_mut(pane);
-                    t.find_query = None;
-                    t.find_results.clear();
-                    t.content_hits = None;
-                    t.content_for = None;
-                    self.recompute_find(pane);
-                    self.open_path(pane, target, is_dir, cx);
-                } else {
-                    cx.notify();
-                }
-            }
-            // Cmd+Left/Right jump to start/end (Shift extends); otherwise Left/
-            // Right move by char, Option by word, Shift extends the selection.
-            "left" => {
-                if cmd {
-                    let tab = self.tab_mut(pane);
-                    if shift && tab.find_anchor.is_none() {
-                        tab.find_anchor = Some(tab.find_cursor);
-                    }
-                    tab.find_cursor = 0;
-                    if !shift {
-                        tab.find_anchor = None;
-                    }
-                } else {
-                    self.find_move_h(pane, true, alt, shift);
-                }
-                cx.notify();
-            }
-            "right" => {
-                if cmd {
-                    let end = self
-                        .tab(pane)
-                        .find_query
-                        .as_ref()
-                        .map_or(0, |s| s.chars().count());
-                    let tab = self.tab_mut(pane);
-                    if shift && tab.find_anchor.is_none() {
-                        tab.find_anchor = Some(tab.find_cursor);
-                    }
-                    tab.find_cursor = end;
-                    if !shift {
-                        tab.find_anchor = None;
-                    }
-                } else {
-                    self.find_move_h(pane, false, alt, shift);
-                }
-                cx.notify();
-            }
-            "a" if cmd => {
-                let end = self
-                    .tab(pane)
-                    .find_query
-                    .as_ref()
-                    .map_or(0, |s| s.chars().count());
-                let tab = self.tab_mut(pane);
-                if end == 0 {
-                    tab.find_anchor = None;
-                } else {
-                    tab.find_anchor = Some(0);
-                    tab.find_cursor = end;
-                }
-                cx.notify();
-            }
-            "backspace" => {
-                if !self.find_delete_sel(pane) {
-                    let tab = self.tab_mut(pane);
-                    if tab.find_cursor > 0 {
-                        if let Some(s) = tab.find_query.as_mut() {
-                            let start = char_byte(s, tab.find_cursor - 1);
-                            let stop = char_byte(s, tab.find_cursor);
-                            s.replace_range(start..stop, "");
-                        }
-                        tab.find_cursor -= 1;
-                    }
-                }
-                self.recompute_find(pane);
-                self.update_content_search(pane, cx);
-                cx.notify();
-            }
-            "c" if cmd => {
-                let text = match self.find_sel(pane) {
-                    Some((lo, hi)) => self.tab(pane).find_query.as_ref().map(|s| {
-                        s[char_byte(s, lo)..char_byte(s, hi)].to_string()
-                    }),
-                    None => self.tab(pane).find_query.clone(),
-                };
-                if let Some(text) = text {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                }
-            }
-            "v" if cmd => {
-                if let Some(t) = cx.read_from_clipboard().and_then(|i| i.text()) {
-                    self.find_insert(pane, t.trim());
-                    self.recompute_find(pane);
-                    self.update_content_search(pane, cx);
-                    cx.notify();
-                }
-            }
-            _ => {
-                if cmd {
-                    return;
-                }
-                if let Some(ch) = ks.key_char.as_ref() {
-                    if !ch.is_empty() && !ch.chars().any(char::is_control) {
-                        self.find_insert(pane, ch);
-                        self.recompute_find(pane);
-                        self.update_content_search(pane, cx);
-                        cx.notify();
-                    }
-                }
-            }
-        }
     }
 
     // ----- tabs & split panes -----
@@ -6413,43 +6084,9 @@ impl Schnauz {
         self.split_epoch += 1;
     }
 
-    /// Record scroll activity on a pane's list (keeps its overlay scrollbar
-    /// visible) and make sure a low-rate ticker is alive to repaint once the
-    /// fade-out is due — without it the thumb would linger until the next
-    /// unrelated repaint.
-    fn mark_scrolled(&mut self, pane: usize, cx: &mut Context<Self>) {
+    /// Scrolling cancels delayed click-to-rename. Scrollbars remain visible.
+    fn mark_scrolled(&mut self, _pane: usize, _cx: &mut Context<Self>) {
         self.pending_click_rename = None;
-        {
-            let tab = self.tab_mut(pane);
-            tab.last_scroll = Instant::now();
-            tab.scroll_epoch += 1;
-        }
-        if self.fade_ticker {
-            return;
-        }
-        self.fade_ticker = true;
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(250))
-                    .await;
-                let all_faded = this.update(cx, |this, cx| {
-                    cx.notify();
-                    let done = this.panes.iter().flat_map(|p| p.tabs.iter()).all(|t| {
-                        t.last_scroll.elapsed().as_secs_f32() > SCROLLBAR_LINGER + SCROLLBAR_FADE
-                    });
-                    if done {
-                        this.fade_ticker = false;
-                    }
-                    done
-                });
-                match all_faded {
-                    Ok(false) => {}
-                    _ => break,
-                }
-            }
-        })
-        .detach();
     }
 
     /// Open a new tab in `pane`, starting in that pane's current directory.
@@ -6840,7 +6477,7 @@ impl Schnauz {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.suppress_entry_click || self.marquee_click_suppressed() {
+        if self.suppress_entry_click || self.scroll_drag.is_some() || self.hbar_drag.is_some() || self.marquee_click_suppressed() {
             return;
         }
         self.pending_click_rename = None;
@@ -6884,6 +6521,7 @@ impl Schnauz {
     /// would slide with the scroll — moving the box off the rows it had already
     /// swept and re-selecting the wrong ones.
     fn begin_marquee(&mut self, pane: usize, x: f32, y: f32, cx: &mut Context<Self>) {
+        if self.scroll_drag.is_some() || self.hbar_drag.is_some() { return; }
         if mq_log() {
             eprintln!("[mq] begin pane={pane} at ({x:.0},{y:.0})");
         }
@@ -7000,7 +6638,7 @@ impl Schnauz {
             st.base_handle.set_offset(point(x, px(-target)));
         }
         let _ = applied; // the content-space anchor is scroll-invariant
-        self.mark_scrolled(pane, cx); // show the scrollbar while auto-scrolling
+        self.mark_scrolled(pane, cx); // cancel delayed rename while auto-scrolling
         // Recompute the covered rows against the new scroll position.
         self.update_marquee(cur.0, cur.1, cx);
     }
@@ -7167,8 +6805,14 @@ impl Schnauz {
         self.active_pane = pane;
         match self.tab(pane).view {
             ViewMode::Icons => {
-                let cols = self.icon_cols(pane) as i32;
-                self.arrow_grid(pane, dx + dy * cols, cx);
+                let cols = self.icon_cols(pane);
+                let delta = if dy != 0 && !self.search_in_pane(pane) {
+                    let paths = self.display_paths(pane);
+                    self.tab(pane).anchor.as_ref().and_then(|a| paths.iter().position(|p| p == a))
+                        .map(|index| self.tab(pane).sticky_icon_vertical(index, dy, cols) as i32 - index as i32)
+                        .unwrap_or(0)
+                } else { dx + dy * cols as i32 };
+                self.arrow_grid(pane, delta, cx);
             }
             // Lists are 1-D: only up/down move.
             _ => {
@@ -7208,11 +6852,11 @@ impl Schnauz {
                 && self.tab(pane).current_dir.parent().is_some(),
         );
         let item = match view {
-            ViewMode::Icons => ni as usize / self.icon_cols(pane),
+            ViewMode::Icons => self.tab(pane).sticky_icon_row(ni as usize, self.icon_cols(pane)),
             _ => ni as usize + offset,
         };
         self.tab(pane).scroll_handle.scroll_to_item(item, ScrollStrategy::Center);
-        // Keyboard scrolling shows the overlay scrollbar too.
+        // Keyboard scrolling also cancels delayed rename.
         self.mark_scrolled(pane, cx);
         self.focus_entry(pane, target, cx);
     }
@@ -7316,23 +6960,24 @@ impl Schnauz {
                 None
             };
             let handle = page_img.or_else(|| lookup_preview(&preview_key).flatten());
-            let body: AnyElement = match handle {
+            let (body, visual_width): (AnyElement, gpui::Pixels) = match handle {
                 Some(handle) => {
                     let picture = video_preview::is_picture(&sel);
-                    let available = preview_panel::preview_width(self, self.panes.len() - 1)
+                    let available = preview_panel::preview_width(self, self.panes.len() - 1, cx)
                         - if picture { 1. } else { 17. };
                     let dimensions = native_preview::image_size(
                         handle.size(0), available, picture, self.preview_zoom.scale,
                     );
-                    div().relative().flex_none().w(dimensions.width).h(dimensions.height)
+                    let body = div().relative().flex_none().w(dimensions.width).h(dimensions.height)
                         .children(ui_checks::probe("preview-image"))
                         .child(img(ImageSource::Render(handle))
                             .object_fit(ObjectFit::Contain)
                             .w(dimensions.width).h(dimensions.height))
-                        .into_any_element()
+                        .into_any_element();
+                    (body, dimensions.width + px(if picture { 0. } else { 4. }))
                 },
                 // Not ready yet or unavailable → show the file's icon.
-                None => icon_element_sized(&sel, false, 96.0),
+                None => (icon_element_sized(&sel, false, 96.0), px(100.)),
             };
             let preview_box = div()
                 .id("visual-preview")
@@ -7362,6 +7007,10 @@ impl Schnauz {
                 .flex()
                 .items_center()
                 .justify_center()
+                // The scroll handle measures immediate children. Give this
+                // wrapper the full zoomed width so horizontal overflow is real,
+                // instead of clipping the larger image to the viewport width.
+                .w(visual_width)
                 .min_w_full()
                 .when(!video_preview::is_picture(&sel), |d| d.p(px(2.)))
                 .overflow_hidden()
@@ -7451,129 +7100,10 @@ impl Schnauz {
         }
 
         if p.info && tab.remote.is_none() {
-            col = col.child(native_preview::information(&sel, None, preview_panel::preview_width(self, self.panes.len() - 1) - if video_preview::is_picture(&sel) { 1. } else { 13. }));
+            col = col.child(native_preview::information(&sel, None, preview_panel::preview_width(self, self.panes.len() - 1, cx) - if video_preview::is_picture(&sel) { 1. } else { 13. }));
         }
 
         Some(col.into_any_element())
-    }
-
-    /// The floating filter box, anchored bottom-right while find is active.
-    fn render_find_box(&self, pane: usize, query: &str) -> impl IntoElement {
-        let t = theme();
-        let tab = self.tab(pane);
-        let count = tab.find_results.len();
-        // Operator awareness: colour the label when filters are active, and show
-        // a "searching…" state while a content: query resolves via Spotlight.
-        let fq = FilterQuery::parse(query);
-        let filtered = fq.has_local_filters() || fq.content.is_some();
-        let content_pending = fq
-            .content
-            .as_deref()
-            .is_some_and(|term| tab.content_for.as_deref() != Some(term));
-        // The editable text: placeholder, a highlighted selection span, or the
-        // text split around a static caret at the cursor.
-        let field = if query.is_empty() {
-            div()
-                .min_w(px(80.0))
-                .text_color(rgb(t.text_dim))
-                .child("filter…  kind: ext: size: date: content:")
-        } else if let Some((lo, hi)) = self.find_sel(pane) {
-            let (bl, bh) = (char_byte(query, lo), char_byte(query, hi));
-            div()
-                .flex()
-                .items_center()
-                .min_w(px(80.0))
-                .child(div().flex_none().child(query[..bl].to_string()))
-                .child(
-                    div()
-                        .flex_none()
-                        .bg(Theme::alpha(t.accent, 0x66))
-                        .rounded_sm()
-                        .child(query[bl..bh].to_string()),
-                )
-                .child(div().flex_none().child(query[bh..].to_string()))
-        } else {
-            let cursor = tab.find_cursor.min(query.chars().count());
-            let b = char_byte(query, cursor);
-            div()
-                .flex()
-                .items_center()
-                .min_w(px(80.0))
-                .child(div().flex_none().child(query[..b].to_string()))
-                .child(div().flex_none().w(px(1.5)).h(px(14.0)).bg(rgb(t.text)))
-                .child(div().flex_none().child(query[b..].to_string()))
-        };
-        div()
-            .absolute()
-            .bottom(px(16.0))
-            .right(px(16.0))
-            .flex()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .rounded_lg()
-            .bg(Theme::alpha(t.surface, 0xf2))
-            .border_1()
-            .border_color(rgb(t.accent))
-            .shadow_lg()
-            .text_color(rgb(t.text))
-            .child(
-                div()
-                    .flex_none()
-                    .text_color(rgb(if filtered { t.accent } else { t.text_muted }))
-                    .child("Filter"),
-            )
-            .child(field)
-            .child(
-                div()
-                    .flex_none()
-                    .text_color(rgb(t.text_muted))
-                    .text_size(px(UI_SMALL_FONT_SIZE))
-                    .child(if content_pending {
-                        "searching…".to_string()
-                    } else {
-                        format!("{count}")
-                    }),
-            )
-    }
-
-    /// Bottom-right filter affordance for a pane. When a find is active it shows
-    /// the live editable box; otherwise it shows a compact, clickable "Filter"
-    /// pill so mouse users can start filtering without pressing "/".
-    fn render_filter_box(&self, pane: usize, cx: &Context<Self>) -> AnyElement {
-        let t = theme();
-        match self.tab(pane).find_query.clone() {
-            Some(q) => self.render_find_box(pane, &q).into_any_element(),
-            // The always-on pill can be hidden in Settings; "/" still opens it.
-            None if !prefs().show_filter_button => gpui::Empty.into_any_element(),
-            None => div()
-                .id(("filter-pill", pane))
-                .absolute()
-                .bottom(px(16.0))
-                .right(px(16.0))
-                .flex()
-                .items_center()
-                .gap_1()
-                .px_3()
-                .py_1()
-                .rounded_lg()
-                .cursor_pointer()
-                .bg(Theme::alpha(t.surface, 0xe6))
-                .border_1()
-                .border_color(rgb(t.border_strong))
-                .shadow_lg()
-                .text_color(rgb(t.text_muted))
-                .hover(|s| s.text_color(rgb(t.text)).border_color(rgb(t.accent)))
-                .child(div().flex_none().text_size(px(UI_SMALL_FONT_SIZE)).child("🔍"))
-                .child(div().flex_none().child("Filter"))
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.active_pane = pane;
-                    this.open_find(pane, cx);
-                    window.focus(&this.focus);
-                }))
-                .into_any_element(),
-        }
     }
 
     /// Load native icons only for rows laid out this frame; decode off-thread.
@@ -8472,10 +8002,12 @@ impl Schnauz {
                     .flex_col()
                     .flex_1()
                     .min_h_0()
-                    .child(body)
+                    .child(div().relative().flex().flex_col().flex_1().min_h_0().min_w_0()
+                        .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, window, cx| {
+                            this.hover_browser_focus(pane, event, window, cx);
+                        })).child(body))
                     .children(self.rename_error_pill(pane))
-                    .when(!searching, |body| body.child(self.render_filter_box(pane, cx)))
-                    .children(self.render_copy_feedback(pane)),
+                    .children(self.render_copy_feedback(pane, cx)),
             )
             .children(self.render_terminal_panel(pane, cx));
         let mut body_row = div().flex().flex_1().min_h_0().min_w_0().child(browser);
@@ -8483,6 +8015,11 @@ impl Schnauz {
         if pane + 1 == self.panes.len() {
             let preview = self.render_inspector(cx);
             let tools = self.render_space_map(cx).or_else(|| self.todoist.open.then(|| todoist_window::panel(preview_panel::tools_content_width(self, pane, preview.is_some()),cx)));
+            let tools = if time_tracking_ui::docked(self.projects.active, cx) {
+                Some(div().size_full().flex().flex_col().min_h_0()
+                    .when_some(tools, |d, content| d.child(div().flex_1().min_h_0().overflow_hidden().child(content)))
+                    .child(time_tracking_ui::panel(self.projects.active, cx)).into_any_element())
+            } else { tools };
             if let Some(panels) = self.render_side_panels(preview, tools, pane, cx) {
                 body_row = body_row.child(panels);
             }
@@ -8694,17 +8231,19 @@ impl Schnauz {
                                 let icon = icon_element(&parent, true);
                                 items.push(
                                     file_row(
-                                        &Entry { name: "..".into(), is_dir: true, size: 0, modified: None, created: None, mode: None, loaded: true, hidden_flag: false },
+                                        &Entry { name: "..".into(), is_dir: true, link: None, size: 0, modified: None, modified_date_only: false, created: None, mode: None, loaded: true, hidden_flag: false },
                                         &base_dir,
                                         row_key,
                                         false,
                                         false,       // ".." is never the menu target
+                                        false,       // parent is never a quick-find match
                                         widths,
                                         icon,
                                         CloudSync::Local,
                                         true,        // accepts drops (move into parent)
                                         None,        // never renamed
                                         None,        // parent is never version-marked
+                                        None,        // parent is never sticky
                                         cx.listener({
                                             let parent = parent.clone();
                                             move |this, _: &ClickEvent, _, cx| {
@@ -8772,21 +8311,25 @@ impl Schnauz {
                             } else {
                                 Some(target.clone())
                             };
-                            let icon = icon_element(&target, is_dir);
+                            let icon = link_badged_icon(icon_element(&target, is_dir), entry.link.is_some(), 16.);
+                            let sticky_target = target.clone();
 
                             items.push(
+                                this.sticky_target(pane, sticky_target, false,
                                 file_row(
                                     entry,
                                     &base_dir,
                                     row_key,
                                     is_selected,
                                     ctx_active,
+                                    this.quick_find_matches(pane, &entry.name),
                                     widths,
                                     icon,
                                     cloud,
                                     entry.is_folder(), // ordinary folders accept drops
                                     rename_text,       // editable name when renaming
                                     this.version_marker(pane, &ctx_target),
+                                    this.sticky_handle(pane, &ctx_target, cx),
                                     cx.listener(move |this, ev: &ClickEvent, window, cx| {
                                         this.click_entry(pane, target.clone(), is_dir, false, ev, window, cx);
                                     }),
@@ -8842,7 +8385,7 @@ impl Schnauz {
                                         }
                                     }),
                                 )
-                                .into_any_element(),
+                                .into_any_element(), cx),
                             );
                         }
                         items
@@ -8863,7 +8406,7 @@ impl Schnauz {
                             ) // close hscroll .child(content)
                     ) // close body .child(hscroll)
                     // Vertical scrollbar, pinned to the pane's right edge.
-                    .children(self.scrollbar_thumb(pane, cx))
+                    .child(self.scrollbar_thumb(pane, COLUMN_HEADER_H, if h_overflows {12.} else {0.}, cx))
                     // Horizontal scrollbar, shown when columns overflow.
                     .children(self.h_scrollbar_thumb(pane, total_w, cx))
                     // (The filter box is rendered once at the pane level.)
@@ -8883,7 +8426,8 @@ impl Schnauz {
         } else {
             tab.entries.len()
         };
-        let rows = n.div_ceil(cols);
+        let pinned = tab.visible_sticky_count();
+        let rows = pinned.div_ceil(cols) + (n - pinned).div_ceil(cols);
 
         div()
             .relative()
@@ -8909,10 +8453,7 @@ impl Schnauz {
                         for row in range {
                             let mut cells: Vec<AnyElement> = Vec::with_capacity(cols);
                             for c in 0..cols {
-                                let i = row * cols + c;
-                                if i >= n {
-                                    break;
-                                }
+                                let Some(i) = tab.sticky_icon_index(row, c, cols) else { break; };
                                 let tab = this.tab(pane);
                                 let entry_ix = if find_active { tab.find_results[i] } else { i };
                                 let entry = &tab.entries[entry_ix];
@@ -8924,9 +8465,13 @@ impl Schnauz {
                                 let edit = this.rename_text(pane, &target, cx);
                                 let cloud = if this.tab(pane).remote.is_none() { this.cloud_state(&target, is_dir, cx) } else { CloudSync::Local };
                                 let marker = this.version_marker(pane, &target);
-                                cells.push(icon_cell(pane, name, target, is_dir, selected, ctx_active, cell_w, edit, marker, cloud, cx));
+                                let handle = this.sticky_handle(pane, &target, cx);
+                                let matched = this.quick_find_matches(pane, &name);
+                                let cell = icon_cell(pane, name, target.clone(), is_dir, entry.link.is_some(), selected, ctx_active, matched, cell_w, edit, marker, cloud, handle, cx);
+                                cells.push(this.sticky_target(pane, target, true, cell, cx));
                             }
-                            out.push(div().flex().w_full().px_2().children(cells).into_any_element());
+                            let divider = pinned > 0 && pinned < n && row + 1 == pinned.div_ceil(cols);
+                            out.push(sticky::divider(div().relative().flex().w_full().px_2().children(cells), divider).into_any_element());
                         }
                         out
                     }),
@@ -8939,7 +8484,7 @@ impl Schnauz {
                     cx.notify()
                 })),
             )
-            .children(self.scrollbar_thumb(pane, cx))
+            .child(self.scrollbar_thumb(pane, 0., 0., cx))
             // (The filter box is rendered once at the pane level.)
             .into_any_element()
     }
@@ -8974,14 +8519,21 @@ impl Schnauz {
                 .right_0()
                 .bottom_0()
                 .h(px(12.0))
+                .occlude().cursor_default()
                 .bg(rgb(theme().sidebar))
                 .border_t_1().border_color(rgb(theme().border))
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                    cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                        window.focus(&this.focus);
                         this.begin_hbar_drag(pane, total_w, f32::from(ev.position.x), cx);
                     }),
                 )
+                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                    this.hbar_drag = None; cx.stop_propagation(); cx.notify();
+                }))
+                .on_click(|_, _, cx| cx.stop_propagation())
                 .child(
                     div()
                         .absolute()
@@ -9004,6 +8556,11 @@ impl Schnauz {
             return;
         };
         self.active_pane = pane;
+        self.pending_click_rename = None;
+        self.drag_candidate = None;
+        self.marquee = None;
+        self.scroll_drag = None;
+        self.suppress_entry_click = true;
         let h = self.tab(pane).h_scroll.clone();
         let origin = f64::from(h.bounds().origin.x) as f32;
         let local = x - origin;
@@ -9045,17 +8602,14 @@ impl Schnauz {
 impl Render for Schnauz {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_local_listings(cx);
+        self.reconcile_quick_find();
         if self.apply_project_file_filters() && self.palette_open { self.refresh_file_search(cx); }
         self.sync_version_marks();
         self.publish_project_activity(cx);
-        native_file_drag::install(window);
+        native_file_drag::install(window, cx);
         if std::mem::take(&mut self.dismiss_space_map) { self.close_space_map(cx); }
         self.restore_terminals(window, cx);
         self.sync_tools_window(window, cx);
-        if self.todoist.open && window.is_window_active() {
-            let owner = cx.entity().downgrade();
-            window.on_next_frame(move |_, cx| { let _ = owner.update(cx, |this, cx| this.ensure_todoist(false, cx)); });
-        }
         self.sync_video_preview(cx);
         self.sync_preview_zoom();
         self.sync_text_preview();
@@ -9087,6 +8641,7 @@ impl Render for Schnauz {
             // Focusable so it receives key events (Cmd+P, palette typing).
             .track_focus(&self.focus)
             .capture_any_mouse_down(cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                time_tracking_ui::activity(this.projects.active, cx);
                 for pane in &mut this.panes {
                     for tab in &mut pane.tabs {
                         let outside = tab.path_layout.borrow().as_ref().is_some_and(|layout| !layout.bounds.dilate(px(8.)).contains(&ev.position));
@@ -9101,10 +8656,12 @@ impl Render for Schnauz {
                 this.pending_click_rename = None;
                 this.suppress_entry_click = false;
             }))
-            .capture_key_down(cx.listener(|this, _, _, _| {
+            .capture_key_down(cx.listener(|this, _, _, cx| {
+                time_tracking_ui::activity(this.projects.active, cx);
                 this.pending_click_rename = None;
             }))
-            .on_scroll_wheel(cx.listener(|this, _: &ScrollWheelEvent, _, _| {
+            .on_scroll_wheel(cx.listener(|this, _: &ScrollWheelEvent, _, cx| {
+                time_tracking_ui::activity(this.projects.active, cx);
                 this.pending_click_rename = None;
             }))
             .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| { this.text_preview_key(ev, cx); }))
@@ -9175,6 +8732,7 @@ impl Render for Schnauz {
                 this.drop_sidebar_paths(drag, window, cx);
             }))
             .capture_any_mouse_up(cx.listener(|this, event: &gpui::MouseUpEvent, window, cx| {
+                if event.button == MouseButton::Left { this.project_name_editor.dragging = false; }
                 if this.preview_zoom.end_pan(event.button) { cx.notify(); }
                 this.finish_sidebar_file_drop(event, window, cx);
             }))
@@ -9184,6 +8742,19 @@ impl Render for Schnauz {
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
                 let x = f64::from(ev.position.x) as f32;
                 let y = f64::from(ev.position.y) as f32;
+                if this.drag_project_name(ev, cx) { cx.stop_propagation(); return; }
+                if this.scroll_drag.is_some() {
+                    if ev.pressed_button == Some(MouseButton::Left) { this.update_scroll_drag(y, cx); }
+                    else { this.end_scroll_drag(cx); }
+                    cx.stop_propagation();
+                    return;
+                }
+                if this.hbar_drag.is_some() {
+                    if ev.pressed_button == Some(MouseButton::Left) { this.update_hbar_drag(x, cx); }
+                    else { this.hbar_drag = None; cx.notify(); }
+                    cx.stop_propagation();
+                    return;
+                }
                 if this.preview_zoom.pan.is_some() {
                     if !this.native_preview_blocked() && this.preview_zoom.move_pan(ev) {
                         cx.notify();
@@ -9210,8 +8781,6 @@ impl Render for Schnauz {
                     }
                 }
                 this.update_resize(x, cx);
-                this.update_scroll_drag(y, cx);
-                this.update_hbar_drag(x, cx);
                 this.update_divider(x, cx);
                 this.update_marquee(x, y, cx);
                 if !cx.has_active_drag() {
@@ -10328,6 +9897,7 @@ fn file_row(
     // True while this row is the open right-click menu's target — keep it looking
     // hovered even though the cursor is over the menu backdrop.
     ctx_active: bool,
+    quick_match: bool,
     widths: &ListLayout,
     icon: AnyElement,
     cloud: CloudSync,
@@ -10339,6 +9909,7 @@ fn file_row(
     // Invalid names render the field in red (the pane shows the reason).
     rename_text: Option<rename_ui::EditText>,
     marker: Option<u32>,
+    sticky_handle: Option<AnyElement>,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_name_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     on_right: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
@@ -10352,6 +9923,7 @@ fn file_row(
     let t = theme();
     let name = &entry.name;
     let name_el = div().id(("entry-name", key)).flex_1().min_w_0().flex()
+        .when(quick_match, |d| d.rounded_sm().bg(Theme::alpha(CHROME_HIGHLIGHT, 0x38)))
         .when(cloud != CloudSync::Local, |d| d.relative().children(ui_checks::probe("cloud-name-text")))
         .child(rename_ui::marked_entry_name(name, rename_text, marker, matches!(cloud,CloudSync::Syncing|CloudSync::SyncError)))
         .on_click(on_name_click);
@@ -10364,6 +9936,7 @@ fn file_row(
         .when(accept_drop, |c| c.rounded_sm().on_drop(on_drop_file).on_drag_move::<ExternalPaths>(on_drag_move))
         .child(div().flex_none().w(px(ICON_W)).flex().justify_center().child(icon))
         .child(name_el)
+        .children(sticky_handle)
         .children(cloud_status_icon(cloud, 14.))
         .into_any_element();
     let mut name_cell = Some(name_cell);
@@ -10375,6 +9948,7 @@ fn file_row(
             .child(list_ui::column_text(entry, spec.column, location)).into_any_element()
     }).collect();
     div().id(("row", key)).flex().items_center().px_3().h(px(ROW_H)).cursor_pointer()
+        .when(quick_match && !selected, |s| s.bg(Theme::alpha(CHROME_HIGHLIGHT, 0x18)))
         .when(selected, |s| s.bg(rgb(t.selected)))
         .when(ctx_active && !selected, |s| s.bg(rgb(t.hover)))
         // GPUI's active style latches on every mouse button, but AppKit menu
@@ -10393,12 +9967,15 @@ fn icon_cell(
     name: String,
     target: PathBuf,
     is_dir: bool,
+    is_link: bool,
     selected: bool,
     ctx_active: bool,
+    quick_match: bool,
     cell_w: f32,
     edit: Option<rename_ui::EditText>,
     marker: Option<u32>,
     cloud: CloudSync,
+    sticky_handle: Option<AnyElement>,
     cx: &Context<Schnauz>,
 ) -> AnyElement {
     let t = theme();
@@ -10422,6 +9999,7 @@ fn icon_cell(
         .p_2()
         .rounded_md()
         .cursor_pointer()
+        .when(quick_match && !selected, |s| s.bg(Theme::alpha(CHROME_HIGHLIGHT, 0x18)))
         .when(selected, |s| s.bg(rgb(t.selected)))
         .when(ctx_active && !selected, |s| s.bg(rgb(t.hover)))
         // As in List, native context menus must not latch GPUI's active colour.
@@ -10453,16 +10031,19 @@ fn icon_cell(
                 cx.stop_propagation();
             }),
         )
+        .relative()
+        .children(sticky_handle.map(|handle| div().absolute().top_1().right_1().child(handle)))
         .child(
             div()
                 .h(px(56.0))
                 .flex()
                 .items_center()
-                .child(cloud_badged_icon(icon_element_sized(&target, is_dir, 52.0), cloud, 16.0)),
+                .child(cloud_badged_icon(link_badged_icon(icon_element_sized(&target, is_dir, 52.0), is_link, 52.), cloud, 16.0)),
         )
         .child(
             div()
                 .id("icon-name")
+                .when(quick_match, |d| d.rounded_sm().bg(Theme::alpha(CHROME_HIGHLIGHT, 0x38)))
                 .w_full()
                 .min_w_0()
                 .flex()
@@ -10548,6 +10129,18 @@ fn kind_label(name: &str, is_dir: bool) -> String {
 /// ordinary folders share the generic folder icon.
 fn icon_element(path: &Path, is_dir: bool) -> AnyElement {
     icon_element_sized(path, is_dir, 16.0)
+}
+
+/// A small outlined arrow badge at the lower left, preserving the native
+/// folder/file silhouette and leaving the cloud badge's corner available.
+fn link_badged_icon(icon: AnyElement, is_link: bool, size: f32) -> AnyElement {
+    if !is_link { return icon; }
+    let badge = if size > 24. { 17. } else { 9. };
+    div().relative().flex_none().w(px(size)).h(px(size)).child(icon)
+        .child(div().absolute().left_0().bottom_0().w(px(badge)).h(px(badge))
+            .rounded_sm().bg(rgb(theme().bg)).flex().items_center().justify_center()
+            .child(ui_icon(Icon::LinkArrow, badge, rgb(CHROME_HIGHLIGHT))))
+        .into_any_element()
 }
 
 /// Cloud membership and local materialization, without claiming remote sync or
@@ -11363,6 +10956,10 @@ fn sftp_batch_cancellable(
         p.set("Connecting / loading folder…");
     }
     let mut cmd = Command::new("/usr/bin/sftp");
+    // Parse stable English month names while keeping Unicode filenames
+    // printable. Do not let an inherited LC_ALL override these categories.
+    // Keep the timezone shared with the parser; display uses the Mac locale.
+    cmd.env_remove("LC_ALL").env("LC_TIME", "C").env("LC_CTYPE", "UTF-8");
     cmd.args(["-b", "-"]);
     cmd.args(ssh_options(server, use_system));
     if server.port != 0 {
@@ -11627,7 +11224,7 @@ fn start_os_file_drag(view_ptr: *mut std::ffi::c_void, paths: &[PathBuf]) {
 /// A minimal, non-interactive vertical scrollbar thumb for any tracked
 /// `ScrollHandle`. Returns `None` when the content fits (nothing to scroll).
 /// Used by the palette and Settings (the main list has its own
-/// richer draggable/fading bar).
+/// interactive persistent bar).
 fn static_scrollbar_thumb(base: &gpui::ScrollHandle) -> Option<AnyElement> {
     let viewport = f64::from(base.bounds().size.height) as f32;
     let max = f64::from(base.max_offset().height) as f32;
@@ -12176,35 +11773,6 @@ fn fuzzy_score(needle: &str, haystack: &str) -> Option<i32> {
     Some(score)
 }
 
-/// Full-text search inside `dir` via Spotlight: paths whose content matches
-/// `term`. Scoped with `-onlyin` so it's fast and folder-local. Returns the
-/// absolute paths (the in-folder filter keeps only direct children of these).
-fn mdfind_content(dir: &Path, term: &str) -> HashSet<PathBuf> {
-    let term = term.trim();
-    let mut out = HashSet::new();
-    if term.is_empty() {
-        return out;
-    }
-    // Case- and diacritic-insensitive substring match on indexed text content.
-    let query = format!("kMDItemTextContent == \"*{}*\"cd", term.replace('"', ""));
-    let output = Command::new("mdfind")
-        .arg("-onlyin")
-        .arg(dir)
-        .arg(query)
-        .stderr(Stdio::null())
-        .output();
-    if let Ok(o) = output {
-        if o.status.success() {
-            for line in String::from_utf8_lossy(&o.stdout).lines() {
-                if !line.is_empty() {
-                    out.insert(PathBuf::from(line));
-                }
-            }
-        }
-    }
-    out
-}
-
 /// A short, human label for a path (last component; "/" → "Macintosh HD").
 fn path_label(p: &Path) -> String {
     if p == Path::new("/") {
@@ -12404,8 +11972,8 @@ fn save_prefs(p: &Prefs) {
             let _ = fs::create_dir_all(parent);
         }
         let mut body = format!(
-            "preview={}\npreview_pages={}\ninfo={}\nshow_parent={}\nsidebar_collapsed={}\nsearch_history={}\ngroups_enabled={}\nshow_filter_button={}\nshow_fps={}\nscript_actions={}\nssh_use_system={}\nssh_configured={}\n",
-            p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.search_history, p.groups_enabled, p.show_filter_button, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured
+            "preview={}\npreview_pages={}\ninfo={}\nshow_parent={}\nsidebar_collapsed={}\nsearch_history={}\ngroups_enabled={}\nshow_fps={}\nscript_actions={}\nssh_use_system={}\nssh_configured={}\n",
+            p.preview, p.preview_pages, p.info, p.show_parent, p.sidebar_collapsed, p.search_history, p.groups_enabled, p.show_fps, p.script_actions, p.ssh_use_system, p.ssh_configured
         );
         body.push_str(&format!("preview_width={}\ntools_width={}\n",p.preview_width,p.tools_width));
         body.push_str(&format!("drive_warning={}\ndrive_critical={}\ndrive_free_percent={}\n", p.drive_warning, p.drive_critical, p.drive_free_percent));
@@ -12487,7 +12055,6 @@ fn load_prefs() -> Prefs {
 
                     "palette_history" | "search_history" => p.search_history = on,
                     "groups_enabled" => p.groups_enabled = on,
-                    "show_filter_button" => p.show_filter_button = on,
                     "show_fps" => p.show_fps = on,
                     "script_actions" => p.script_actions = on,
                     "ssh_use_system" => p.ssh_use_system = on,
@@ -12503,6 +12070,9 @@ fn load_prefs() -> Prefs {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s|s == "--time-tracking-hook") {
+        time_tracking_bridge::hook(); return;
+    }
     if args.get(1).is_some_and(|s| s == "--version") {
         println!("Schnauz {}", env!("CARGO_PKG_VERSION")); return;
     }

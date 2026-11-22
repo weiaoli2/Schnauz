@@ -118,11 +118,12 @@ impl Schnauz {
         .detach();
     }
 
-    pub(super) fn render_copy_feedback(&self, pane: usize) -> Option<AnyElement> {
-        let (message, start) = self.tab(pane).copy_feedback.as_ref()?;
-        if start.elapsed() >= Duration::from_secs(6) {
-            return None;
-        }
+    pub(super) fn render_copy_feedback(&self, pane: usize, cx: &Context<Self>) -> Option<AnyElement> {
+        let message = self.tab(pane).copy_feedback.as_ref()
+            .filter(|(_, start)| start.elapsed() < Duration::from_secs(6))
+            .map(|(message, _)| format!("✓ {message}"));
+        let quick = self.render_quick_find(pane, cx);
+        if message.is_none() && quick.is_none() { return None; }
         let t = theme();
         Some(
             div()
@@ -130,6 +131,7 @@ impl Schnauz {
                 .left_3()
                 .bottom_3()
                 .max_w(relative(0.75))
+                .min_w_0().flex().flex_col().gap_1()
                 .px_3()
                 .py_2()
                 .rounded_lg()
@@ -139,7 +141,8 @@ impl Schnauz {
                 .shadow_md()
                 .text_size(px(UI_SMALL_FONT_SIZE))
                 .text_color(rgb(t.text))
-                .child(div().truncate().child(format!("✓ {message}")))
+                .children(quick)
+                .children(message.map(|message| div().truncate().child(message)))
                 .into_any_element(),
         )
     }
@@ -335,6 +338,13 @@ impl Schnauz {
                     })),
             ))
             .child(div().flex_1().min_w_0())
+            .child(div().id(("time-tracking",pane)).h(px(22.)).w(px(26.)).flex().items_center().justify_center().rounded_md().cursor_pointer()
+                .hover(|d|d.bg(rgb(t.hover)))
+                .child(ui_icon(Icon::Stopwatch,16.,rgb(if time_tracking_ui::enabled(self.projects.active,cx) {0x239b56} else {t.text_muted})))
+                .tooltip(tip(if time_tracking_ui::enabled(self.projects.active,cx) {"Time Tracking is enabled for this project"} else {"Add Time Tracking to this project"}))
+                .on_click(cx.listener(|this,_:&ClickEvent,window,cx|{
+                    if let Err(e)=time_tracking_ui::show(this.projects.active,window,cx){this.set_notice(e,cx);}
+                })))
             .when(tab.remote.is_none(), |d| d.child(
                 div().id(("inspect-storage", pane)).h(px(22.)).px(px(6.)).flex().items_center().gap(px(6.)).rounded_md().cursor_pointer()
                     .hover(|s| s.bg(rgb(t.hover))).tooltip(tip("Disk Usage…"))
@@ -402,7 +412,7 @@ impl Schnauz {
         window.focus(&self.focus);
         self.new_text_file = None;
         self.project_rename = None;
-        self.project_name_selected = false;
+        self.project_name_editor.reset("", false);
         self.project_dialog = Some(String::new());
         self.project_dialog_error = self.project_load_error.clone();
         self.context_menu = None;
@@ -416,7 +426,7 @@ impl Schnauz {
         self.open_project_dialog(window, cx);
         self.project_dialog = Some(name.clone());
         self.project_rename = Some((id, name));
-        self.project_name_selected = true;
+        self.project_name_editor.reset(self.project_dialog.as_deref().unwrap_or_default(), true);
     }
 
     pub(super) fn persist_library(&mut self, candidate: Library, cx: &mut Context<Self>) -> Result<(), String> {
@@ -508,6 +518,7 @@ impl Schnauz {
         // Persist the outgoing layout and destination together before switching.
         self.persist_library(library, cx)?;
         self.apply_project_switch(old, &available, cx);
+        time_tracking_ui::activity(id, cx);
         Ok(())
     }
 
@@ -539,7 +550,6 @@ impl Schnauz {
             self.sync_terminal_directory(pane);
         }
         self.saved_session = self.session_string();
-        self.ensure_todoist(false, cx);
         cx.notify();
     }
 
@@ -639,57 +649,17 @@ impl Schnauz {
     }
 
     pub(super) fn handle_project_key(&mut self, ev: &KeyDownEvent, cx: &mut Context<Self>) {
-        let key = &ev.keystroke;
-        match key.key.as_str() {
-            "escape" => {
-                self.project_dialog = None;
-                cx.notify();
-            }
+        match ev.keystroke.key.as_str() {
+            "escape" => { self.project_dialog = None; self.project_name_editor.dragging = false; cx.notify(); }
             "enter" => self.save_project(cx),
-            "a" if key.modifiers.platform => {
-                self.project_name_selected = true;
-                cx.notify();
-            }
-            "c" | "x" if key.modifiers.platform => {
-                if self.project_name_selected {
-                    if let Some(name) = self.project_dialog.as_mut() {
-                        cx.write_to_clipboard(ClipboardItem::new_string(name.clone()));
-                        if key.key == "x" { name.clear(); }
-                    }
-                }
-                cx.notify();
-            }
-            "backspace" | "delete" => {
+            _ => {
                 if let Some(name) = self.project_dialog.as_mut() {
-                    if self.project_name_selected { name.clear(); } else { name.pop(); }
-                }
-                self.project_name_selected = false;
-                cx.notify();
-            }
-            "v" if key.modifiers.platform => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    if let Some(name) = self.project_dialog.as_mut() {
-                        if self.project_name_selected { name.clear(); }
-                        name.push_str(text.trim());
-                        self.project_name_selected = false;
-                    }
+                    self.project_name_editor.key(name, &ev.keystroke, cx);
                     cx.notify();
                 }
             }
-            _ if !key.modifiers.platform && !key.modifiers.control => {
-                if let Some(text) = &key.key_char {
-                    if !text.chars().any(char::is_control) {
-                        if let Some(name) = self.project_dialog.as_mut() {
-                            if self.project_name_selected { name.clear(); }
-                            name.push_str(text);
-                            self.project_name_selected = false;
-                        }
-                        cx.notify();
-                    }
-                }
-            }
-            _ => {}
         }
+        cx.stop_propagation();
     }
 
     pub(super) fn toggle_schnauz_split(&mut self, cx: &mut Context<Self>) {
@@ -1141,7 +1111,6 @@ impl Schnauz {
 
     pub(super) fn render_project_dialog(&self, cx: &Context<Self>) -> AnyElement {
         let t = theme();
-        let name = self.project_dialog.clone().unwrap_or_default();
         let renaming = self.project_rename.is_some();
         div()
             .absolute()
@@ -1186,32 +1155,7 @@ impl Schnauz {
                         if renaming { "Choose a new name. Your favourites, tabs and linked tasks stay with this project." }
                         else { "Your own favourites, tabs and split panes. Changes are remembered automatically." },
                     ))
-                    .child(
-                        div()
-                            .h(px(42.0))
-                            .px_3()
-                            .flex()
-                            .items_center()
-                            .rounded_lg()
-                            .bg(rgb(t.bg))
-                            .border_1()
-                            .border_color(rgb(t.accent))
-                            .child(
-                                div()
-                                    .when(self.project_name_selected, |d| d.bg(rgb(t.selected)))
-                                    .text_color(rgb(if name.is_empty() {
-                                        t.text_dim
-                                    } else {
-                                        t.text
-                                    }))
-                                    .child(if name.is_empty() {
-                                        "Project name".into()
-                                    } else {
-                                        name
-                                    }),
-                            )
-                            .child(div().w(px(1.0)).h(px(17.0)).bg(rgb(t.accent))),
-                    )
+                    .child(self.render_project_name_editor(cx))
                     .children(self.project_dialog_error.as_ref().map(|error| {
                         div()
                             .text_size(px(UI_SMALL_FONT_SIZE))

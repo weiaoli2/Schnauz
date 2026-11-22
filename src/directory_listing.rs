@@ -108,8 +108,10 @@ pub(super) fn read_cancellable(dir: &Path, full: bool, cancel: &AtomicBool) -> s
         let is_dir=if kind.is_symlink() {md.as_ref().is_some_and(|m|m.is_dir())} else {kind.is_dir()};
         entries.push(Entry {
             name,is_dir,
+            link:kind.is_symlink().then_some(if is_dir {remote_links::Target::Folder} else if md.as_ref().is_some_and(|m|m.is_file()) {remote_links::Target::File} else {remote_links::Target::Unavailable}),
             size:md.as_ref().map_or(0,|m|m.len()),
             modified:md.as_ref().and_then(|m|m.modified().ok()),
+            modified_date_only:false,
             created:md.as_ref().and_then(|m|m.created().ok()),
             mode:md.as_ref().map(|m|{use std::os::unix::fs::PermissionsExt;m.permissions().mode()}),
             loaded:full,

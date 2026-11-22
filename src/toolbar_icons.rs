@@ -28,6 +28,7 @@ pub(super) enum Icon {
     Project,
     Settings,
     Storage,
+    Stopwatch,
     Drive,
     Eject,
     Globe,
@@ -38,6 +39,8 @@ pub(super) enum Icon {
     Check,
     PinDocked,
     PinFloating,
+    Link,
+    LinkArrow,
 }
 
 thread_local! { static APPLE_SYMBOLS: RefCell<HashMap<(&'static str, [u32; 4]), Arc<RenderImage>>> = RefCell::new(HashMap::new()); }
@@ -89,6 +92,7 @@ fn apple_symbol(name: &'static str, color: Rgba) -> Option<Arc<RenderImage>> {
 
 pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
     let symbol = match icon {
+        Icon::Stopwatch => apple_symbol("stopwatch", color),
         Icon::FolderPlus => apple_symbol("folder.badge.plus", color),
         Icon::FilePlus => apple_symbol("doc.badge.plus", color),
         Icon::Share => apple_share(color),
@@ -103,6 +107,7 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
         Icon::PinDocked => apple_symbol("pin", color),
         Icon::PinFloating => apple_symbol("pin.slash", color),
         Icon::Sidebar => apple_symbol("sidebar.left", color),
+        Icon::Link => apple_symbol("link", color),
         Icon::History => apple_symbol("clock.arrow.circlepath", color),
         Icon::Eject => apple_symbol("eject", color),
         _ => None,
@@ -161,6 +166,29 @@ pub(super) fn ui_icon(icon: Icon, size: f32, color: Rgba) -> AnyElement {
                 }};
             }
             match icon {
+                Icon::Stopwatch => {
+                    circle!(10,11,6.5);
+                    line!(10,11;10,7);
+                    line!(8,2;12,2);
+                    line!(10,2;10,4);
+                    line!(15,5;17,3);
+                }
+                Icon::Link => {
+                    path.move_to(p(12., 13.));
+                    path.cubic_bezier_to(p(7., 9.), p(10., 14.), p(7., 12.));
+                    path.line_to(p(12., 4.));
+                    path.cubic_bezier_to(p(17., 9.), p(15., 1.), p(20., 6.));
+                    path.line_to(p(15., 11.));
+                    path.move_to(p(8., 7.));
+                    path.cubic_bezier_to(p(13., 11.), p(10., 6.), p(13., 8.));
+                    path.line_to(p(8., 16.));
+                    path.cubic_bezier_to(p(3., 11.), p(5., 19.), p(0., 14.));
+                    path.line_to(p(5., 9.));
+                }
+                Icon::LinkArrow => {
+                    line!(3,16;3,10;16,10);
+                    line!(11,5;16,10;11,15);
+                }
                 Icon::Question => {
                     line!(6,6;6,5;8,3;12,3;14,5;14,7;10,10;10,12);
                     circle!(10,16,0.6);

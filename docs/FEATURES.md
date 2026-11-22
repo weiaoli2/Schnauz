@@ -108,6 +108,30 @@ existing tmux sessions and other remote shells do not automatically report folde
 The authenticated transport is not reused after its SSH session ends. SFTP
 listings reject paths containing line breaks instead of interpreting extra commands.
 
+Hover over terminal content to type there; hover over the file area to return
+keyboard focus to browsing. This works within the active Schnauz window and
+pauses during editing, menus, composition or drags. The terminal supports the
+current macOS input source, including Chinese composition and candidate selection;
+unconfirmed composition stays local until the chosen text is committed.
+
+Symbolic links show a small blue arrow badge on their file or folder icon in
+List and Icons. SSH folder links navigate to their contents; file links open
+their target through normal remote-file handling. Target detection reads SFTP
+metadata over the existing connection. Unresolved links show an error when opened
+and cannot trigger automatic preview downloads.
+
+**Quick filename highlighting:** click the file pane and type a name or part of
+one. A small box appears where copy feedback is shown. More letters extend one
+case-insensitive substring, with no special search syntax. Matching names are
+highlighted and the first match scrolls to the top; all files, sticky ordering,
+sorting and your selection stay in place. Backspace edits; Escape or × clears.
+Available in List, Icons and loaded search results, including SSH listings.
+
+File-area vertical scrollbars stay visible, with a subdued thumb when all items
+fit. Drag the thumb or click its track to scroll without changing file selection.
+List, Icons and search results share this behavior; wide lists retain a separate
+horizontal scrollbar beneath the rows.
+
 The top search bar defaults to **Current Folder + File**. Current Folder includes
 subfolders; Drive searches the containing volume. Names match literal parts without
 fuzzy guesses, ignoring case. Spaces mean AND: `test .txt` requires `test` in the
@@ -128,21 +152,29 @@ restores Current Folder + File. No home-folder index is built at launch.
 Click **Disk Usage** in the filter row, or right-click a folder, empty folder
 area or sidebar folder and choose **Disk Usage…**
 for an on-demand size map on the right. The window widens when the display has room.
-Rectangle area represents file sizes, with colors grouped by file type. Click a
+Choose **Size on disk** (the default) for allocated local file data, or
+**Total file size** for content sizes including cloud-only files. Rectangle area
+uses the selected measurement, with colors grouped by file type. Cloud-only file
+tiles are labeled in the total-size view; zero-allocation files count toward the
+file total but occupy no map area. Scanning never downloads them. Hard-linked
+allocation counts once per scan; total size counts each pathname. Click a
 folder heading to open it on the left and zoom; click a file tile to reveal and
 select it on the left. Use ↑ to zoom out or Refresh to scan again. The map includes
 hidden items and uses metadata without reading file contents. Directory symlinks
 and unrelated volumes are not traversed; scanning the startup root includes its
 paired macOS Data volume through the merged folder hierarchy without counting
-the backing mount twice. Scanned logical file sizes are shown separately from
-volume capacity and available space. The map appears progressively, with provisional
+the backing mount twice. The selected measurement is shown separately from
+volume capacity and available space. Refresh, detail scans and parent navigation
+preserve the selected mode; reopening the panel defaults to Size on disk. The map appears progressively, with provisional
 sizes marked as counted so far. Every top-level folder gets an initial pass, then
 larger known branches receive priority; clicking a folder prioritises its scan.
 Roughly 50,000 entries form an update batch, not a scan-stopping limit. Retained
 detail is bounded independently: extra files are grouped with their full byte
 totals, and large files discovered later remain visible. Clicking a grouped area
 analyses its containing folder with finer detail. Unreadable entries and excluded
-volumes are reported explicitly. Snapshots and filesystem overhead are not mapped.
+volumes are reported explicitly. APFS shared blocks, snapshots, directory and
+filesystem overhead are not fully represented, so allocated totals do not promise
+how much deleting files will free.
 Closing the panel cancels the scan. The item count appears once, in the footer.
 The map starts below the path and filter bars and stays open while selecting
 files/folders, navigating or changing tabs/projects. Close it with its × button;
@@ -373,19 +405,25 @@ only resizes the native app window. Panels remain side by side at screen edges o
 Selecting another Schnauz project switches Tasks with it. Existing unlinked
 projects first search by name; **Find or create matching project** can create a
 missing counterpart. Tasks show completion circles, fine separators and due dates
-below their titles, plus named sections/subtasks. The indigo **+ Add task** row
-stays at the end of the list even when no tasks exist. Click the circle
-to complete, the task text to open Todoist, or **Add task…** for a compact native
+below their titles, plus named sections/subtasks. The docked and expanded
+floating headers have **Add task** (+), **Refresh** and **Relink** icons with
+hover labels. Click the circle to complete, the task text to edit that same
+task in Schnauz, or **Add task** for a compact native
 composer with Schnauz colours and the little toolbar dog. The fixed project cannot
 be changed. Add a title, description, date, deadline, priority and labels; optional
 time/location reminders depend on the Todoist account. Location search uses Apple
 Maps only after an explicit address search. A task is sent to the project where
 its dialog was opened, even if you switch projects. Failed forms keep their text;
 retrying an optional reminder after a task was saved cannot create a second task.
-**Open in Todoist** and task links prefer the native app, falling back to the browser.
-Cached tasks remain visible during connection errors. Only visible rows render,
-and refresh runs in the background while Tasks is open. **Preview** toggles only
-file previews. Todoist is connected and working in Oliver's personal build;
+Right-click a task for **Edit in Schnauz…** or **Open in Todoist**. Opening
+Todoist prefers its native app, falling back to the browser. The edit form uses
+**Save changes**, preserves untouched task attributes and existing reminders,
+and checks for changes or a moved/completed task before saving. Failed saves
+retain the draft; editing never creates another task. Reminder/location buttons
+can add new reminders while retaining existing ones.
+Cached tasks remain visible during connection errors. The task list refreshes
+once when Tasks opens, after adding a task, or when you click **Refresh**.
+Uncached projects load when first displayed. **Preview** toggles file previews. Todoist is connected and working in Oliver's personal build;
 automated tests use fixtures without live service or Keychain access.
 
 The preview pane appears only for a single selected file with an available
@@ -413,9 +451,11 @@ SF Symbol. The About panel includes a painted portrait of the real Cookie.
 
 Lists and search results render visible rows and request their icons
 as needed. Icon and preview caches have limits; obsolete local preview jobs are debounced
-and cancelled. Visible local folders use macOS change notifications, with an
-adaptive fallback when notifications are unavailable. Ordinary file selections
-do not launch code-signature checks. The old home index and its direct scanning
+and cancelled. Visible local folders use macOS directory and file-level change
+notifications, including saves to existing files and modification-date/size changes. Updates
+are grouped briefly and applied in the background without recursive scans or
+per-file polling, with an adaptive fallback when vnode notifications are
+unavailable. Ordinary file selections do not launch code-signature checks. The old home index and its direct scanning
 dependencies have been removed.
 
 Right-click the file area and choose **New Text File…**. Enter a name; `.txt` is
@@ -494,6 +534,7 @@ disposable test folders.
 - `src/previews.rs`: cancellable preview jobs, metadata and bounded preview caches
 - `src/preview_panel.rs`: preview divider dragging, limits and remembered width
 - `src/cache.rs`: weighted LRU storage for icons, previews and shared listings
+- `src/local_file_events.rs`: macOS file-level event stream for timely local metadata updates
 - `src/folder_watch.rs`: macOS filesystem notifications and adaptive fallback
 - `src/folder_views.rs`: central folder rules, inheritance and column layouts
 - `src/list_ui.rs`: configurable list headers and folder view controls
@@ -584,7 +625,8 @@ files, across projects and windows. macOS/Finder defaults remain unchanged.
 Use macOS Default Again removes the Schnauz override. Choices are stored centrally
 in file-apps.json; folders, app bundles and extensionless files retain normal behavior.
 
-Image and document previews support wheel zoom. Hold the middle mouse button
+Image and document previews support wheel zoom and bounded panning in all
+directions, including diagonal movement. Hold the middle mouse button
 and drag to pan an enlarged image; left-button dragging also works. Selecting
 another file resets preview zoom. In native text previews,
 ordinary wheel scrolls the text and Shift+wheel changes its size. Image layout
@@ -834,3 +876,48 @@ percentage.
 Renaming is unavailable while Nextcloud is syncing or its status is unconfirmed.
 Inline and batch renames recheck the provider before changing names; rename undo
 uses the same protection. Failed checks preserve the draft or undo history.
+
+### Sticky items above folder sorting
+
+Right-click files or folders and choose **Stick to Top**. They stay first,
+independent of the sort column or direction; other items retain the selected
+sorting. A thin Schnauz-blue line separates the groups. Drag the small blue pin
+on a sticky item to place it before or after another sticky item. Choose
+**Unstick from Top** to return it to ordinary sorting.
+
+The manual order is remembered for that folder in that Schnauz project, alongside
+central folder settings, and works in List and Icons. Icons start the ordinary
+group on a fresh row. Hidden and type filters still apply. Normal file dragging
+continues to copy/move files; dragging a pin only changes the displayed order.
+Stickiness is edited in the browsed folder rather than recursive search results.
+
+SSH folder listings show **Date Modified** and support sorting by it. Recent
+entries show date and time; entries whose listing provides only a calendar date
+show that date without a fabricated time. **Date Created** remains empty when
+creation metadata is unavailable.
+
+### Project time tracking
+
+Right-click a project and choose **Add Time Tracking**. The stopwatch beside
+Disk Usage is green when that project has tracking enabled, including while
+paused; grey means disabled. Disabling tracking preserves its recorded time.
+
+The compact display shows **Total**, **My time** and **Codex**. Total counts
+overlap once within the project. Different projects can accrue time in parallel;
+your personal timer runs for one project at a time. Deliberate activity in Schnauz
+starts personal tracking and it continues in your browser or other apps. **Pause
+my time** stays paused until **Resume my time**. Hover alone never starts time.
+Project switches follow the destination's tracking and pause settings.
+
+The display sits below Todoist/Disk Usage or opens as a separate window above
+other apps. The floating window shows every enabled project. Screen locking and
+sleep pause personal tracking, and extended system inactivity shows a reminder.
+
+Codex tracking uses per-terminal lifecycle hooks, rather than terminal output or
+whether the Codex process is merely open. **Connect Codex…** explains setup for
+a new local Schnauz terminal, including reviewing/trusting its hooks in Codex
+with **/hooks**. Existing Codex aliases/functions remain unchanged; use
+**schnauz-codex** explicitly with custom launchers. Existing sessions, Codex
+configuration and credentials remain untouched. SSH-hosted and uninstrumented
+Codex sessions are not connected by this local bridge. The feature compiled in
+the signed local 1.0.8 update; manual integration/UI verification is pending.

@@ -4706,7 +4706,7 @@ dependencies = [
 
 [[package]]
 name = "schnauz"
-version = "1.0.1"
+version = "1.0.11"
 dependencies = [
  "chrono",
  "futures",

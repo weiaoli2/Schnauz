@@ -2,6 +2,8 @@
 use super::*;
 use gpui::{Entity, Pixels, Size, WeakEntity};
 
+const MIN_FLOATING_WIDTH: f32 = 416.;
+
 #[derive(Clone)]
 struct Shared {
     model: Entity<Tasks>,
@@ -19,6 +21,7 @@ pub(super) struct Tasks {
     pub host: Option<WeakEntity<Schnauz>>,
     pub notice: Option<String>,
     notice_serial: u64,
+    pub(super) task_menu_open: bool,
     scrolls: HashMap<gpui::WindowId, UniformListScrollHandle>,
 }
 impl Tasks {
@@ -32,42 +35,23 @@ impl Tasks {
             }
             this.projects = library;
             this.todoist.open = visible(cx);
-            this.ensure_todoist(false, cx);
+            this.load_todoist_project(cx);
             cx.notify();
         })
         .detach();
         cx.observe_global::<todoist::Global>(|this, cx| {
             let global = cx.global::<todoist::Global>().clone();
-            if this.todoist.observe_account(&global).0 {
+            let (changed, _) = this.todoist.observe_account(&global);
+            if changed {
                 this.notice = None;
             }
             if global.account.is_none() {
                 close_floating(cx);
-            } else {
+            } else if changed {
                 this.todoist.open = visible(cx);
-                this.ensure_todoist(false, cx);
+                this.load_todoist_project(cx);
             }
             cx.notify();
-        })
-        .detach();
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_secs(30))
-                .await;
-            if this
-                .update(cx, |this, cx| {
-                    this.todoist.open = visible(cx);
-                    let active = objc2::MainThreadMarker::new().is_some_and(|m| {
-                        objc2_app_kit::NSApplication::sharedApplication(m).isActive()
-                    });
-                    if this.todoist.open && (active || is_floating(cx)) {
-                        this.ensure_todoist(false, cx);
-                    }
-                })
-                .is_err()
-            {
-                break;
-            }
         })
         .detach();
         Self {
@@ -78,6 +62,7 @@ impl Tasks {
             host: None,
             notice: None,
             notice_serial: 0,
+            task_menu_open: false,
             scrolls: HashMap::new(),
         }
     }
@@ -148,6 +133,9 @@ pub(super) fn shared(cx: &App) -> Entity<Tasks> {
 pub(super) fn is_floating(cx: &App) -> bool {
     cx.try_global::<Shared>()
         .is_some_and(|s| s.floating.is_some())
+}
+pub(super) fn task_menu_is_open(cx: &App) -> bool {
+    cx.try_global::<Shared>().is_some_and(|s|s.model.read(cx).task_menu_open)
 }
 fn visible(cx: &App) -> bool {
     cx.try_global::<Shared>().is_some_and(|s| {
@@ -247,12 +235,12 @@ pub(super) fn detach(host: Option<WeakEntity<Schnauz>>, window: &mut Window, cx:
         }
         return;
     }
-    let bounds = Bounds::centered(None, size(px(400.), px(560.)), cx);
+    let bounds = Bounds::centered(None, size(px(MIN_FLOATING_WIDTH), px(560.)), cx);
     let model = shared(cx);
     let result = cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(320.), px(150.))),
+            window_min_size: Some(size(px(MIN_FLOATING_WIDTH), px(150.))),
             titlebar: Some(TitlebarOptions {
                 title: Some("Schnauz · Todoist".into()),
                 appears_transparent: true,
@@ -290,7 +278,7 @@ pub(super) fn detach(host: Option<WeakEntity<Schnauz>>, window: &mut Window, cx:
                 Floating {
                     model,
                     compact: false,
-                    full_size: size(px(400.), px(560.)),
+                    full_size: size(px(MIN_FLOATING_WIDTH), px(560.)),
                 }
             })
         },
@@ -308,12 +296,7 @@ pub(super) fn detach(host: Option<WeakEntity<Schnauz>>, window: &mut Window, cx:
                 });
             }
             cx.set_global(state);
-            cx.defer(|cx| {
-                shared(cx).update(cx, |tasks, cx| {
-                    tasks.todoist.open = true;
-                    tasks.ensure_todoist(false, cx);
-                })
-            });
+            visibility_changed(cx);
         }
         Err(error) => {
             if let Some(browser) = host.and_then(|b| b.upgrade()) {
@@ -324,7 +307,7 @@ pub(super) fn detach(host: Option<WeakEntity<Schnauz>>, window: &mut Window, cx:
         }
     }
 }
-fn configure_native(window: &Window) {
+pub(super) fn configure_native(window: &Window) {
     use objc2_app_kit::{NSFloatingWindowLevel, NSView, NSWindowCollectionBehavior};
     let Some(pointer) = ns_view_ptr(window) else {
         return;
@@ -380,7 +363,6 @@ impl Render for Floating {
             .child(
                 div()
                     .h(px(48.))
-                    .window_control_area(gpui::WindowControlArea::Drag)
                     .flex_none()
                     .flex()
                     .items_center()
@@ -388,39 +370,21 @@ impl Render for Floating {
                     .gap_1()
                     .pl(px(82.))
                     .pr_2()
-                    .child(div().flex_1().min_w_0().truncate().child("Todoist"))
-                    .when(!self.compact, |header| {
-                        header
-                            .child(
-                                div()
-                                    .id("todoist-floating-relink")
-                                    .px_1()
-                                    .py_1()
-                                    .text_size(px(UI_SMALL_FONT_SIZE))
-                                    .cursor_pointer()
-                                    .text_color(rgb(t.accent))
-                                    .child("Relink…")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.model
-                                            .update(cx, |tasks, cx| tasks.link_todoist(true, cx))
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id("todoist-floating-refresh")
-                                    .size(px(24.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor_pointer()
-                                    .child(ui_icon(Icon::Reload, 14., rgb(t.accent)))
-                                    .tooltip(tip("Refresh Todoist tasks"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.model
-                                            .update(cx, |tasks, cx| tasks.ensure_todoist(true, cx))
-                                    })),
-                            )
-                    })
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .h_full()
+                            .min_w_0()
+                            .items_center()
+                            .truncate()
+                            .window_control_area(gpui::WindowControlArea::Drag)
+                            .child("Todoist"),
+                    )
+                    .when(
+                        !self.compact && self.model.read(cx).todoist_link(cx).is_some(),
+                        |header| header.child(todoist_ui::task_actions(self.model.clone())),
+                    )
                     .child(
                         div()
                             .id("todoist-compact")

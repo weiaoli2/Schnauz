@@ -199,15 +199,34 @@ func page(_ rows: [[String: Any]], cursor: String? = nil) -> Data {
     _ = try await client.add(
       projectID: "project-A", content: "Buy café + & milk", due: "tomorrow", section: nil,
       requestID: "stable-task-request")
-    try await client.complete(
+    let completed = try await client.complete(
       projectID: "project-A", taskID: "task-A", requestID: "stable-task-request")
+    guard case .archived = completed else { throw TDFixtureFailure.failed("Regular task archived") }
     try check(posts == 2, "Only explicit add and complete perform writes")
+
+    var recurringClosed = false
+    let recurring = try mocked { request in
+      if request.httpMethod == "POST" {
+        try check(request.url!.path == "/api/v1/tasks/task-A/close", "Close only the recurring task")
+        recurringClosed = true
+        return (204, Data(), [:])
+      }
+      try check(request.url!.path == "/api/v1/tasks/task-A", "Read only the affected task")
+      let date = recurringClosed ? "2026-11-23" : "2026-11-22"
+      return (200, encode(task(extra: ["due": ["date": date, "is_recurring": true]])), [:])
+    }
+    let advanced = try await recurring.complete(
+      projectID: "project-A", taskID: "task-A", requestID: "recurring")
+    guard case .next(let next) = advanced else {
+      throw TDFixtureFailure.failed("Recurring task advances without a project snapshot")
+    }
+    try check(next.due?.date == "2026-11-23", "Return the confirmed next due date")
     let moved = try mocked { request in
       try check(request.httpMethod == "GET", "Moved tasks are not completed in another project")
       return (200, encode(task(project: "other")), [:])
     }
     _ = try await failure {
-      try await moved.complete(projectID: "project-A", taskID: "task-A", requestID: "stable")
+      _ = try await moved.complete(projectID: "project-A", taskID: "task-A", requestID: "stable")
     }
     _ = try await failure {
       _ = try await moved.add(
@@ -218,7 +237,7 @@ func page(_ rows: [[String: Any]], cursor: String? = nil) -> Data {
       return (200, encode(task(extra: ["updated_at": "new-occurrence"])), [:])
     }
     _ = try await failure {
-      try await changed.complete(
+      _ = try await changed.complete(
         projectID: "project-A", taskID: "task-A", requestID: "same-attempt",
         expectedUpdated: "old-occurrence")
     }

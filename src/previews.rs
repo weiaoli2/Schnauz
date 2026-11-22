@@ -292,6 +292,11 @@ impl Schnauz {
         let Some(server) = self.tab(pane).remote.clone() else {
             return;
         };
+        if self.tab(pane).entries.iter().any(|entry|
+            self.tab(pane).current_dir.join(&entry.name) == remote_path
+                && (entry.is_dir || entry.link == Some(remote_links::Target::Unavailable))) {
+            return;
+        }
         let key = source_key(&remote_path, Some(&server));
         if !prefs().preview
             || (!is_image(&remote_path) && !is_pdf(&remote_path))

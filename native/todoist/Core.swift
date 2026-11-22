@@ -52,11 +52,19 @@ struct TDTask: Codable {
   let updated_at: String?
   let is_deleted: Bool?
   let due: TDDue?
+  let labels: [String]?
+  let deadline: TDDeadline?
 }
+struct TDDeadline: Codable { let date: String }
 struct TDSnapshot: Codable {
   let project: TDProject
   let tasks: [TDTask]
   let sections: [TDSection]
+}
+enum TDCompletion {
+  case archived
+  case next(TDTask)
+  case unverified(retryAfter: Int?)
 }
 struct TDTaskOptions {
   var description = ""
@@ -339,6 +347,46 @@ final class TDClient: NSObject, URLSessionTaskDelegate {
     guard project.id == id else { throw TDProblem(text: "Todoist returned the wrong project.") }
     return project
   }
+
+  func task(projectID: String, taskID: String) async throws -> TDTask {
+    let project = try Self.identifier(projectID)
+    let task = try await decoded(TDTask.self, parts: ["tasks", try Self.identifier(taskID)])
+    guard task.project_id == project, task.checked != true, task.is_deleted != true else {
+      throw TDProblem(text: "This task moved, was completed or was removed. Refresh the project before editing it.")
+    }
+    return task
+  }
+
+  func update(original: TDTask, content: String, due: String, originalDue: String,
+    options: TDTaskOptions, requestID: String) async throws -> TDTask {
+    let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty, text.count <= 500, options.description.count <= 16_000,
+      (1...4).contains(options.priority), options.labels.count <= 50,
+      options.labels.allSatisfy({ !$0.isEmpty && $0.count <= 60 }) else {
+      throw TDProblem(text: "Check the task name, description, priority and labels.")
+    }
+    var fields: [String: Any] = [:]
+    if text != original.content { fields["content"] = text }
+    if options.description != (original.description ?? "") { fields["description"] = options.description }
+    if options.priority != (original.priority ?? 1) { fields["priority"] = options.priority }
+    if Set(options.labels) != Set(original.labels ?? []) { fields["labels"] = Array(Set(options.labels)).sorted() }
+    if options.deadline != original.deadline?.date { fields["deadline_date"] = options.deadline.map { $0 as Any } ?? NSNull() }
+    if due != originalDue {
+      // Omission preserves recurrence/timezone. Null explicitly removes a date.
+      fields["due_string"] = due.isEmpty ? NSNull() : due as Any
+    }
+    let current = try await task(projectID: original.project_id, taskID: original.id)
+    guard current.updated_at == original.updated_at else {
+      throw TDProblem(text: "This task changed in Todoist while you were editing. Your draft is kept; cancel and reopen the task to load the latest version.")
+    }
+    guard !fields.isEmpty else { return current }
+    let data = try await request(["tasks", try Self.identifier(original.id)], method: "POST", json: fields, requestID: requestID)
+    let updated = try JSONDecoder().decode(TDTask.self, from: data)
+    guard updated.id == original.id, updated.project_id == original.project_id else {
+      throw TDProblem(text: "Todoist did not confirm this task's identity and project. Refresh before editing again.")
+    }
+    return updated
+  }
   func reminder(taskID: String, date: Date, requestID: String) async throws {
     let id = try Self.identifier(taskID)
     guard date > Date() else { throw TDProblem(text: "Choose a reminder time in the future.") }
@@ -370,7 +418,7 @@ final class TDClient: NSObject, URLSessionTaskDelegate {
   }
   func complete(
     projectID: String, taskID: String, requestID: String, expectedUpdated: String? = nil
-  ) async throws {
+  ) async throws -> TDCompletion {
     let project = try Self.identifier(projectID)
     let taskID = try Self.identifier(taskID)
     let task = try await decoded(TDTask.self, parts: ["tasks", taskID])
@@ -385,6 +433,21 @@ final class TDClient: NSObject, URLSessionTaskDelegate {
       )
     }
     _ = try await request(["tasks", taskID, "close"], method: "POST", requestID: requestID)
+    guard task.due?.is_recurring == true else { return .archived }
+    do {
+      // Closing a recurring task returns no content. Read only the next occurrence.
+      let next = try await decoded(TDTask.self, parts: ["tasks", taskID])
+      guard next.id == taskID else { return .unverified(retryAfter: nil) }
+      if next.checked == true || next.is_deleted == true || next.project_id != project {
+        return .archived
+      }
+      guard next.due?.date != task.due?.date || next.due?.datetime != task.due?.datetime else {
+        return .unverified(retryAfter: nil)
+      }
+      return .next(next)
+    } catch {
+      return .unverified(retryAfter: (error as? TDProblem)?.retryAfter)
+    }
   }
 }
 

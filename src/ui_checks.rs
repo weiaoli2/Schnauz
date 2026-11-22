@@ -99,10 +99,15 @@ fn check_geometry(phase: usize) {
             f32::from(list.size.width) > 300. && f32::from(list.size.height) > 200.,
             "Tasks need a usable viewport"
         );
-        let add = all
-            .get("todoist-add")
-            .expect("Add task stays visible, including an empty list");
-        assert!(f32::from(add.size.width) > 300. && f32::from(add.size.height) == 60.);
+        let add = all.get("todoist-add").expect("Add task stays in the header");
+        let refresh = all.get("todoist-refresh").expect("Refresh stays in the header");
+        let relink = all.get("todoist-relink").expect("Relink stays in the header");
+        for action in [add, refresh, relink] {
+            assert_eq!(action.size, size(px(26.), px(26.)));
+            assert_eq!(action.origin.y, add.origin.y);
+            assert!(action.bottom() <= list.origin.y);
+        }
+        assert!(add.right() <= refresh.origin.x && refresh.right() <= relink.origin.x);
         if phase > 0 {
             let task = all
                 .get("todoist-task")
@@ -638,10 +643,10 @@ struct CloudRowFixture { layout: ListLayout, cloud: CloudSync }
 impl Render for CloudRowFixture {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let entry = Entry { name: "A long Nextcloud filename with Grüße and 日本語 for truncation.pdf".into(),
-            is_dir:false, size:123, modified:None, created:None, mode:None, loaded:true, hidden_flag:false };
+            is_dir:false, link:None, size:123, modified:None, modified_date_only:false, created:None, mode:None, loaded:true, hidden_flag:false };
         div().size_full().bg(rgb(theme().bg)).text_size(px(UI_FONT_SIZE)).child(file_row(
-            &entry, Path::new("/fixture"), 0, false, false, &self.layout,
-            icon_element(Path::new("/fixture/document.pdf"),false), self.cloud, false, None, None,
+            &entry, Path::new("/fixture"), 0, false, false, false, &self.layout,
+            icon_element(Path::new("/fixture/document.pdf"),false), self.cloud, false, None, None, None,
             |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}, |_,_,_|{}))
     }
 }

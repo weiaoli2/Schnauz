@@ -72,3 +72,9 @@ pub(super) fn parts(time: Option<SystemTime>) -> (String, String) {
     })
     .unwrap_or_else(|| ("—".into(), "—".into()))
 }
+
+/// Calendar date only when the remote listing did not supply a time of day.
+pub(super) fn date_only(time: Option<SystemTime>) -> String {
+    with_date(time, |cache, date| cache.date.stringFromDate(date).to_string())
+        .unwrap_or_else(|| "—".into())
+}

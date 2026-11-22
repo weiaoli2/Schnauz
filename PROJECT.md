@@ -1,6 +1,369 @@
 # Schnauz
 
-Last updated: 2026-11-08
+Last updated: 2026-11-22
+
+Current feedback workflow (Oliver, 2026-11-09): collect and fix reported bugs
+together, without automatically building/packaging/staging after every fix.
+Wait for Oliver to request the next combined build/update. Leave the existing
+staged update and all live sessions intact.
+
+## Local 1.0.11 — Todoist test update
+
+Oliver requested a local test build on 2026-11-22. The signed universal 1.0.11
+is in the pending slot for `./update.sh` after a deliberate quit. It includes
+the fixes from 1.0.10 and the Todoist header icons, 30% wider minimum widths,
+and event-driven task list refresh. Manual QA covers the docked and expanded
+floating headers, resizing, opening and refreshing Tasks, and adding, editing
+and completing tasks.
+
+Both optimized builds passed. The bundle allowlist, version/identity, signer
+match and strict signatures for both slices of all nine executables passed.
+All installed bundle files retained their device, inode and SHA-256 values.
+The previous pending 1.0.10 was retained at
+`.build-cache/retained-apps/bf7f72a3dd4c4a1b8dcd56b0608bfaa7/Schnauz.app`.
+No app/helper/test binaries were run, live accounts accessed, sessions restarted
+or Git commits/releases made. See `.build-cache/1.0.11-todoist-verification.json`.
+The Linux port is deferred and documented in [Future features](docs/FUTURE_FEATURES.md).
+
+## Previous combined update
+
+Oliver requested a deployable test update on 2026-11-18. The green-button fix
+was built and verified as universal 1.0.9, then he reported delayed local file
+metadata updates. Both fixes are now built, signed and staged together as 1.0.10
+for ./update.sh, retaining 1.0.9 and older builds. The installed app and all live
+sessions are unchanged. No app/helper/test binaries were launched, no accounts
+accessed and no commit/publication performed. Manual interaction QA is Oliver's.
+
+## Local 1.0.10 — local file changes and green window button
+
+The previous watcher observed visible directories and selected preview files
+through vnode notifications. Editing an existing child in place does not update
+the parent directory, so its displayed modification date/size could stay stale.
+A file-level FSEvents stream now supplements the directory watcher. It watches
+only displayed filesystem roots, using a private dispatch queue, 150 ms native
+batching and the existing 250 ms browser delivery loop. Immediate-child writes
+and metadata events request the normal background listing/metadata refresh.
+Canonical roots map events back to displayed aliases; deeper descendant events
+are ignored. Dropped/coalesced event recovery reconciles current listings only.
+No recursive scans, directory hashing, per-file polling, content reads or new
+remote connections are added. Existing preview vnode guards remain separate.
+
+The stream is rebuilt when visible folders change, and stopped/invalidated/
+released on scope changes or browser destruction. Callback state is retained
+through the native context and holds only a bounded set of dirty displayed roots.
+Unsupported stream startup retains the existing vnode behavior and retries
+registration with a delay. Multiple saves during an in-flight local listing
+queue one follow-up instead of repeatedly cancelling the metadata pass. Selection,
+scroll handles, sorting, hidden/type/project filters and terminal ownership use
+the existing listing path. Stale responses cannot refresh an SSH pane.
+
+Includes the green-button adapter correction below and all 1.0.8 features.
+SDK FSEvents.h was used for native ABI/constants and lifecycle requirements.
+Runtime behavior and exact notification latency remain manual QA by Oliver.
+
+1.0.10 delivery completed on 2026-11-18: final optimized Apple Silicon and Intel
+builds and native helpers passed. Universal merge, bundle allowlist, app version/
+identity, certificate-chain match with the installed app and strict signatures
+for both slices of all nine executables passed. The actual 1.0.10 pending bundle
+was independently rechecked. Every installed file's device/inode/SHA-256 remains
+unchanged. 1.0.9 was retained at
+`.build-cache/retained-apps/f296b8811beb453395a58275b4a26326/Schnauz.app`, in addition
+to its preserved universal artifact. No tests or app/helper execution, live account
+operations, session restarts, installed-app replacement, commits or publication.
+
+Apply with `./update.sh` after deliberately quitting Schnauz, then reopen the
+normal app and confirm version 1.0.10. Manual QA: green-button full-screen entry/
+exit and Option-green zoom; drag copy/move/sidebar drops; save an existing local
+file externally and check its displayed modification date/size and sorting.
+Exact event latency and native interaction behavior have not been runtime-tested.
+Logs: `.build-cache/1.0.10-local-refresh-{arm-final-build,intel-build,universal,stage}.log`.
+Receipt: `.build-cache/1.0.10-local-refresh-verification.json`.
+
+## Green window button / full-screen correction — 2026-11-18
+
+Oliver reports that clicking green first distorts/shrinks the graphics instead
+of completing full screen, followed by a crash. The two 1.0.8 macOS reports show
+SIGABRT in NSView effectiveAppearance while quit confirmation interrupts a failed
+full-screen transition. The narrow system log establishes the earlier failure:
+NSTitlebarView viewWillMoveToWindow throws while removing a KVO observer during
+full-screen titlebar reparenting. The existing post-initialization NSWindow drag
+subclass had already required a deallocation workaround for the same bookkeeping.
+
+Remove that runtime window subclass entirely. A dedicated NSView, allocated with
+its final class, wraps the unchanged GPUIView and receives registered file drops.
+It forwards to the original GPUI NSWindow callbacks and advertises the existing
+Move/Command-copy/sidebar-copy operation. Preserve exit cleanup, native input,
+first responder and ordinary width/height autoresizing. Retain GPUIView across
+reparenting, and schedule setup outside GPUI App/Window/entity borrows so native
+focus/appearance/resize callbacks can run safely. Existing drag fixtures now
+address the destination view and assert unchanged window/rendering classes and
+matching viewport size. No dependency cache or global class changes.
+
+Initial validation was source-only. Oliver then requested a deployable update;
+this fix compiled, signed and passed universal/static bundle verification as
+1.0.9. The subsequent local-file-change fix is combined with it in 1.0.10 above.
+Full-screen entry/exit, Option-green zoom, resize, native input/previews and actual
+drag routing still need Oliver's manual QA. No app/helper/test binaries were run;
+installed code and sessions were preserved, without commits or publication.
+
+## Local 1.0.8 combined update — requested 2026-11-14
+
+Oliver requested a new personal local app with all pending changes, without Git
+commits or publication. Compile optimized Apple Silicon/Intel bundles, sign with
+the installed certificate, merge/verify universal slices and stage for deliberate
+quit/update. Keep the running bundle, existing PTYs/SSH, settings and older staged
+artifacts intact. Do not execute apps/helpers/tests or access live accounts.
+
+During this build Oliver also requested task clicks open Schnauz's existing task
+form instead of the Todoist app. Clicking task details now requests Edit in
+Schnauz; right-click opens a native menu with Edit in Schnauz / Open in Todoist.
+Menus track outside GPUI entity/window borrows and block terminal hover focus.
+The helper reads the selected task from its captured project, loads name,
+description, priority, labels, due and deadline, and saves changes to that same
+task ID via POST /tasks/{id}. Only changed fields are sent; untouched recurrence,
+timezone, labels (including comma-containing names), order, section, parent,
+assignee, duration and existing reminders are preserved. Existing reminders can
+be supplemented through explicit Add reminder/location actions; they are not
+misrepresented as absent or implicitly replaced. Saving rechecks project/task
+identity, completion/deletion and updated_at before writing. This detects prior
+changes but is not an atomic server-side compare-and-swap. Errors retain drafts
+and request IDs; partial reminder failures lock the saved task and retry only
+pending options, without creating tasks or repeating the task update. Cache
+replacement preserves the original row position and invalidates stale reads.
+The form and mutation stay bound to the captured account/project across switches.
+Todoist API reference: https://developer.todoist.com/api/v1/ (Update Task).
+Manual account/UI confirmation remains Oliver's workflow.
+
+1.0.8 delivery completed on 2026-11-15: final optimized Apple Silicon/Intel
+builds and all native helpers compiled, signed and merged successfully. All nine
+universal executables contain arm64/x86_64 and pass independent strict signature
+verification for all architectures. Bundle identity/version, allowlist and the
+certificate chain match the installed app. The signed universal app is preserved
+at `.build-cache/1.0.8-local-universal/Schnauz.app`; a verified copy is staged in
+the normal pending slot for ./update.sh. That slot was empty when staging; no
+previous staged app was removed. Every installed bundle file's device/inode/hash
+is unchanged. No app/helper/test binary was executed, no live Todoist/Codex or
+Keychain account operation was performed, and no window/PTY/SSH session was
+restarted. The initial sandbox build was blocked only by packaging's process
+inventory; final packaging/verification used permitted process-inventory access.
+No Git commit, tag or publication. User interaction, task-edit/API behavior,
+tracking hooks and caret/IME appearance remain Oliver's manual QA.
+
+Logs: `.build-cache/1.0.8-local-{arm-complete-build,intel-build,universal-verification}.log`.
+Receipt: `.build-cache/1.0.8-local-verification.json`.
+The pending-feature sections below retain their earlier source-only checkpoints;
+this delivery supersedes their outstanding compilation/build/staging statements.
+
+## Local 1.0.7 combined test update — ready 2026-11-12
+
+Oliver requested a combined local test update to verify the collected fixes.
+Optimized Apple Silicon and Intel builds passed, followed by universal merging,
+bundle-content checks and deep/strict signature verification for all executable
+slices. All nine executables contain both arm64 and x86_64 and use the same
+Apple Development certificate as the installed app. Signed 1.0.7 is staged at
+`.build-cache/pending-apps/3ab6c3edb5d533a6/Schnauz.app`.
+
+Includes SSH symbolic-link target handling/arrow badges, quick filename substring
+highlighting, persistent selection-safe file scrollbars, hover keyboard focus,
+native Chinese terminal input and the project-name caret/mouse editor, plus the
+earlier pending Disk Usage, sticky ordering, preview-panning and SSH-date fixes.
+Per-project Undo remains an undecided documentation-only idea.
+
+Apply with `./update.sh` after deliberately quitting Schnauz, then reopen the normal
+Schnauz.app and check version 1.0.7. No live app/helper/test binaries were executed,
+no tests compiled/run and no settings/accounts or PTYs/SSH sessions were touched.
+Every installed bundle file retains its recorded device/inode/SHA-256. Interactive
+behavior is for Oliver's manual testing. No Git commit or public release.
+The initial sandboxed packaging attempt was blocked by the read-only process
+inventory; packaging was repeated with permission and separate output folders.
+Logs: `.build-cache/1.0.7-combined-{arm-build,arm-package,intel-build,universal}.log`.
+Receipt: `.build-cache/1.0.7-combined-verification.json`.
+
+## Pending removal of inherited floating Filter — 2026-11-14
+
+Oliver identified the floating bottom-right Filter as confusing and requested
+its removal. Remove its button/editor, the / shortcut and rebindable Find action,
+the Settings toggle and show_filter_button preference, plus its old keyboard
+editor and Spotlight worker. Existing preference/keymap keys are ignored when
+loading, without shifting other bindings (bindings load by stable action name).
+Keep project Filter On/Off/Modify, All/Folders/Files, top filename/content search
+and quick filename highlighting. Internal listing-query state remains for the
+existing result/selection fixtures; there is no interactive legacy filter entry.
+Rust syntax/source and diff checks only. No tests, build, packaging, staging,
+live UI changes, commit or publication. Preserve all pending changes and sessions.
+
+## Pending Schnauz New task caret follow-up — 2026-11-13
+
+Oliver again reports no visible insertion cursor in Schnauz's own Add task
+window (not the Todoist app). The earlier 0.9.26 code already supplies a themed
+field editor and insertion-point colors; source inspection alone does not prove
+why the cursor remains invisible in his running version. Harden the actual
+caret stroke in the title/date/labels editor and description using an NSTextView
+subclass: a contrasting black/white stroke at least two points wide, with matching
+dirty-rectangle expansion for erasure. Keep AppKit's native blink, selection,
+editing and IME behavior. Refresh the focused editor when the composer becomes
+key and once after initial asynchronous activation, without changing its text,
+selection or focus. Saved-task retry fields remain locked.
+
+Swift syntax parsing/source checks only; no app/helper/test launches, test
+compilation, accounts/Keychain operations, build or staging. The precise cause
+and visible result still require Oliver's manual check in the next combined
+update. Preserve live windows, terminals, existing staged artifacts and all
+pending time-tracking/input fixes. No commit/public release requested.
+
+## Pending project time tracking — 2026-11-13
+
+Oliver approved optional per-project time tracking with separate personal and
+Codex counters and a total that counts overlap only once within each project.
+Concurrent projects each accrue their own time. Project context menus now offer
+Add Time Tracking / Disable Time Tracking. A native stopwatch beside Disk Usage
+is green exactly when the project HAS tracking enabled, regardless of whether
+either timer is running; grey means disabled. Disabling retains accumulated time.
+
+The compact panel appears below Todoist/Disk Usage, or on its own in the shared
+tools area. It can detach into an always-on-top window using the existing Todoist
+native window configuration. That window lists enabled projects independently.
+Counters and controls share one process-wide clock across browser windows.
+Personal time starts on deliberate keyboard/click/scroll activity and continues
+outside Schnauz until paused. Hover alone never starts it. Manual pause persists
+and requires Resume. Actual project changes transfer personal activity to the
+new project, subject to its own tracking/pause settings. Screen locking and sleep
+pause personal time; an inactivity reminder offers confirmation after 30 minutes.
+Native menu tracking alone must not be mistaken for sleep.
+
+Local terminal sessions capture their project ID when created. The local shell
+gets a session-specific status channel and a schnauz-codex launcher. For enabled
+projects, ordinary codex commands use it unless the user has an existing alias
+or function, which remains untouched. The launcher supplies session-local hook
+configuration with an explicit channel in each command, rather than relying on
+the environment inherited by a shared Codex daemon. Existing user/project Codex
+config, authentication, hook files, launchers, live sessions and dotfiles are
+not modified. Requires a Codex version supporting the documented lifecycle hooks;
+the user reviews/trusts the session's hook definitions through /hooks. The panel's
+Connect Codex action explains setup; Not connected remains until actual events.
+This currently covers newly launched LOCAL Codex sessions; SSH-hosted Codex and
+already-running/uninstrumented sessions are not silently counted as working.
+
+The app's --time-tracking-hook entry point runs before GUI startup and emits only
+minimal session/turn/status timestamps into the owned terminal channel. No prompt,
+reasoning, transcript, tool output, credential or network access is retained.
+Working/permission-wait/input-wait/stop/interrupt events drive Codex time; root
+turn tracking ignores identified subagent events. Raw shell prompt state is
+updated while tabs are parked, so returning to a prompt clears stale work even
+if no stop hook arrived. No PTY input, process restarts or remote operations are
+used for tracking. Channels are unique per app run and cleaned with their PTY.
+
+time-tracking.json stores versioned per-project and daily counters through the
+existing ordered background atomic writer. Invalid files are preserved and block
+writes. Active runtime timers are never restored across app restarts. Removed
+projects' totals are archived under retired keys before an ID can be reused.
+Fixtures cover overlap, parallel projects/terminals, manual pause, stale events,
+channel removal, persistence and ID reuse; fixtures have NOT been compiled/run.
+Rust/shell syntax and diff checks only. No normal build, package/staging, app or
+helper/test execution, live Codex hook installation, account access, commit or
+public release. Full compile and manual UI/hook/lock/sleep QA remain pending the
+next requested combined local update. Preserve the existing 1.0.7 staged update.
+
+## Pending terminal input-source indicator fix — 2026-11-13
+
+Oliver reported a recurring blue A beside the terminal cursor without typing.
+This resembles macOS's input-source accessory; the precise runtime trigger is
+not confirmed. Hover already skipped window.focus for a focused terminal, but
+now returns before the shared hover/composition eligibility checks as well.
+Browser hover likewise checks terminal focus before evaluating eligibility.
+The native input handler no longer supplies insertion bounds while idle or
+unfocused: only actual marked-text composition advertises the candidate anchor.
+Keep native printable input, UTF-16 selection and committed PTY writes intact.
+Manual QA must confirm the accessory no longer recurs and Chinese composition
+still starts/positions/commits correctly, including in foreground terminal apps.
+Source/syntax checks only; no tests, app/helper launches, build, staging, commit
+or publication. Existing staged artifacts and live terminals remain untouched.
+
+## Pending project-name editor fix — 2026-11-12
+
+Oliver reported Rename Project only allowing whole-name deletion/replacement.
+The old field stored an append-only string plus a select-all flag, without a
+caret or mouse hit testing. Create/Rename now share a measured single-line editor
+with character-based caret/selection, mouse placement, Shift-click/drag selection,
+double-click word selection and triple-click/select-all. Left/right, Shift,
+Option word navigation, Command/Home/End, backward/forward deletion and selected
+cut/copy/paste operate at the caret. Paste retains literal spaces while removing
+control/newline characters. Horizontally scroll long names to keep the caret
+visible; Unicode edits stay on UTF-8 character boundaries. Rename initially
+selects the whole existing name. Enter/Save use the existing validation and
+project transaction; Escape/outside clicks cancel. No changes to project IDs,
+Todoist routing, tabs, PTYs or project-switch behavior. Updated the existing
+fixture's selected-name assertion for the new editor state; no fixtures/tests
+executed or compiled. Syntax/source checks only; no build/staging/live UI work.
+
+## Pending terminal input fixes — 2026-11-12
+
+Hovering a terminal's content focuses that existing terminal for typing in the
+active Schnauz window. Hovering the file area returns keyboard focus to browsing.
+Do not activate inactive application windows. Editors, modals, menus, active
+composition, selection/scroll/resize/file drags block hover changes; no PTY input,
+session creation/restart or directory-sync commands result from hover.
+
+The terminal now registers GPUI's native text-input handler during painting.
+Printable keys reach macOS's input context instead of sending raw Latin keys
+first, enabling Chinese IME composition/candidate selection and UTF-8 commits.
+Marked text stays in a local underlined overlay, with UTF-16 ranges and candidate
+positioning at the terminal cursor; only committed text reaches the PTY. Blur/
+cancellation clears unconfirmed text. Control/Option sequences, app shortcuts,
+clipboard behavior and foreground programs retain their existing paths. Browser
+key routing leaves unhandled terminal text available to the native input context.
+Syntax/source checks only: no app/helper/test launches, test compilation, normal
+build/staging, live language switching or SSH interaction. Oliver will verify
+hover and Chinese candidate behavior in the next requested combined build.
+
+Per-project Undo is recorded as an **undecided** idea in
+[Possible future features](docs/FUTURE_FEATURES.md); no Undo implementation is
+authorized or included.
+
+Pending file-scrollbar fix (2026-11-11): the old vertical thumb allowed mouse
+presses to propagate and faded away after scroll activity. File panes now have
+a persistent 12 pt rail, with an active thumb for overflow and a subdued full
+thumb when everything fits. Its mouse area occludes rows and consumes presses,
+releases and clicks. Grabbing either scrollbar cancels pending rename/file-drag/
+marquee gestures, preserves selection and suppresses release clicks. Root pointer
+movement belongs exclusively to the active scrollbar until release or loss of
+the pressed button. Track clicks reposition the thumb and continue dragging.
+List rails start below the shared column-header height and stop above horizontal
+scrollbars; Icons and search results use their own viewport. Search results now
+have the same interactive scrollbar instead of a passive indicator. Vertical
+drags capture their tab/search identity and actual scroll handle. Removed the
+fade fields, animation and repaint ticker. Syntax/source checks only; no tests,
+build, staging or live app/session changes. Await the next combined update.
+
+Pending quick filename highlighting (2026-11-11): typing printable text with
+the file pane focused opens a compact text box in the existing lower-left copy
+feedback location. Additional letters extend one case-insensitive, literal
+substring; spaces and punctuation are literal, with no AND/search syntax.
+Matching filenames receive a blue highlight in List, Icons and loaded search
+results. Every item remains in its original visible/sticky/sorted position;
+selection, previews and file-operation targets are unchanged. Each edit scrolls
+strictly to the first matching displayed row (or icon row), including the parent
+row offset and sticky icon-group geometry. Backspace edits; Escape or × clears.
+An empty box retains Backspace ownership to prevent accidental file deletion.
+The query clears on pane/tab/project/folder/search changes or entering another
+text editor; no timeout, persistence, recursive scan or network activity. Terminal,
+native preview text, dialogs, rename/path/search fields and modified shortcuts
+retain typing. Copy feedback can coexist in the same box. Source/syntax checks
+only; no tests/build/stage or live app operations. Await the next combined build.
+
+Pending SSH symbolic-link fix (2026-11-11): listings retain link identity and
+resolve the target's folder/file type using SFTP v3 STAT on the listing's existing
+authenticated mux. Metadata exchanges negotiate v3, validate framed replies and
+request IDs, and have cancellation/deadlines; no remote shell, reconnect fallback,
+content reads or input to live terminals. Folder links navigate through the link
+path; file links open through normal remote-file handling. Broken/inaccessible
+or unresolved links show a footer error and cannot start preview/open downloads.
+List and Icons show a compact Schnauz-blue vector arrow badge on both file and
+folder links, including local symlinks; Kind shows Folder Link / File Link /
+Unresolved Link. Rename/delete retain the original link path. Source/syntax review
+only; no tests, test compilation, build/package/stage or live SSH/app operations.
+Manual interaction verification remains Oliver's workflow, in the next requested
+combined build.
 
 Schnauz is Oliver Weber's independent macOS file manager, based on Shuffle by
 Jaime Guzman. Oliver leads design and product direction; Codex assists with
@@ -282,16 +645,21 @@ and filter bars, independently of file preview. It follows Schnauz project switc
 and has its own saved width; opening Disk Usage replaces Tasks in that tools pane.
 Existing unlinked projects look for matching names; **Find or create matching
 project** can explicitly create one if absent. Open tasks show sections, subtasks,
-due dates and priority colours. Click a circle to complete, a task to open Todoist,
-or **Add task…** for the compact, project-locked native task composer. Failed forms
-keep their content for retry. Writes retain the project captured when opened.
+due dates and priority colours. Click a circle to complete or task text to edit.
+Use the **Add task** (+), **Refresh** and **Relink** icons with hover labels in the
+docked and expanded floating headers. The docked minimum is 286 pt where space
+permits, and the floating minimum is 416 pt. The native composer retains its
+captured project and keeps failed drafts for retry.
 
 Requests run through `native/todoist/` / `todoistctl` to Todoist API v1, with tokens
 outside Rust/settings/argv/logs. The Rust bridge caches by account/project, keeps
 old results on failure, follows pagination, checks response identity and excludes
-stale reads after a write. The virtual list renders only visible rows. Refresh is
-30 seconds while Tasks is open and Schnauz active, plus reopening/focus when stale;
-rate-limit backoff applies to manual refresh too. The native helper refuses redirects.
+stale reads after a write. The virtual list renders only visible rows. One-time
+task-list refreshes occur on opening the pane, after a confirmed add and when
+**Refresh** is clicked. Uncached projects load when first displayed or linked.
+Edits and completions update the affected rows, with a targeted read for a
+recurring task's next occurrence. Rate-limit backoff applies to these requests.
+The native helper refuses redirects.
 
 `./test.sh` includes offline URLProtocol fixtures for naming/creation, pagination,
 captured project destinations, completion, idempotency, errors and settings, plus
@@ -2988,3 +3356,178 @@ Receipts: dist/1.0.1/{LOCAL-,DRAFT-,RELEASE-,PUBLIC-}VERIFICATION.json,
 PUBLIC-UPDATE-COMPATIBILITY.json, GITHUB-SOURCE-VERIFICATION.json and
 NORMAL-LOCAL-BUILD.json. Logs: .build-cache/1.0.1-{test-compile,release-build}.log.
 Publication complete; future releases need a new request. Preserve all tags/assets.
+
+
+## Local 1.0.2 — local allocation versus total file size
+
+Oliver reported cloud-only Nextcloud files contributing their full sizes to Disk
+Usage, first requested a read-only check, then authorized trying the proposed
+Size on disk default and optional Total file size view. The metadata-only sample
+confirmed dataless placeholders with nonzero logical sizes and zero data blocks.
+
+Disk Usage now has explicit Size on disk / Total file size buttons. Size on disk
+uses lstat allocation (st_blocks × 512) without opening/materializing file data;
+Total file size retains logical file lengths including cloud-only content. Dataless
+file tiles in Total file size are labeled cloud-only. Zero-allocation files remain
+in file counts but have no area; the panel explains how to see their logical sizes.
+Hard-linked file identities count allocated data once per scan, while Total file
+size counts each pathname. Directory/snapshot/filesystem overhead and APFS shared
+extents are not attributed; this is allocated file data, not guaranteed reclaimable
+space. Capacity/available remain separate filesystem statistics.
+
+The mode survives refresh, folder-detail rebasing and parent navigation while the
+panel is open. Switching mode cancels/replaces the existing metadata-only scan at
+the displayed folder; closing and reopening defaults to Size on disk. Regression
+fixtures cover zero allocation, sparse files, hard links and grouped/progressive
+accounting. Verification remains compile/sign/stage only; do not launch the app,
+helpers or test binaries or access live accounts. Preserve installed code and all
+windows/PTYs/SSH/settings. No commit/public release is requested.
+
+
+During 1.0.2 preparation Oliver also reported that clicking an already selected
+filename no longer starts inline rename. Source review found the V1 persistent-
+Disk-Usage change exposed an older delayed-rename guard rejecting any open map.
+Remove that guard so List/Icons/search can enter rename while Disk Usage remains
+open. Keep the system double-click delay, interaction cancellation, captured
+pane/tab/directory/view/search/selection checks, focus/menu guards and Nextcloud
+upload safety. No installed app or live file was changed for diagnosis; live
+interaction confirmation remains Oliver's workflow under compile-only QA.
+
+
+1.0.2 verification: final Rust/ui-checks fixtures compiled without execution;
+optimized Apple Silicon and Intel builds and the universal merger passed. All
+nine executables contain both slices and pass signature verification; bundle
+identity/version, allowlist and signer match the installed app. Universal 1.0.2
+is staged in the normal pending slot for ./update.sh after a deliberate quit.
+All installed file device/inode/SHA-256 fingerprints are unchanged. No app,
+helper or test binaries were run, live account operations performed or sessions
+restarted; interactive verification remains Oliver's workflow. No commit/release.
+Logs: .build-cache/1.0.2-disk-usage-{test-compile,arm-final-build,intel-build,universal}.log.
+Receipt: .build-cache/1.0.2-disk-usage-verification.json.
+
+## Local 1.0.3 — sticky files and folders
+
+Oliver requested a manually ordered sticky group above the selected file sort,
+with a thin Schnauz-blue divider underneath. Right-click one or more browsed
+items and choose Stick to Top; Unstick from Top restores their normal sorting.
+Drag a sticky item's small blue pin before or after another sticky item to change
+its saved position. Filename/icon dragging retains normal file-operation behavior.
+The reorder payload is private and bound to the captured window/tab/project/folder;
+invalid drops and Escape perform no reorder or file transfer. Show an insertion
+line during a valid reorder, without tinting the whole file pane.
+
+List and Icons use the same sticky order and respect hidden/type/text filters.
+Icons put normal items on a fresh row below the thin blue group divider; keyboard
+navigation and scroll-to-selection use that row geometry. Orders are exact-folder,
+per-project entries inside the existing folder-views.json, shared across windows
+and saved through the existing debounced atomic writer. They never inherit into
+subfolders or create files there; view/tree/reset actions leave sticky orders
+intact. SSH folders use separate host/user/port/path identities without accessing
+connections. Schnauz rename, batch rename and rename undo update saved names only
+after success, across projects that had pinned those names. Recursive search
+results retain their existing search order; edit stickiness in the actual folder.
+
+Includes the pending 1.0.2 Disk Usage allocation and selected-name rename fixes.
+Validation remains compile/sign/stage only, without executing apps/helpers/tests
+or using live accounts. Runtime drag/layout confirmation remains Oliver's manual
+workflow. No commit or release is requested; preserve the published V1 assets and
+all live sessions.
+
+1.0.3 verification: final Rust/ui-checks fixtures compiled without execution;
+optimized Apple Silicon and Intel builds, universal merger, bundle allowlist and
+deep/strict signing checks passed. All nine executables contain both slices and
+share the installed app's certificate. The signed universal update is staged in
+the normal pending slot for ./update.sh after a deliberate quit. Every installed
+file's device/inode/SHA-256 fingerprint is unchanged. No app/helper/test binaries
+were run or live account operations performed. Logs:
+.build-cache/1.0.3-sticky-{test-compile,arm-final-build,intel-build,universal}.log.
+Receipt: .build-cache/1.0.3-sticky-verification.json. No commit/public release.
+
+## Local 1.0.4 — SSH modification dates
+
+Oliver reported missing file dates while connected over SSH. Source diagnosis
+found that remote_listing.rs consumed the date fields but always returned
+modified: None. He authorized correcting the issue without running tests and
+will verify it in his own workflow.
+
+The SSH browser now requests ls -lan, making OpenSSH render numeric attributes
+on the client instead of using a server's preformatted longname. The owned SFTP
+subprocess uses LC_TIME=C for predictable month names and LC_CTYPE=UTF-8 to
+preserve Unicode filenames, removing an inherited LC_ALL override for that
+subprocess only and retaining the inherited local timezone. Date display still uses the existing cached macOS formatter and
+user locale. The parser resolves recent month/day/hour/minute timestamps using
+OpenSSH's half-year window, including year boundaries and repeated DST minutes.
+Explicit-year dates retain date-only precision in the UI; creation dates remain
+unknown. Date Modified sorting now receives parsed timestamps, at the precision
+provided by the listing (minutes for recent files, days for older/future files).
+
+No remote shell commands, timestamp probes, downloads or extra connections are
+introduced. Preserve quoted SFTP cd paths, immediate-child basenames, whitespace,
+Unicode and symlink names (client-rendered numeric listings omit link targets).
+OpenSSH format references used for implementation:
+https://github.com/openssh/openssh-portable/blob/master/sftp.c and
+https://github.com/openssh/openssh-portable/blob/master/sftp-common.c.
+
+Includes the pending sticky-order and Disk Usage changes. No tests or test
+compilation requested/run; only normal builds, signing and packaging. Manual
+server/UI confirmation remains Oliver's workflow. Preserve all live sessions
+and published releases; no commit or public release requested.
+
+1.0.4 delivery: both final optimized architecture builds completed, all nine
+universal executables contain arm64/x86_64 slices, and helper/app signatures,
+bundle allowlist, identity/version and installed-certificate match passed. The
+final signed universal build (including the UTF-8 filename safeguard) is staged
+in the normal pending slot for ./update.sh. Installed bundle device/inode/SHA-256
+fingerprints are unchanged; live windows, terminals and SSH sessions were
+preserved. No tests, test compilation, app/helper execution or live server QA.
+Logs: .build-cache/1.0.4-ssh-dates-{arm-final-build,intel-final-build,final-universal}.log.
+Receipt: .build-cache/1.0.4-ssh-dates-verification.json. No commit/release.
+
+## Local 1.0.5 — pan zoomed previews in every direction
+
+Oliver reported that dragging a zoomed picture in Preview moved it only up and
+down. The existing pan handler already changes both x/y offsets, but GPUI bounds
+scrolling using its immediate children's geometry. The visual-preview wrapper
+stayed at viewport width and clipped its wider zoomed image, so the horizontal
+scroll range was always zero after layout.
+
+Size the visual wrapper to the zoomed image width plus its document insets,
+keeping its viewport minimum for smaller images. The existing bounded two-axis
+scrolling now has real horizontal overflow and can retain horizontal/diagonal
+left or middle-button drags across redraws. The preview pane/window stays the
+same width. Preserve aspect ratio, wheel zoom, document padding, root drag
+tracking and release/selection/modal cancellation. Native text/video preview
+behavior remains separate. Includes all pending sticky and SSH date features.
+
+Continue the user's manual QA workflow: no tests or app/helper launches, only
+normal optimized builds, signing and packaging. No commit or public release.
+
+1.0.5 delivery: optimized Apple Silicon and Intel builds completed. Universal
+merge, bundle allowlist, all nine executable slices/signatures, app identity/
+version and installed-certificate match passed. The signed universal update is
+staged in the normal pending slot for ./update.sh after a deliberate quit.
+Every installed bundle device/inode/SHA-256 fingerprint is unchanged, and no
+app/helper/tests or live sessions were launched/restarted. Interactive panning
+confirmation remains Oliver's manual workflow. Logs:
+.build-cache/1.0.5-preview-pan-{arm-build,intel-build,universal}.log.
+Receipt: .build-cache/1.0.5-preview-pan-verification.json. No commit/release.
+
+## Local 1.0.6 — sticky divider row alignment
+
+Oliver confirmed Stick to Top works, but its separator appears one row too low.
+The last-pinned-item calculation already uses zero-based indexing correctly.
+The absolute canvas followed the row content without explicit insets, so block
+layout used its static position after that content. Anchor the divider canvas
+at top/left zero within the pinned row, preserving its bottom-edge line. Apply
+the same anchor to the pin reorder overlay so its bounds/indicator match the
+actual target row. List and Icons share the divider fix; order and saved settings
+are unchanged. Includes all pending 1.0.5 features. Build/sign/stage only, manual
+UI QA by Oliver; no tests, app/helper launches, commit or public release.
+
+1.0.6 delivery: optimized Apple Silicon/Intel builds and universal merge passed.
+All nine executable slices, deep/strict signatures, app version and the installed
+certificate match were verified. The universal update is staged in the normal
+pending slot for ./update.sh after a deliberate quit. Installed bundle file
+device/inode/SHA-256 fingerprints are unchanged; no apps/helpers/tests ran.
+Logs: .build-cache/1.0.6-sticky-divider-{arm-build,arm-package,intel-build,universal}.log.
+Receipt: .build-cache/1.0.6-sticky-divider-verification.json. No commit/release.

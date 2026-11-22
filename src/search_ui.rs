@@ -738,7 +738,6 @@ impl Schnauz {
         };
         let pane = self.file_search.pane;
         let scroll = self.file_search.scroll.clone();
-        let base = scroll.0.borrow().base_handle.clone();
         let has_selection = !self.tab(pane).selection.is_empty();
         let mut panel = div()
             .flex()
@@ -832,12 +831,14 @@ impl Schnauz {
                         let cloud = if this.tab(pane).remote.is_none() { this.cloud_state(path, *is_dir, cx) } else { CloudSync::Local };
                         Some(div().id(("file-search-hit",i)).w(px(width)).h(px(ROW_H)).flex().items_center().px_3().gap_3()
                             .text_size(px(UI_FONT_SIZE)).cursor_pointer()
+                            .when(this.quick_find_matches(pane, &item.title) && !selected, |s|s.bg(Theme::alpha(CHROME_HIGHLIGHT, 0x18)))
                             .when(selected,|s|s.bg(rgb(t.selected)))
                             .when(!selected && this.is_ctx_target(path),|s|s.bg(rgb(t.hover)))
                             .when(!selected,|s|s.hover(|s|s.bg(rgb(t.hover))))
                             .child(div().flex_none().w(px(cell_width)).min_w_0().flex().items_center().gap_2()
                                 .child(div().flex_none().child(icon_element(path,*is_dir)))
                                 .child(div().id(("search-entry-name",i)).flex_1().min_w_0().flex()
+                                    .when(this.quick_find_matches(pane, &item.title), |d| d.rounded_sm().bg(Theme::alpha(CHROME_HIGHLIGHT, 0x38)))
                                     .child(rename_ui::marked_entry_name(&item.title,this.rename_text(pane,path,cx),
                                         this.file_search.marked_versions.get(path).copied(),matches!(cloud,CloudSync::Syncing|CloudSync::SyncError)))
                                     .on_click(cx.listener(move|this,ev:&ClickEvent,window,cx| {
@@ -857,7 +858,7 @@ impl Schnauz {
                     }).collect()
                 })).size_full().track_scroll(scroll)
                     .on_scroll_wheel(cx.listener(|this,_:&ScrollWheelEvent,_,cx| {this.pending_click_rename=None;cx.notify();})))
-                .children(static_scrollbar_thumb(&base)));
+                .child(self.scrollbar_thumb(pane, 0., 0., cx)));
         } else {
             panel = panel.child(
                 div()

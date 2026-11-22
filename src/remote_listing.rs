@@ -4,6 +4,7 @@ use super::*;
 
 pub(super) fn parse(output: &str) -> Vec<Entry> {
     let mut entries = Vec::new();
+    let now = chrono::Local::now();
     for line in output.lines() {
         let mut rest = line.trim_start();
         let mut fields = Vec::with_capacity(8);
@@ -33,7 +34,7 @@ pub(super) fn parse(output: &str) -> Vec<Entry> {
         let Some(size) = fields[4].parse().ok() else {
             continue;
         };
-        let name = if kind == 'l' {
+        let name = if kind == 'l' && fields[1] != "?" {
             rest.split_once(" -> ").map_or(rest, |(name, _)| name)
         } else {
             rest
@@ -44,11 +45,14 @@ pub(super) fn parse(output: &str) -> Vec<Entry> {
         if matches!(name, "" | "." | "..") {
             continue;
         }
+        let modified = modification_date(fields[5], fields[6], fields[7], now);
         entries.push(Entry {
             name: name.into(),
             is_dir: kind == 'd',
+            link: (kind == 'l').then_some(remote_links::Target::Unavailable),
             size,
-            modified: None,
+            modified: modified.map(|(time, _)| time),
+            modified_date_only: modified.is_some_and(|(_, date_only)| date_only),
             created: None,
             mode: None,
             loaded: true,
@@ -59,10 +63,64 @@ pub(super) fn parse(output: &str) -> Vec<Entry> {
     entries
 }
 
+/// OpenSSH prints recent mtimes as month/day/hour/minute, and older or future
+/// mtimes as month/day/year. Recover only that precision; never invent a birth
+/// date or display midnight as though an old file's time were known.
+fn modification_date(
+    month: &str,
+    day: &str,
+    time_or_year: &str,
+    now: chrono::DateTime<chrono::Local>,
+) -> Option<(SystemTime, bool)> {
+    use chrono::{Datelike, Local, NaiveDate, TimeZone};
+    let month = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    .iter()
+    .position(|m| *m == month)? as u32
+        + 1;
+    let day = day.parse::<u32>().ok()?;
+    if let Some((hour, minute)) = time_or_year.split_once(':') {
+        let hour = hour.parse::<u32>().ok()?;
+        let minute = minute.parse::<u32>().ok()?;
+        // Match OpenSSH's half-year window, including dates across New Year.
+        // A repeated DST minute can have two valid offsets; take the later one
+        // that still lies in this window. Missing minutes remain unknown.
+        let oldest = now - chrono::Duration::seconds(365 * 24 * 60 * 60 / 2 + 60);
+        [now.year() - 1, now.year(), now.year() + 1]
+            .into_iter()
+            .filter_map(|year| {
+                let naive =
+                    NaiveDate::from_ymd_opt(year, month, day)?.and_hms_opt(hour, minute, 0)?;
+                let local = Local.from_local_datetime(&naive);
+                [local.earliest(), local.latest()]
+                    .into_iter()
+                    .flatten()
+                    .filter(|time| *time >= oldest && *time <= now)
+                    .max()
+            })
+            .max()
+            .map(|time| (SystemTime::from(time), false))
+    } else {
+        if time_or_year.len() != 4 {
+            return None;
+        }
+        let year = time_or_year.parse::<i32>().ok()?;
+        // Noon avoids midnight DST gaps. Only the calendar date is displayed.
+        let naive = NaiveDate::from_ymd_opt(year, month, day)?.and_hms_opt(12, 0, 0)?;
+        Local
+            .from_local_datetime(&naive)
+            .earliest()
+            .map(|time| (SystemTime::from(time), true))
+    }
+}
+
 /// Keep the listing relative to its own SFTP cwd so only immediate child names
 /// are returned, independently of the server's login directory.
 pub(super) fn list_command(directory: &str) -> Result<String, String> {
-    Ok(format!("cd {}\nls -la", sftp_path_arg(directory)?))
+    // -n renders the server's attributes in the local OpenSSH client instead
+    // of accepting a server-supplied longname with an unknown locale/timezone.
+    Ok(format!("cd {}\nls -lan", sftp_path_arg(directory)?))
 }
 
 #[cfg(test)]
@@ -103,7 +161,7 @@ mod tests {
     fn directory_listing_is_scoped_and_does_not_expand_into_batch_commands() {
         assert_eq!(
             list_command("/home/oliw/folder name").unwrap(),
-            "cd \"/home/oliw/folder name\"\nls -la"
+            "cd \"/home/oliw/folder name\"\nls -lan"
         );
         assert!(list_command("/home/oliw\nls /another").is_err());
     }

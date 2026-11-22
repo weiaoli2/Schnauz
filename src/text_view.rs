@@ -141,7 +141,7 @@ impl Session {
         }
     }
 
-    fn focused(&self) -> bool {
+    pub(super) fn focused(&self) -> bool {
         self.text
             .window()
             .and_then(|w| w.firstResponder())

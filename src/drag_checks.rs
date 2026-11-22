@@ -76,7 +76,12 @@ fn event(window: gpui::WindowHandle<Fixture>, event: gpui::FileDropEvent, cx: &m
     let content_ptr = ptr as usize;
     let content = unsafe { &*(ptr as *const objc2_app_kit::NSView) };
     let native = content.window().unwrap();
-    let ptr = (&*native as *const objc2_app_kit::NSWindow).cast::<std::ffi::c_void>();
+    let destination = unsafe { content.superview() }.expect("dedicated drop container");
+    assert_eq!(native.class().name().to_string_lossy(), "GPUIWindow", "drop setup must leave the native window class unchanged for AppKit KVO/full screen");
+    assert_eq!(content.class().name().to_string_lossy(), "GPUIView", "drop setup must leave GPUI input/rendering view unchanged");
+    assert_eq!(destination.class().name().to_string_lossy(), "SchnauzFileDropDestination");
+    assert_eq!(destination.frame().size, content.frame().size, "drop container tracks the actual GPUI viewport");
+    let ptr = (&*destination as *const objc2_app_kit::NSView).cast::<std::ffi::c_void>();
     let info = INFO.with(|i| i.borrow().as_ref().unwrap().clone());
     // Invoke our native callbacks only after releasing GPUI's App borrow. This
     // exercises the actual AppKit -> GPUI -> browser path, with a private pasteboard.
@@ -105,7 +110,7 @@ fn event(window: gpui::WindowHandle<Fixture>, event: gpui::FileDropEvent, cx: &m
                         // entering a destination. This starts GPUI's repeating
                         // source-motion task, absent from incoming-only tests.
                         let content = objc2::rc::Retained::retain(content_ptr as *mut objc2_app_kit::NSView).unwrap();
-                        let number: isize = objc2::msg_send![view, windowNumber];
+                        let number = content.window().unwrap().windowNumber();
                         let mouse = objc2_app_kit::NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
                             objc2_app_kit::NSEventType::LeftMouseDragged, NSPoint::new(400., 200.),
                             objc2_app_kit::NSEventModifierFlags::empty(), 0., number, None, 0, 1, 0.,

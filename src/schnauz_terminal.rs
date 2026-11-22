@@ -99,6 +99,7 @@ impl Drop for Process {
         }
         let _ = fs::remove_file(&self.request_file);
         let _ = fs::remove_file(&self.ssh_request);
+        let _ = fs::remove_dir_all(time_tracking_bridge::channel(&self.request_file));
     }
 }
 
@@ -115,6 +116,7 @@ fn spawn_process(
         (".zprofile", include_str!("terminal-shell/zprofile")),
         (".zshrc", include_str!("terminal-shell/zshrc")),
         ("ssh.zsh", include_str!("terminal-shell/ssh.zsh")),
+        ("codex.zsh", include_str!("terminal-shell/codex.zsh")),
         (
             "ssh-bootstrap.sh",
             include_str!("terminal-shell/ssh-bootstrap.sh"),
@@ -141,7 +143,11 @@ fn spawn_process(
     command.env("SCHNAUZ_CWD_REQUEST", &request_file);
     command.env("SCHNAUZ_SSH_REQUEST", &ssh_request);
     command.env("SCHNAUZ_TEST_SHELL", if test_shell { "1" } else { "0" });
-    spawn_pty(command, request_file, ssh_request, None)
+    if !test_shell { time_tracking_bridge::prepare(&request_file, &mut command)?; }
+    let tracking_channel=time_tracking_bridge::channel(&request_file);
+    let result=spawn_pty(command, request_file, ssh_request, None);
+    if result.is_err() {let _=fs::remove_dir_all(tracking_channel);}
+    result
 }
 
 fn spawn_pty(
@@ -228,6 +234,7 @@ impl ForegroundSync {
 
 pub(super) struct Session {
     pub id: u64,
+    tracking_project: Option<u64>,
     pub view: Entity<TerminalView>,
     pub cwd: PathBuf,
     pub ready: bool,
@@ -362,6 +369,26 @@ impl Session {
 }
 
 impl Schnauz {
+    pub(super) fn time_tracking_bindings(&self, cx: &App) -> Vec<time_tracking_bridge::Binding> {
+        let mut bindings = Vec::new();
+        let mut collect = |panes: &[Pane]| {
+            for pane in panes {
+                for tab in &pane.tabs {
+                    if let Some(session) = tab.terminal.as_ref().filter(|s|!s.exited()) {
+                        bindings.push(time_tracking_bridge::Binding {
+                            channel: time_tracking_bridge::channel(&session.process.request_file),
+                            project: time_tracking::key(session.tracking_project),
+                            running: !session.view.read(cx).shell_is_at_prompt(),
+                            enabled: false,
+                        });
+                    }
+                }
+            }
+        };
+        collect(&self.panes);
+        for session in self.project_sessions.values() { collect(&session.panes); }
+        bindings
+    }
     pub(super) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pane = self.active_pane;
         if self.tab_mut(pane).terminal_starting.take().is_some() {
@@ -436,6 +463,45 @@ impl Schnauz {
     ) -> bool {
         let cwd = self.tab(pane).current_dir.clone();
         self.start_terminal_at_impl(pane,self.panes[pane].active,cwd,test_shell,cx)
+    }
+
+    pub(super) fn terminal_input_focused(&self, window: &Window, cx: &App) -> bool {
+        self.panes.iter().any(|pane| pane.tabs[pane.active].terminal.as_ref()
+            .is_some_and(|session| session.view.read(cx).focus_handle().is_focused(window)))
+    }
+
+    fn hover_focus_allowed(&self, event: &gpui::MouseMoveEvent, window: &Window, cx: &App) -> bool {
+        window.is_window_active() && event.pressed_button.is_none() && !cx.has_active_drag()
+            && !self.native_preview_blocked() && !self.native_menu_pending && !todoist_window::task_menu_is_open(cx) && self.context_menu.is_none()
+            && self.sidebar_menu.is_none() && self.rename.is_none() && self.active_tab().editing_path.is_none()
+            && self.active_tab().find_query.is_none() && !(self.palette_open && self.file_search.editing)
+            && self.drag_candidate.is_none() && self.favourite_drag.is_none() && self.marquee.is_none()
+            && self.scroll_drag.is_none() && self.hbar_drag.is_none() && self.resize.is_none()
+            && self.terminal_resize.is_none() && self.divider_drag.is_none() && self.preview_resize.is_none()
+            && self.preview_zoom.pan.is_none()
+            && !self.panes.iter().any(|pane| pane.tabs[pane.active].terminal.as_ref()
+                .is_some_and(|session| session.view.read(cx).is_composing()))
+    }
+
+    fn hover_terminal_focus(&mut self, pane: usize, event: &gpui::MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.tab(pane).terminal.as_ref() else { return; };
+        let focus = session.view.read(cx).focus_handle().clone();
+        // An active terminal owns keyboard input already. Do not re-evaluate
+        // hover eligibility (including other terminals' composition) on movement.
+        if focus.is_focused(window) { return; }
+        if session.exited() || !self.hover_focus_allowed(event, window, cx) { return; }
+        if let Some(text) = &self.text_view { text.release_focus(); }
+        self.active_pane = pane;
+        window.focus(&focus);
+        cx.notify();
+    }
+
+    pub(super) fn hover_browser_focus(&mut self, pane: usize, event: &gpui::MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.terminal_input_focused(window, cx) && self.hover_focus_allowed(event, window, cx) {
+            self.active_pane = pane;
+            window.focus(&self.focus);
+            cx.notify();
+        }
     }
 
     pub(super) fn start_terminal_at(&mut self,pane:usize,index:usize,cwd:PathBuf,cx:&mut Context<Self>) -> bool {
@@ -530,6 +596,7 @@ impl Schnauz {
         cx.subscribe(&view, |_, _, _: &gpui_terminal::view::TextSelectionChanged, cx| cx.notify()).detach();
         self.panes[pane].tabs[index].terminal = Some(Session {
             id,
+            tracking_project: self.projects.active,
             view,
             cwd,
             ready: false,
@@ -919,6 +986,9 @@ impl Schnauz {
                         .flex_1()
                         .min_h_0()
                         .overflow_hidden()
+                        .on_mouse_move(cx.listener(move |this, event: &gpui::MouseMoveEvent, window, cx| {
+                            this.hover_terminal_focus(pane, event, window, cx);
+                        }))
                         .child(session.view.clone()),
                 )
                 .into_any_element(),
